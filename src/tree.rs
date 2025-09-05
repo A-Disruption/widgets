@@ -1822,14 +1822,30 @@ where
                 if let Some(branch_content) = self.tree_handle.branch_content.get(primary_index) {
                     let branch_tree = &self.state.children[primary_index];
                     
+                    // Get the correct layout for the primary branch
+                    let primary_layout = if self.dragged_indices.contains(&primary_index) {
+                        // Find the position of primary_index in dragged_indices
+                        if let Some(pos) = self.dragged_indices.iter().position(|&i| i == primary_index) {
+                            if pos == 0 {
+                                self.layout
+                            } else {
+                                self.tree_layout.children().nth(primary_index).unwrap_or(self.layout)
+                            }
+                        } else {
+                            self.layout
+                        }
+                    } else {
+                        self.tree_layout.children().nth(primary_index).unwrap_or(self.layout)
+                    };
+                    
                     branch_content.as_widget().draw(
                         branch_tree,
                         renderer,
                         theme,
                         &transparent_style,
-                        self.layout,
+                        primary_layout,
                         cursor,
-                        &self.layout.bounds()
+                        &primary_layout.bounds()
                     );
                 }
             });
