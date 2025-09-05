@@ -1,0 +1,20 @@
+[package]
+name = "widgets"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iced = { version = "0.14.0-dev", features = [
+    "tokio",
+    "lazy",
+    "advanced",
+    "debug",
+    "canvas",
+] }
+
+[patch.crates-io]
+iced = { git = "https://github.com/iced-rs/iced", branch = "master" }
+
+[[example]]
+name = "tree_example"
+path = "examples\\tree_example.rs"
