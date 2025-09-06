@@ -38,9 +38,11 @@ pub fn branch<'a, Message, Theme, Renderer>(
     Branch {
         content: content.into(),
         children: Vec::new(),
+        external_id: 0,
         align_x: iced::Alignment::Start,
         align_y: iced::Alignment::Center,
         accepts_drops: false,
+        draggable: false,
     }
 }
 
@@ -80,10 +82,12 @@ where
 #[derive(Clone, Debug)]
 struct Branch_ {
     id: usize,
+    external_id: usize,
     parent_id: Option<usize>,
     depth: u16,
     has_children: bool,
     accepts_drops: bool,
+    draggable: bool,
     align_x: iced::Alignment,
     align_y: iced::Alignment,
 }
@@ -181,10 +185,12 @@ where
             
             branches.push(Branch_ {
                 id: current_id,
+                external_id: branch.external_id,
                 parent_id,
                 depth,
                 has_children,
                 accepts_drops: branch.accepts_drops,
+                draggable: branch.draggable,
                 align_x: branch.align_x,
                 align_y: branch.align_y,
             });
@@ -885,22 +891,23 @@ where
                                 click_offset,
                             });
                             
-                            // Use tracked modifiers for selection
-                            if state.current_modifiers.control() || state.current_modifiers.command() {
-                                if state.selected.contains(&branch.id) {
-                                    state.selected.remove(&branch.id);
+                            if !branch.draggable {
+                                // Branch is not draggable - only allow selection
+                                if state.current_modifiers.control() || state.current_modifiers.command() {
+                                    if state.selected.contains(&branch.id) {
+                                        state.selected.remove(&branch.id);
+                                    } else {
+                                        state.selected.insert(branch.id);
+                                    }
                                 } else {
+                                    state.selected.clear();
                                     state.selected.insert(branch.id);
                                 }
-                            } else {
-                                state.selected.clear();
-                                state.selected.insert(branch.id);
+                                state.focused = Some(branch.id);
+                                shell.invalidate_widgets();
+                                shell.request_redraw();
+                                return;
                             }
-                            
-                            state.focused = Some(branch.id);
-                            shell.invalidate_widgets();
-                            shell.request_redraw();
-                            return;
                         }
                         
                         y += branch_height + self.spacing;
@@ -1663,31 +1670,55 @@ where
             }
             
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                let (drop_target, drop_position, dragged_nodes) = {
+                let (drop_target, drop_position, dragged_nodes, dragged_external, target_external) = {
                     let state = self.state.state.downcast_ref::<TreeState>();
                     if let Some(ref drag) = state.drag_active {
-                        (drag.drop_target, drag.drop_position.clone(), drag.dragged_nodes.clone())
+                        // Convert internal IDs to external IDs while we have access to everything
+                        let dragged_ext: Vec<usize> = drag.dragged_nodes.iter()
+                            .filter_map(|&internal_id| {
+                                self.tree_handle.branches.iter()
+                                    .find(|b| b.id == internal_id)
+                                    .map(|b| b.external_id)
+                            })
+                            .collect();
+                        
+                        let target_ext = drag.drop_target.and_then(|internal_id| {
+                            self.tree_handle.branches.iter()
+                                .find(|b| b.id == internal_id)
+                                .map(|b| b.external_id)
+                        });
+                        
+                        (
+                            drag.drop_target, 
+                            drag.drop_position.clone(), 
+                            drag.dragged_nodes.clone(),
+                            dragged_ext,
+                            target_ext
+                        )
                     } else {
-                        (None, DropPosition::Before, vec![])
+                        (None, DropPosition::Before, vec![], vec![], None)
                     }
                 };
                 
                 if let Some(target_id) = drop_target {
+                    // Use internal IDs for reordering
                     self.reorder_branches(&dragged_nodes, target_id, &drop_position);
                     
+                    // Use external IDs for the callback
                     if let Some(ref on_drop) = self.tree_handle.on_drop {
-                        let drop_info = DropInfo {
-                            dragged_ids: dragged_nodes,
-                            target_id: Some(target_id),
-                            position: drop_position,
-                        };
-                        shell.publish(on_drop(drop_info));
+                        if let Some(target_ext) = target_external {
+                            let drop_info = DropInfo {
+                                dragged_ids: dragged_external,
+                                target_id: Some(target_ext),
+                                position: drop_position,
+                            };
+                            shell.publish(on_drop(drop_info));
+                        }
                     }
                 }
                 
                 let state = self.state.state.downcast_mut::<TreeState>();
                 state.drag_active = None;
-                // Don't clear selection here - preserve it after drop
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
@@ -2085,9 +2116,11 @@ where
 pub struct Branch<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     pub content: Element<'a, Message, Theme, Renderer>,
     pub children: Vec<Branch<'a, Message, Theme, Renderer>>,
+    pub external_id: usize, 
     pub align_x: iced::Alignment,
     pub align_y: iced::Alignment,
     pub accepts_drops: bool,
+    pub draggable: bool, 
 }
 
 impl<'a, Message, Theme, Renderer> 
@@ -2111,6 +2144,16 @@ impl<'a, Message, Theme, Renderer>
 
     pub fn align_y(mut self, alignment: impl Into<iced::Alignment>) -> Self {
         self.align_y = alignment.into();
+        self
+    }
+
+    pub fn block_dragging(mut self) -> Self {
+        self.draggable = false;
+        self
+    }
+
+    pub fn with_id(mut self, id: usize) -> Self {
+        self.external_id = id;
         self
     }
 }
