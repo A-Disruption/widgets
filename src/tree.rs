@@ -1147,6 +1147,18 @@ where
             }
             _ => {}
         }
+
+        for ((child, state), layout) in self
+            .branch_content
+            .iter_mut()
+            .zip(&mut tree.children)
+            .zip(layout.children())
+        {
+            child.as_widget_mut().update(
+                state, event, layout, cursor, renderer, clipboard, shell,
+                viewport,
+            );
+        }
     }
 
     fn draw(
