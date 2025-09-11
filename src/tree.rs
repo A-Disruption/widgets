@@ -42,7 +42,7 @@ pub fn branch<'a, Message, Theme, Renderer>(
         align_x: iced::Alignment::Start,
         align_y: iced::Alignment::Center,
         accepts_drops: false,
-        draggable: false,
+        draggable: true,
     }
 }
 
@@ -76,6 +76,7 @@ where
     padding_x: f32,
     padding_y: f32,
     on_drop: Option<Box<dyn Fn(DropInfo) -> Message + 'a>>,
+    on_select: Option<Box< dyn Fn(HashSet<usize>) -> Message + 'a>>,
     class: Theme::Class<'a>,
 }
 
@@ -158,7 +159,7 @@ where
     ) -> Self {
         let roots = roots.into_iter();
 
-        let mut width = Length::Fill;
+        let mut width = Length::Shrink;
         let mut height = Length::Shrink;
 
         let mut branches = Vec::new();
@@ -237,6 +238,7 @@ where
             padding_x: 10.0,
             padding_y: 5.0,
             on_drop: None,
+            on_select: None,
             class: Theme::default(),
         }
     }
@@ -247,6 +249,15 @@ where
         F: Fn(DropInfo) -> Message + 'a,
     {
         self.on_drop = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the message emit when a branch is selected
+    pub fn on_select<F>(mut self, f: F) -> Self
+    where 
+        F: Fn(HashSet<usize>) -> Message + 'a
+    {
+        self.on_select = Some(Box::new(f));
         self
     }
 
@@ -586,7 +597,7 @@ where
             let content_limits = layout::Limits::new(
                 Size::ZERO,
                 Size::new(available_content_width, available.height - y),
-            );
+            ).max_width(available_content_width);
             
             let content_layout = self.branch_content[i].as_widget_mut().layout(
                 child_state, 
@@ -867,6 +878,47 @@ where
                         }
 
                         if branch_bounds.contains(position) {
+
+                            if !branch.draggable {
+                                // Branch is not draggable - only allow selection
+                                if state.current_modifiers.control() || state.current_modifiers.command() {
+                                    if state.selected.contains(&branch.id) {
+                                        state.selected.remove(&branch.id);
+                                    } else {
+                                        state.selected.insert(branch.id);
+                                    }
+                                } else {
+                                    state.selected.clear();
+                                    state.selected.insert(branch.id);
+                                }
+                                state.focused = Some(branch.id);
+
+                                if let Some(ref on_select) = self.on_select {
+                                    // Convert internal IDs to external IDs for the callback
+                                    let external_ids: HashSet<usize> = state.selected
+                                        .iter()
+                                        .filter_map(|&internal_id| {
+                                            self.branches.iter()
+                                                .find(|b| b.id == internal_id)
+                                                .map(|b| {
+                                                    // Use external_id if it's been set (non-zero), otherwise use internal_id
+                                                    if b.external_id != 0 {
+                                                        b.external_id
+                                                    } else {
+                                                        b.id
+                                                    }
+                                                })
+                                        })
+                                        .collect();
+                                    
+                                    shell.publish(on_select(external_ids));
+                                }
+
+                                shell.invalidate_widgets();
+                                shell.request_redraw();
+                                return;
+                            }
+
                             // Set up pending drag
                             let selected_for_drag = if state.selected.contains(&branch.id) {
                                 filter_redundant_selections(
@@ -891,22 +943,37 @@ where
                                 click_offset,
                             });
                             
-                            if !branch.draggable {
-                                // Branch is not draggable - only allow selection
-                                if state.current_modifiers.control() || state.current_modifiers.command() {
-                                    if state.selected.contains(&branch.id) {
-                                        state.selected.remove(&branch.id);
-                                    } else {
-                                        state.selected.insert(branch.id);
-                                    }
+                            if state.current_modifiers.control() || state.current_modifiers.command() {
+                                if state.selected.contains(&branch.id) {
+                                    state.selected.remove(&branch.id);
                                 } else {
-                                    state.selected.clear();
                                     state.selected.insert(branch.id);
                                 }
-                                state.focused = Some(branch.id);
-                                shell.invalidate_widgets();
-                                shell.request_redraw();
-                                return;
+                            } else {
+                                state.selected.clear();
+                                state.selected.insert(branch.id);
+                            }
+                            state.focused = Some(branch.id);
+
+                            if let Some(ref on_select) = self.on_select {
+                                // Convert internal IDs to external IDs for the callback
+                                let external_ids: HashSet<usize> = state.selected
+                                    .iter()
+                                    .filter_map(|&internal_id| {
+                                        self.branches.iter()
+                                            .find(|b| b.id == internal_id)
+                                            .map(|b| {
+                                                // Use external_id if it's been set (non-zero), otherwise use internal_id
+                                                if b.external_id != 0 {
+                                                    b.external_id
+                                                } else {
+                                                    b.id
+                                                }
+                                            })
+                                    })
+                                    .collect();
+                                
+                                shell.publish(on_select(external_ids));
                             }
                         }
                         
@@ -1050,6 +1117,27 @@ where
                                 state.selected.clear();
                                 state.selected.insert(focused);
                             }
+
+                            if let Some(ref on_select) = self.on_select {
+                                let external_ids: HashSet<usize> = state.selected
+                                    .iter()
+                                    .filter_map(|&internal_id| {
+                                        self.branches.iter()
+                                            .find(|b| b.id == internal_id)
+                                            .map(|b| {
+                                                // Use external_id if it's been set (non-zero), otherwise use internal_id
+                                                if b.external_id != 0 {
+                                                    b.external_id
+                                                } else {
+                                                    b.id
+                                                }
+                                            })
+                                    })
+                                    .collect();
+                                
+                                shell.publish(on_select(external_ids));
+                            }
+
                             shell.invalidate_widgets();
                             shell.request_redraw();
                         }
