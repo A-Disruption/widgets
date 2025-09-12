@@ -77,6 +77,7 @@ where
     padding_y: f32,
     on_drop: Option<Box<dyn Fn(DropInfo) -> Message + 'a>>,
     on_select: Option<Box< dyn Fn(HashSet<usize>) -> Message + 'a>>,
+    force_reset_order: bool,
     ext_to_int: HashMap<usize, usize>,
     int_to_ext: Vec<usize>, // index is internal id; value is external id or 0
     class: Theme::Class<'a>,
@@ -257,6 +258,7 @@ where
             padding_y: 5.0,
             on_drop: None,
             on_select: None,
+            force_reset_order: false,
             ext_to_int,
             int_to_ext,
             class: Theme::default(),
@@ -278,6 +280,14 @@ where
         F: Fn(HashSet<usize>) -> Message + 'a
     {
         self.on_select = Some(Box::new(f));
+        self
+    }
+
+    /// Forces the tree to reset its internal ordering state.
+    /// This is useful when the external structure has changed and
+    /// the tree needs to reflect the new hierarchy based on external IDs.
+    pub fn reset_order_state(mut self) -> Self {
+        self.force_reset_order = true;
         self
     }
 
@@ -486,18 +496,6 @@ where
         // (returns external if non-zero, else internal)
     }
 
-    #[inline]
-    fn to_internal(&self, public_id: usize) -> Option<usize> {
-        if let Some(&i) = self.ext_to_int.get(&public_id) {
-            Some(i)
-        } else if self.branches.iter().any(|b| b.id == public_id) {
-            // treat as already-internal
-            Some(public_id)
-        } else {
-            None
-        }
-    }
-
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -551,16 +549,6 @@ where
     }
 
     fn diff(&self, state: &mut widget::Tree) {
-        let tree_state = state.state.downcast_mut::<TreeState>();
-    
-        // Check if the number of branches changed
-        if let Some(ref branch_order) = tree_state.branch_order {
-            if branch_order.len() != self.branches.len() {
-                // Structure changed, reset branch_order
-                tree_state.branch_order = None;
-            }
-        }
-
         state.diff_children(&self.branch_content);
     }
 
@@ -571,6 +559,12 @@ where
         limits: &layout::Limits,
     ) -> layout::Node {
         let state = tree.state.downcast_mut::<TreeState>();
+
+        // Check if we need to force reset the order
+        if self.force_reset_order {
+            state.branch_order = None;
+            self.force_reset_order = false;
+        }
 
         // Initialize branch order if not present
         if state.branch_order.is_none() {
