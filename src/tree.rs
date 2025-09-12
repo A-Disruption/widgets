@@ -77,6 +77,8 @@ where
     padding_y: f32,
     on_drop: Option<Box<dyn Fn(DropInfo) -> Message + 'a>>,
     on_select: Option<Box< dyn Fn(HashSet<usize>) -> Message + 'a>>,
+    ext_to_int: HashMap<usize, usize>,
+    int_to_ext: Vec<usize>, // index is internal id; value is external id or 0
     class: Theme::Class<'a>,
 }
 
@@ -228,6 +230,22 @@ where
             );
         }
 
+        let mut ext_to_int = HashMap::new();
+        let mut int_to_ext = vec![0usize; branches.len()];
+
+        for b in &branches {
+            if b.external_id != 0 {
+                // enforce uniqueness in debug builds
+                debug_assert!(
+                    !ext_to_int.contains_key(&b.external_id),
+                    "duplicate external_id {}",
+                    b.external_id
+                );
+                ext_to_int.insert(b.external_id, b.id);
+                int_to_ext[b.id] = b.external_id;
+            }
+        }
+
         Self {
             branches,
             branch_content,
@@ -239,6 +257,8 @@ where
             padding_y: 5.0,
             on_drop: None,
             on_select: None,
+            ext_to_int,
+            int_to_ext,
             class: Theme::default(),
         }
     }
@@ -457,6 +477,24 @@ where
                     branch.has_children = true;
                 }
             }
+        }
+    }
+
+    #[inline]
+    fn preferred_id(&self, internal_id: usize) -> usize {
+        self.int_to_ext.get(internal_id).copied().unwrap_or(0).max(internal_id)
+        // (returns external if non-zero, else internal)
+    }
+
+    #[inline]
+    fn to_internal(&self, public_id: usize) -> Option<usize> {
+        if let Some(&i) = self.ext_to_int.get(&public_id) {
+            Some(i)
+        } else if self.branches.iter().any(|b| b.id == public_id) {
+            // treat as already-internal
+            Some(public_id)
+        } else {
+            None
         }
     }
 
@@ -935,23 +973,11 @@ where
                                 state.focused = Some(branch.id);
 
                                 if let Some(ref on_select) = self.on_select {
-                                    // Convert internal IDs to external IDs for the callback
-                                    let external_ids: HashSet<usize> = state.selected
+                                    let external_ids: HashSet<usize> = state
+                                        .selected
                                         .iter()
-                                        .filter_map(|&internal_id| {
-                                            self.branches.iter()
-                                                .find(|b| b.id == internal_id)
-                                                .map(|b| {
-                                                    // Use external_id if it's been set (non-zero), otherwise use internal_id
-                                                    if b.external_id != 0 {
-                                                        b.external_id
-                                                    } else {
-                                                        b.id
-                                                    }
-                                                })
-                                        })
+                                        .map(|&internal| self.preferred_id(internal))
                                         .collect();
-                                    
                                     shell.publish(on_select(external_ids));
                                 }
 
@@ -997,23 +1023,11 @@ where
                             state.focused = Some(branch.id);
 
                             if let Some(ref on_select) = self.on_select {
-                                // Convert internal IDs to external IDs for the callback
-                                let external_ids: HashSet<usize> = state.selected
+                                let external_ids: HashSet<usize> = state
+                                    .selected
                                     .iter()
-                                    .filter_map(|&internal_id| {
-                                        self.branches.iter()
-                                            .find(|b| b.id == internal_id)
-                                            .map(|b| {
-                                                // Use external_id if it's been set (non-zero), otherwise use internal_id
-                                                if b.external_id != 0 {
-                                                    b.external_id
-                                                } else {
-                                                    b.id
-                                                }
-                                            })
-                                    })
+                                    .map(|&internal| self.preferred_id(internal))
                                     .collect();
-                                
                                 shell.publish(on_select(external_ids));
                             }
                         }
@@ -1160,22 +1174,11 @@ where
                             }
 
                             if let Some(ref on_select) = self.on_select {
-                                let external_ids: HashSet<usize> = state.selected
+                                let external_ids: HashSet<usize> = state
+                                    .selected
                                     .iter()
-                                    .filter_map(|&internal_id| {
-                                        self.branches.iter()
-                                            .find(|b| b.id == internal_id)
-                                            .map(|b| {
-                                                // Use external_id if it's been set (non-zero), otherwise use internal_id
-                                                if b.external_id != 0 {
-                                                    b.external_id
-                                                } else {
-                                                    b.id
-                                                }
-                                            })
-                                    })
+                                    .map(|&internal| self.preferred_id(internal))
                                     .collect();
-                                
                                 shell.publish(on_select(external_ids));
                             }
 
@@ -1825,19 +1828,13 @@ where
                     let state = self.state.state.downcast_ref::<TreeState>();
                     if let Some(ref drag) = state.drag_active {
                         // Convert internal IDs to external IDs while we have access to everything
-                        let dragged_ext: Vec<usize> = drag.dragged_nodes.iter()
-                            .filter_map(|&internal_id| {
-                                self.tree_handle.branches.iter()
-                                    .find(|b| b.id == internal_id)
-                                    .map(|b| b.external_id)
-                            })
+                        let dragged_ext: Vec<usize> = drag
+                            .dragged_nodes
+                            .iter()
+                            .map(|&internal| self.tree_handle.preferred_id(internal))
                             .collect();
                         
-                        let target_ext = drag.drop_target.and_then(|internal_id| {
-                            self.tree_handle.branches.iter()
-                                .find(|b| b.id == internal_id)
-                                .map(|b| b.external_id)
-                        });
+                        let target_ext = drag.drop_target.map(|internal| self.tree_handle.preferred_id(internal));
                         
                         (
                             drag.drop_target, 
