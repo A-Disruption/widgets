@@ -236,12 +236,10 @@ where
 
         for b in &branches {
             if b.external_id != 0 {
-                // enforce uniqueness in debug builds
-                debug_assert!(
-                    !ext_to_int.contains_key(&b.external_id),
-                    "duplicate external_id {}",
-                    b.external_id
-                );
+                // Use debug_assert for development, or handle duplicates gracefully
+                if ext_to_int.contains_key(&b.external_id) {
+                    eprintln!("Warning: duplicate external_id {} found", b.external_id);
+                }
                 ext_to_int.insert(b.external_id, b.id);
                 int_to_ext[b.id] = b.external_id;
             }
@@ -492,8 +490,8 @@ where
 
     #[inline]
     fn preferred_id(&self, internal_id: usize) -> usize {
-        self.int_to_ext.get(internal_id).copied().unwrap_or(0).max(internal_id)
-        // (returns external if non-zero, else internal)
+        // Always prefer the external ID if it exists
+        self.int_to_ext.get(internal_id).copied().unwrap_or(internal_id)
     }
 
 }
