@@ -513,6 +513,16 @@ where
     }
 
     fn diff(&self, state: &mut widget::Tree) {
+        let tree_state = state.state.downcast_mut::<TreeState>();
+    
+        // Check if the number of branches changed
+        if let Some(ref branch_order) = tree_state.branch_order {
+            if branch_order.len() != self.branches.len() {
+                // Structure changed, reset branch_order
+                tree_state.branch_order = None;
+            }
+        }
+
         state.diff_children(&self.branch_content);
     }
 
