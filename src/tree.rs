@@ -159,7 +159,7 @@ where
     ) -> Self {
         let roots = roots.into_iter();
 
-        let mut width = Length::Shrink;
+        let mut width = Length::Fill;
         let mut height = Length::Shrink;
 
         let mut branches = Vec::new();
@@ -523,165 +523,199 @@ where
         limits: &layout::Limits,
     ) -> layout::Node {
         let state = tree.state.downcast_mut::<TreeState>();
-        
+
         // Initialize branch order if not present
         if state.branch_order.is_none() {
             state.branch_order = Some(
-                self.branches.iter().map(|b| BranchState {
-                    id: b.id,
-                    parent_id: b.parent_id,
-                    depth: b.depth,
-                }).collect()
+                self.branches
+                    .iter()
+                    .map(|b| BranchState {
+                        id: b.id,
+                        parent_id: b.parent_id,
+                        depth: b.depth,
+                    })
+                    .collect(),
             );
         }
 
         // Update has_children flags based on current state
         self.update_has_children(state);
-        
+
         let ordered_indices = self.get_ordered_indices(state);
         let branch_count = self.branches.len();
-        
+
         let limits = limits.width(self.width).height(self.height);
         let available = limits.max();
         let tree_fluid = self.width.fluid();
-        
+
         // Update visibility
         state.visible_branches = vec![false; branch_count];
         for i in 0..branch_count {
             state.visible_branches[i] = self.is_branch_visible(i, state);
         }
-        
+
         let mut cells = Vec::with_capacity(branch_count);
         cells.resize(branch_count, layout::Node::default());
-        
+
         state.branch_heights = vec![0.0; branch_count];
         state.branch_widths = vec![0.0; branch_count];
-        
-        // Layout passes (simplified for brevity - same logic as before)
+
+        // Layout passes
         let mut y = self.padding_y;
-        let mut max_content_width = 0.0f32;
+
+        let mut width_fill_factors = vec![0u16; branch_count];
         let mut row_fill_factors = vec![0u16; branch_count];
-        let mut total_fluid_height = 0.0;
-        
-        // FIRST PASS - Layout non-fluid visible branches
+
+        let mut max_content_width = 0.0f32;
+        let mut total_nonfluid_height = 0.0;
+
+        // FIRST PASS — layout non-fluid branches, collect factors for fluid ones
         for index in 0..ordered_indices.len() {
             let i = ordered_indices[index];
-            if i >= self.branches.len(){
+            if i >= self.branches.len() {
                 continue;
             }
-            
-            let content = &self.branch_content[i];
-            let child_state = &mut tree.children[i];
 
-            // For invisible branches, set a default height
+            // For invisible branches, keep default height so rows still occupy space for hover math
             if !state.visible_branches[i] {
                 cells[i] = layout::Node::new(Size::ZERO);
-                state.branch_heights[i] = LINE_HEIGHT; // Set default height
+                state.branch_heights[i] = LINE_HEIGHT;
                 state.branch_widths[i] = 0.0;
             }
-            
+
             let (_, _, effective_depth) = self.get_branch_info(i, state);
-            
-            let size = self.branch_content[i].as_widget().size();
-            let height_factor = size.height.fill_factor();
-            
-            if height_factor != 0 || size.width.is_fill() {
-                row_fill_factors[i] = height_factor;
-                continue;
+            let child_state = &mut tree.children[i];
+            let content = &mut self.branch_content[i];
+
+            let size_hint = content.as_widget().size();
+            let h_factor = size_hint.height.fill_factor();
+            let w_factor = size_hint.width.fill_factor();
+
+            let is_width_fluid = w_factor != 0 || size_hint.width.is_fill();
+            let is_height_fluid = h_factor != 0;
+
+            if is_width_fluid || is_height_fluid {
+                row_fill_factors[i] = h_factor;
+                width_fill_factors[i] = w_factor.max(if size_hint.width.is_fill() { 1 } else { 0 });
+                continue; // defer layout to second pass
             }
-            
+
+            // Non-fluid: lay out immediately with the full remaining content width
             let indent_x = self.padding_x + (effective_depth as f32 * self.indent);
             let content_x = indent_x + ARROW_W + CONTENT_GAP;
-            let available_content_width = (available.width - content_x - self.padding_x).max(0.0);
-            
+            let avail_w = (available.width - content_x - self.padding_x).max(0.0);
+
             let content_limits = layout::Limits::new(
                 Size::ZERO,
-                Size::new(available_content_width, available.height - y),
-            ).max_width(available_content_width);
-            
-            let content_layout = self.branch_content[i].as_widget_mut().layout(
-                child_state, 
-                renderer, 
-                &content_limits
-            );
+                Size::new(avail_w, (available.height - y).max(0.0)),
+            )
+            .max_width(avail_w);
 
-            let content_size = content_limits.resolve(
-                Length::Shrink,
-                Length::Shrink,
-                content_layout.size(),
-            );
-            
+            let content_layout = content.as_widget_mut().layout(child_state, renderer, &content_limits);
+            let content_size =
+                content_limits.resolve(Length::Shrink, Length::Shrink, content_layout.size());
+
             state.branch_heights[i] = content_size.height.max(LINE_HEIGHT);
             state.branch_widths[i] = content_size.width;
-            
-            let total_width = content_x + content_size.width;
-            max_content_width = max_content_width.max(total_width);
-            
+
+            let total_w = content_x + content_size.width;
+            max_content_width = max_content_width.max(total_w);
+
             cells[i] = content_layout;
         }
-        
-        // Calculate total non-fluid height
-        for (i, &height) in state.branch_heights.iter().enumerate() {
+
+        // Sum up non-fluid heights
+        for (i, &h) in state.branch_heights.iter().enumerate() {
             if state.visible_branches[i] && row_fill_factors[i] == 0 {
                 if let Some(ref drag) = state.drag_active {
                     if !drag.dragged_nodes.contains(&self.branches[i].id) {
-                        total_fluid_height += height;
+                        total_nonfluid_height += h;
                     }
                 } else {
-                    total_fluid_height += height;
+                    total_nonfluid_height += h;
                 }
             }
         }
-        
-        // SECOND PASS - Layout fluid branches (similar to original)
-        let total_fill_factor: u16 = row_fill_factors.iter()
+
+        // SECOND PASS — lay out fluid branches (width and/or height)
+        let total_height_fill: u16 = row_fill_factors
+            .iter()
             .enumerate()
             .filter(|(i, _)| {
-                if !state.visible_branches[*i] {
-                    return false;
-                }
-                if let Some(ref drag) = state.drag_active {
-                    !drag.dragged_nodes.contains(&self.branches[*i].id)
-                } else {
-                    true
-                }
+                state.visible_branches.get(*i).copied().unwrap_or(false)
+                    && state
+                        .drag_active
+                        .as_ref()
+                        .map_or(true, |drag| !drag.dragged_nodes.contains(&self.branches[*i].id))
             })
             .map(|(_, &f)| f)
             .sum();
 
-        if total_fill_factor > 0 {
-            let available_fluid_height = available.height 
-                - total_fluid_height 
+        let total_width_fill: u16 = width_fill_factors
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                state.visible_branches.get(*i).copied().unwrap_or(false)
+                    && state
+                        .drag_active
+                        .as_ref()
+                        .map_or(true, |drag| !drag.dragged_nodes.contains(&self.branches[*i].id))
+            })
+            .map(|(_, &f)| f)
+            .sum();
+
+        let do_height_pass = total_height_fill > 0;
+        let do_width_pass = total_width_fill > 0;
+
+        if do_height_pass || do_width_pass {
+            let available_fluid_height = (available.height
+                - total_nonfluid_height
                 - self.padding_y * 2.0
-                - self.spacing * state.visible_branches.iter().filter(|&&v| v).count().saturating_sub(1) as f32;
-            
-            let height_unit = available_fluid_height / total_fill_factor as f32;
-            
-            for index in 0..ordered_indices.len() {
-                let i = ordered_indices[index];
-                if i >= self.branches.len() || !state.visible_branches[i] || row_fill_factors[i] == 0 {
+                - self.spacing
+                    * state
+                        .visible_branches
+                        .iter()
+                        .filter(|&&v| v)
+                        .count()
+                        .saturating_sub(1) as f32)
+                .max(0.0);
+
+            let height_unit = if total_height_fill > 0 {
+                available_fluid_height / total_height_fill as f32
+            } else {
+                0.0
+            };
+
+            for &i in &ordered_indices {
+                if i >= self.branches.len() || !state.visible_branches[i] {
                     continue;
                 }
-                
-                let branch = &self.branches[i];
-                let content = &self.branch_content[i];
-                let child_state = &mut tree.children[i];
-                
+
                 if let Some(ref drag) = state.drag_active {
-                    if drag.dragged_nodes.contains(&branch.id) {
+                    if drag.dragged_nodes.contains(&self.branches[i].id) {
                         continue;
                     }
                 }
-                
-                let size = content.as_widget().size();
+
+                // Handle fluid rows
+                if row_fill_factors[i] == 0 && width_fill_factors[i] == 0 {
+                    continue;
+                }
+
                 let (_, _, effective_depth) = self.get_branch_info(i, state);
-                
+                let child_state = &mut tree.children[i];
+                let content = &mut self.branch_content[i];
+                let size_hint = content.as_widget().size();
+
+                let w_factor = size_hint.width.fill_factor();
+                let is_width_fluid = w_factor != 0 || size_hint.width.is_fill();
+
                 let indent_x = self.padding_x + (effective_depth as f32 * self.indent);
                 let content_x = indent_x + ARROW_W + CONTENT_GAP;
-                let available_content_width = (available.width - content_x - self.padding_x).max(0.0);
-                
-                let max_height = if row_fill_factors[i] == 0 {
-                    if size.height.is_fill() {
+                let avail_w = (available.width - content_x - self.padding_x).max(0.0);
+
+                let max_h = if row_fill_factors[i] == 0 {
+                    if size_hint.height.is_fill() {
                         state.branch_heights[i]
                     } else {
                         (available.height - y).max(0.0)
@@ -689,73 +723,69 @@ where
                 } else {
                     height_unit * row_fill_factors[i] as f32
                 };
-                
-                let content_limits = layout::Limits::new(
-                    Size::ZERO,
-                    Size::new(available_content_width, max_height),
-                );
-                
-                let content_layout = self.branch_content[i].as_widget_mut().layout(
-                    child_state, 
-                    renderer, 
-                    &content_limits
-                );
+
+                let content_limits =
+                    layout::Limits::new(Size::ZERO, Size::new(avail_w, max_h)).max_width(avail_w);
+
+                let content_layout = content.as_widget_mut().layout(child_state, renderer, &content_limits);
 
                 let content_size = content_limits.resolve(
-                    if size.width.is_fill() { tree_fluid } else { Length::Shrink },
+                    if is_width_fluid { tree_fluid } else { Length::Shrink },
                     Length::Shrink,
                     content_layout.size(),
                 );
-                
+
                 state.branch_heights[i] = state.branch_heights[i].max(content_size.height);
                 state.branch_widths[i] = state.branch_widths[i].max(content_size.width);
                 cells[i] = content_layout;
-                
-                let total_width = content_x + content_size.width;
-                max_content_width = max_content_width.max(total_width);
+
+                let total_w = content_x + content_size.width;
+                max_content_width = max_content_width.max(total_w);
             }
         }
-        
-        // THIRD PASS - Position all visible branches
+
+        // THIRD PASS — position each visible branch
         y = self.padding_y;
-        
+
         let drop_indicator_space = if state.drag_active.is_some() {
             LINE_HEIGHT + self.spacing
         } else {
             0.0
         };
-        
+
         for &i in &ordered_indices {
             if i >= self.branches.len() || !state.visible_branches[i] {
                 continue;
             }
-            
+
             let branch = &self.branches[i];
-            
+
             if let Some(ref drag) = state.drag_active {
                 if drag.dragged_nodes.contains(&branch.id) {
                     continue;
                 }
-                
-                if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::Before {
+
+                if drag.drop_target == Some(branch.id)
+                    && drag.drop_position == DropPosition::Before
+                {
                     y += drop_indicator_space;
                 }
             }
-            
+
             let (_, _, effective_depth) = self.get_branch_info(i, state);
-            
+
             let indent_x = self.padding_x + (effective_depth as f32 * self.indent);
             let content_x = indent_x + ARROW_W + CONTENT_GAP;
-            
+
             cells[i].move_to_mut((content_x, y));
-            
+
             let Branch_ { align_x, align_y, .. } = branch;
             cells[i].align_mut(
                 *align_x,
                 *align_y,
                 Size::new(state.branch_widths[i], state.branch_heights[i]),
             );
-            
+
             y += state.branch_heights[i] + self.spacing;
 
             if let Some(ref drag) = state.drag_active {
@@ -764,13 +794,13 @@ where
                         y += drop_indicator_space;
                     }
                 }
-                
+
                 if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::After {
                     y += drop_indicator_space;
                 }
             }
         }
-        
+
         let intrinsic = limits.resolve(
             self.width,
             self.height,
@@ -779,9 +809,10 @@ where
                 y - self.spacing + self.padding_y,
             ),
         );
-        
+
         layout::Node::with_children(intrinsic, cells)
     }
+
 
     fn update(
         &mut self,
@@ -1566,7 +1597,17 @@ where
                     })));
                 }
             }
+        } else {
+            return iced::advanced::overlay::from_children(
+                &mut self.branch_content,
+                tree,
+                layout,
+                renderer,
+                viewport,
+                translation,
+            );
         }
+
         None
     }
 }

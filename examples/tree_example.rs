@@ -99,7 +99,7 @@ impl App {
                     button("button1").on_press(Message::ButtonPressed),
                     horizontal_space(),
                     button("button2").on_press(Message::ButtonPressed)
-                ].spacing(50).width(Length::Shrink) // If using a horizonal_space() inside a row, set the row to shrink or the branch will not render
+                ].spacing(50) // If using a horizonal_space() inside a row, set the row to shrink or the branch will not render
             ).with_id(19).accepts_drops(),
         ])
         .on_drop(Message::HandleBranchDropped)
