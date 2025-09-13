@@ -455,7 +455,16 @@ where
         }
     }
 
-    fn update_has_children(&mut self, state: &TreeState) {
+    fn update_has_children(&mut self, state: &TreeState) -> Vec<usize> {
+        // Track which branches are gaining children for the first time
+        let mut newly_has_children = Vec::new();
+        
+        // Store current has_children state
+        let previous_state: Vec<(usize, bool)> = self.branches
+            .iter()
+            .map(|b| (b.id, b.has_children))
+            .collect();
+        
         // Reset all to false
         for branch in &mut self.branches {
             branch.has_children = false;
@@ -471,6 +480,14 @@ where
             for branch in &mut self.branches {
                 if parent_ids.contains(&branch.id) {
                     branch.has_children = true;
+                    
+                    // Check if this branch didn't have children before
+                    if let Some((_, prev_has_children)) = previous_state.iter()
+                        .find(|(id, _)| *id == branch.id) {
+                        if !prev_has_children {
+                            newly_has_children.push(branch.id);
+                        }
+                    }
                 }
             }
         } else {
@@ -483,9 +500,19 @@ where
             for branch in &mut self.branches {
                 if parent_ids.contains(&branch.id) {
                     branch.has_children = true;
+                    
+                    // Check if this branch didn't have children before
+                    if let Some((_, prev_has_children)) = previous_state.iter()
+                        .find(|(id, _)| *id == branch.id) {
+                        if !prev_has_children {
+                            newly_has_children.push(branch.id);
+                        }
+                    }
                 }
             }
         }
+        
+        newly_has_children
     }
 
     #[inline]
@@ -578,8 +605,13 @@ where
             );
         }
 
-        // Update has_children flags based on current state
-        self.update_has_children(state);
+        // Update has_children flags based on current state and get newly parented branches
+        let newly_has_children = self.update_has_children(state);
+
+        // Auto-expand branches that just gained children
+        for branch_id in newly_has_children {
+            state.expanded.insert(branch_id);
+        }
 
         let ordered_indices = self.get_ordered_indices(state);
         let branch_count = self.branches.len();
