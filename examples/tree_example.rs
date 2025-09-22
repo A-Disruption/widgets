@@ -105,13 +105,15 @@ impl App {
         .on_drop(Message::HandleBranchDropped)
         .on_select(Message::TreeSelect);
 
-        column![
-            iced::widget::text("Tree Widget Example").size(24),
-            tree_widget,
-        ]
-        .width(400)
-        .spacing(20)
-        .padding(20)
+        scrollable(
+            column![
+                iced::widget::text("Tree Widget Example").size(24),
+                tree_widget,
+            ]
+            .width(400)
+            .spacing(20)
+            .padding(20)
+        )
         .into()
     }
 }

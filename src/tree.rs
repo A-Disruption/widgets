@@ -162,7 +162,7 @@ where
     ) -> Self {
         let roots = roots.into_iter();
 
-        let mut width = Length::Fill;
+        let mut width = Length::Shrink;
         let mut height = Length::Shrink;
 
         let mut branches = Vec::new();
@@ -1677,8 +1677,8 @@ where
         
         let position = if let Some(ref drag) = state.drag_active {
             Point::new(
-                drag.current_position.x - drag.click_offset.x,
-                drag.current_position.y - drag.click_offset.y,
+                drag.current_position.x - drag.click_offset.x + self.translation.x,
+                drag.current_position.y - drag.click_offset.y + self.translation.y,
             )
         } else {
             Point::ORIGIN
@@ -1722,7 +1722,7 @@ where
     fn update(
         &mut self,
         event: &Event,
-        _layout: Layout<'_>,
+        layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
@@ -1733,6 +1733,11 @@ where
                 if let Some(position) = cursor.position() {
                     let state = self.state.state.downcast_mut::<TreeState>();
                     let ordered_indices = self.tree_handle.get_ordered_indices(state);
+        
+                    let position = Point::new(
+                        position.x - self.translation.x,
+                        position.y - self.translation.y,
+                    );
                     
                     let branch_infos: Vec<_> = ordered_indices.iter()
                         .filter_map(|&i| {
