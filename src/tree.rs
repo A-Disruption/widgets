@@ -713,107 +713,79 @@ where
         let total_height_fill: u16 = row_fill_factors
             .iter()
             .enumerate()
-            .filter(|(i, _)| {
-                state.visible_branches.get(*i).copied().unwrap_or(false)
-                    && state
-                        .drag_active
-                        .as_ref()
-                        .map_or(true, |drag| !drag.dragged_nodes.contains(&self.branches[*i].id))
-            })
+            .filter(|(i, _)| state.visible_branches.get(*i).copied().unwrap_or(false))
             .map(|(_, &f)| f)
             .sum();
 
-        let total_width_fill: u16 = width_fill_factors
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| {
-                state.visible_branches.get(*i).copied().unwrap_or(false)
-                    && state
-                        .drag_active
-                        .as_ref()
-                        .map_or(true, |drag| !drag.dragged_nodes.contains(&self.branches[*i].id))
-            })
-            .map(|(_, &f)| f)
-            .sum();
+        let available_fluid_height = (available.height
+            - total_nonfluid_height
+            - self.padding_y * 2.0
+            - self.spacing
+                * state
+                    .visible_branches
+                    .iter()
+                    .filter(|&&v| v)
+                    .count()
+                    .saturating_sub(1) as f32)
+            .max(0.0);
 
-        let do_height_pass = total_height_fill > 0;
-        let do_width_pass = total_width_fill > 0;
+        let height_unit = if total_height_fill > 0 {
+            available_fluid_height / total_height_fill as f32
+        } else {
+            0.0
+        };
 
-        if do_height_pass || do_width_pass {
-            let available_fluid_height = (available.height
-                - total_nonfluid_height
-                - self.padding_y * 2.0
-                - self.spacing
-                    * state
-                        .visible_branches
-                        .iter()
-                        .filter(|&&v| v)
-                        .count()
-                        .saturating_sub(1) as f32)
-                .max(0.0);
+        for &i in &ordered_indices {
 
-            let height_unit = if total_height_fill > 0 {
-                available_fluid_height / total_height_fill as f32
+            // don't skip invisible branches, fix rendering fluid branches in overlay?
+            if i >= self.branches.len() {
+                continue;
+            }
+
+            // Skip non-fluid branches
+            if row_fill_factors[i] == 0 && width_fill_factors[i] == 0 {
+                continue;
+            } // Continue to handle fluid branches
+
+            let (_, _, effective_depth) = self.get_branch_info(i, state);
+            let child_state = &mut tree.children[i];
+            let content = &mut self.branch_content[i];
+            let size_hint = content.as_widget().size();
+
+            let w_factor = size_hint.width.fill_factor();
+            let is_width_fluid = w_factor != 0 || size_hint.width.is_fill();
+
+            let indent_x = self.padding_x + (effective_depth as f32 * self.indent);
+            let content_x = indent_x + ARROW_W + CONTENT_GAP;
+            let avail_w = (available.width - content_x - self.padding_x).max(0.0);
+
+            let max_h = if row_fill_factors[i] == 0 {
+                if size_hint.height.is_fill() {
+                    state.branch_heights[i]
+                } else {
+                    (available.height - y).max(0.0)
+                }
             } else {
-                0.0
+                height_unit * row_fill_factors[i] as f32
             };
 
-            for &i in &ordered_indices {
-                if i >= self.branches.len() || !state.visible_branches[i] {
-                    continue;
-                }
+            let content_limits =
+                layout::Limits::new(Size::ZERO, Size::new(avail_w, max_h)).max_width(avail_w);
 
-                if let Some(ref drag) = state.drag_active {
-                    if drag.dragged_nodes.contains(&self.branches[i].id) {
-                        continue;
-                    }
-                }
+            let content_layout = content.as_widget_mut().layout(child_state, renderer, &content_limits);
 
-                // Handle fluid rows
-                if row_fill_factors[i] == 0 && width_fill_factors[i] == 0 {
-                    continue;
-                }
+            let content_size = content_limits.resolve(
+                if is_width_fluid { tree_fluid } else { Length::Shrink },
+                Length::Shrink,
+                content_layout.size(),
+            );
 
-                let (_, _, effective_depth) = self.get_branch_info(i, state);
-                let child_state = &mut tree.children[i];
-                let content = &mut self.branch_content[i];
-                let size_hint = content.as_widget().size();
+            state.branch_heights[i] = state.branch_heights[i].max(content_size.height);
+            state.branch_widths[i] = state.branch_widths[i].max(content_size.width);
+            cells[i] = content_layout;
 
-                let w_factor = size_hint.width.fill_factor();
-                let is_width_fluid = w_factor != 0 || size_hint.width.is_fill();
-
-                let indent_x = self.padding_x + (effective_depth as f32 * self.indent);
-                let content_x = indent_x + ARROW_W + CONTENT_GAP;
-                let avail_w = (available.width - content_x - self.padding_x).max(0.0);
-
-                let max_h = if row_fill_factors[i] == 0 {
-                    if size_hint.height.is_fill() {
-                        state.branch_heights[i]
-                    } else {
-                        (available.height - y).max(0.0)
-                    }
-                } else {
-                    height_unit * row_fill_factors[i] as f32
-                };
-
-                let content_limits =
-                    layout::Limits::new(Size::ZERO, Size::new(avail_w, max_h)).max_width(avail_w);
-
-                let content_layout = content.as_widget_mut().layout(child_state, renderer, &content_limits);
-
-                let content_size = content_limits.resolve(
-                    if is_width_fluid { tree_fluid } else { Length::Shrink },
-                    Length::Shrink,
-                    content_layout.size(),
-                );
-
-                state.branch_heights[i] = state.branch_heights[i].max(content_size.height);
-                state.branch_widths[i] = state.branch_widths[i].max(content_size.width);
-                cells[i] = content_layout;
-
-                let total_w = content_x + content_size.width;
-                max_content_width = max_content_width.max(total_w);
-            }
+            let total_w = content_x + content_size.width;
+            max_content_width = max_content_width.max(total_w);
         }
 
         // THIRD PASS — position each visible branch
@@ -1493,6 +1465,11 @@ where
                 if !drag.dragged_nodes.contains(&id) {
                     let child_state = &tree.children[i];
                     let child_layout = layout.children().nth(i).unwrap();
+
+/*                     if i == 9 { // never prints, because this draws non-dragged children
+                        println!("11child layout id {}, layout: {:?}", i, child_layout);
+                    } */
+
                     self.branch_content[i].as_widget().draw(
                         child_state, renderer, theme, style, child_layout, cursor, viewport,
                     );
@@ -1500,6 +1477,11 @@ where
             } else {
                 let child_state = &tree.children[i];
                 let child_layout = layout.children().nth(i).unwrap();
+
+/*                 if i == 9 {
+                    println!("22child layout id {}, layout: {:?}", i, child_layout);
+                } */
+                
                 self.branch_content[i].as_widget().draw(
                     child_state, renderer, theme, style, child_layout, cursor, viewport,
                 );
@@ -1674,7 +1656,7 @@ where
 {
     fn layout(&mut self, _renderer: &Renderer, _bounds: Size) -> layout::Node {
         let state = self.state.state.downcast_ref::<TreeState>();
-        
+
         let position = if let Some(ref drag) = state.drag_active {
             Point::new(
                 drag.current_position.x - drag.click_offset.x + self.translation.x,
@@ -1682,9 +1664,9 @@ where
             )
         } else {
             Point::ORIGIN
-        };
+        };        
 
-        let (width, height) = if let Some(ref drag) = state.drag_active {
+        let (width, height) = if let Some(ref _drag) = state.drag_active {
             let mut max_width = 0.0f32;
             let mut total_height = 0.0f32;
             
@@ -1712,7 +1694,7 @@ where
             
             (max_width.max(200.0), total_height.max(LINE_HEIGHT))
         } else {
-            (300.0, LINE_HEIGHT)
+            (310.0, LINE_HEIGHT)
         };      
 
         layout::Node::new(Size::new(width, height))
@@ -1722,10 +1704,10 @@ where
     fn update(
         &mut self,
         event: &Event,
-        layout: Layout<'_>,
+        _layout: Layout<'_>,
         cursor: mouse::Cursor,
-        renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
+        _renderer: &Renderer,
+        _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
         match event {
@@ -1798,7 +1780,7 @@ where
                         }
                         
                         let mut found_target = false;
-                        for (id, parent_id, depth, branch_y, height, has_children, is_expanded, accepts_drops) in &branch_positions {
+                        for (id, _parent_id, _depth, branch_y, height, has_children, is_expanded, accepts_drops) in &branch_positions {
                             let row_bounds = Rectangle {
                                 x: tree_bounds.x,
                                 y: *branch_y,
@@ -1923,9 +1905,6 @@ where
         let tree_style = theme.style(&self.tree_handle.class);
         
         renderer.with_layer(self.viewport, |renderer| {
-            // We need to draw each dragged item properly
-            let mut y_offset = 0.0;
-
             let primary_index = self.tree_handle.branches
                 .iter()
                 .position(|b| {
@@ -2029,31 +2008,15 @@ where
             renderer.with_translation(translation, |renderer| {
                 if let Some(branch_content) = self.tree_handle.branch_content.get(primary_index) {
                     let branch_tree = &self.state.children[primary_index];
-                    
-                    // Get the correct layout for the primary branch
-                    let primary_layout = if self.dragged_indices.contains(&primary_index) {
-                        // Find the position of primary_index in dragged_indices
-                        if let Some(pos) = self.dragged_indices.iter().position(|&i| i == primary_index) {
-                            if pos == 0 {
-                                self.layout
-                            } else {
-                                self.tree_layout.children().nth(primary_index).unwrap_or(self.layout)
-                            }
-                        } else {
-                            self.layout
-                        }
-                    } else {
-                        self.tree_layout.children().nth(primary_index).unwrap_or(self.layout)
-                    };
-                    
+
                     branch_content.as_widget().draw(
                         branch_tree,
                         renderer,
                         theme,
                         &transparent_style,
-                        primary_layout,
+                        self.layout,
                         cursor,
-                        &primary_layout.bounds()
+                        &self.tree_layout.bounds()
                     );
                 }
             });
