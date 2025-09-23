@@ -1465,11 +1465,6 @@ where
                 if !drag.dragged_nodes.contains(&id) {
                     let child_state = &tree.children[i];
                     let child_layout = layout.children().nth(i).unwrap();
-
-/*                     if i == 9 { // never prints, because this draws non-dragged children
-                        println!("11child layout id {}, layout: {:?}", i, child_layout);
-                    } */
-
                     self.branch_content[i].as_widget().draw(
                         child_state, renderer, theme, style, child_layout, cursor, viewport,
                     );
@@ -1477,11 +1472,6 @@ where
             } else {
                 let child_state = &tree.children[i];
                 let child_layout = layout.children().nth(i).unwrap();
-
-/*                 if i == 9 {
-                    println!("22child layout id {}, layout: {:?}", i, child_layout);
-                } */
-                
                 self.branch_content[i].as_widget().draw(
                     child_state, renderer, theme, style, child_layout, cursor, viewport,
                 );
