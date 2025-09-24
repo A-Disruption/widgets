@@ -1,10 +1,6 @@
 use iced::{
-    alignment::{Horizontal, Vertical},
-    widget::{
-        button, checkbox, column, container, horizontal_rule, horizontal_space, pick_list, progress_bar, radio, row, scrollable, slider, text, text_input, toggler, vertical_space, Button, Column, Container, Radio, Row, Space, Text, TextInput
-    },
-    Alignment, Background, Border, Color, Element, Font, Length::{self, FillPortion}, Padding, Shadow, Task,
-    Theme, Vector,
+    widget::{ button, column, container, space::horizontal as horizontal_space, row, scrollable, text},
+    Element, Task, Theme,
 };
 use std::collections::HashSet;
 use widgets::tree::{branch, tree_handle, DropInfo, DropPosition};

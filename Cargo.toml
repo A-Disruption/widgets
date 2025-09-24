@@ -18,3 +18,7 @@ iced = { git = "https://github.com/iced-rs/iced", branch = "master" }
 [[example]]
 name = "tree_example"
 path = "examples\\tree_example.rs"
+
+[[example]]
+name = "color_picker_example"
+path = "examples\\color_picker_example.rs"
