@@ -121,6 +121,9 @@ struct TreeState {
     // Drag state
     drag_pending: Option<DragPending>,
     drag_active: Option<DragActive>,
+
+    // Selection rectangle state
+    selection_rect: Option<SelectionRect>,
     
     // Tree structure state (for reordering)
     branch_order: Option<Vec<BranchState>>,
@@ -147,6 +150,13 @@ struct DragActive {
     current_position: Point,
     drop_target: Option<usize>,
     drop_position: DropPosition,
+}
+
+#[derive(Debug, Clone)]
+struct SelectionRect {
+    start_position: Point,
+    current_position: Point,
+    initial_selection: HashSet<usize>,  // Items selected before drag started
 }
 
 impl<'a, Message, Theme, Renderer> 
@@ -561,6 +571,7 @@ where
             hovered_handle: None,
             drag_pending: None,
             drag_active: None,
+            selection_rect: None,
             branch_order: None,
             current_modifiers: keyboard::Modifiers::empty(),
         })
@@ -904,6 +915,18 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(position) = cursor.position() {
                     let bounds = layout.bounds();
+
+                    // Check if Ctrl is held for selection rectangle
+                    if state.current_modifiers.control() || state.current_modifiers.command() {
+                        // Start selection rectangle
+                        state.selection_rect = Some(SelectionRect {
+                            start_position: position,
+                            current_position: position,
+                            initial_selection: state.selected.clone(),
+                        });
+                        shell.request_redraw();
+                    }
+
                     let mut y = bounds.y + self.padding_y;
                     
                     for &i in &ordered_indices {
@@ -983,15 +1006,12 @@ where
                             }
 
                             // Set up pending drag
-                            let selected_for_drag = if state.selected.contains(&branch.id) {
-                                filter_redundant_selections(
-                                    &state.selected.iter().cloned().collect::<Vec<_>>(),
-                                    &self.branches,
-                                    &state.branch_order
-                                )
+                            let mut filtered_ids: Vec<usize> = if state.selected.contains(&branch.id) {
+                                state.selected.iter().copied().collect()
                             } else {
                                 vec![branch.id]
                             };
+                            filtered_ids = filter_redundant_selections(&filtered_ids, &self.branches, &state.branch_order);
                             
                             let click_offset = Vector::new(
                                 position.x - branch_bounds.x,
@@ -1000,7 +1020,7 @@ where
                             
                             state.drag_pending = Some(DragPending {
                                 start_position: position,
-                                branch_ids: selected_for_drag,
+                                branch_ids: filtered_ids,
                                 primary_branch_id: branch.id,
                                 branch_bounds,
                                 click_offset,
@@ -1034,11 +1054,80 @@ where
             }
 
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                // End selection rectangle if active
+                if state.selection_rect.is_some() {
+                    state.selection_rect = None;
+                    
+                    // Trigger selection callback if present
+                    if let Some(ref on_select) = self.on_select {
+                        let external_ids: HashSet<usize> = state
+                            .selected
+                            .iter()
+                            .map(|&internal| self.preferred_id(internal))
+                            .collect();
+                        shell.publish(on_select(external_ids));
+                    }
+                    
+                    shell.request_redraw();
+                }
+
                 state.drag_pending = None;
             }
 
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position() {
+
+                    // Handle selection rectangle
+                    if let Some(ref mut selection_rect) = state.selection_rect {
+                        selection_rect.current_position = position;
+                        
+                        // Calculate which branches are within the selection rectangle
+                        let bounds = layout.bounds();
+                        let rect_bounds = Rectangle {
+                            x: selection_rect.start_position.x.min(selection_rect.current_position.x),
+                            y: selection_rect.start_position.y.min(selection_rect.current_position.y),
+                            width: (selection_rect.current_position.x - selection_rect.start_position.x).abs(),
+                            height: (selection_rect.current_position.y - selection_rect.start_position.y).abs(),
+                        };
+                        
+                        // Start with initial selection
+                        state.selected = selection_rect.initial_selection.clone();
+                        
+                        // Add branches that intersect with selection rectangle
+                        let mut y = bounds.y + self.padding_y;
+                        for &i in &ordered_indices {
+                            if i >= self.branches.len() || 
+                            i >= state.visible_branches.len() || 
+                            !state.visible_branches[i] {
+                                continue;
+                            }
+                            
+                            let branch = &self.branches[i];
+                            let branch_height = state.branch_heights[i];
+                            let branch_bounds = Rectangle {
+                                x: bounds.x,
+                                y,
+                                width: bounds.width,
+                                height: branch_height,
+                            };
+                            
+                            // Check if branch intersects with selection rectangle
+                            if rectangles_intersect(&branch_bounds, &rect_bounds) {
+                                if state.current_modifiers.shift() {
+                                    // Shift+Ctrl removes from selection
+                                    state.selected.remove(&branch.id);
+                                } else {
+                                    state.selected.insert(branch.id);
+                                }
+                            }
+                            
+                            y += branch_height + self.spacing;
+                        }
+                        
+                        shell.request_redraw();
+                        return;
+                    }
+
                     // Check if we should start dragging
                     if let Some(ref pending) = state.drag_pending {
                         let distance = ((position.x - pending.start_position.x).powi(2) + 
@@ -1507,6 +1596,39 @@ where
                 }
             }
         }
+
+        // Draw selection rectangle if active
+        let state = tree.state.downcast_ref::<TreeState>();
+        if let Some(ref selection_rect) = state.selection_rect {
+            let rect_bounds = Rectangle {
+                x: selection_rect.start_position.x.min(selection_rect.current_position.x),
+                y: selection_rect.start_position.y.min(selection_rect.current_position.y),
+                width: (selection_rect.current_position.x - selection_rect.start_position.x).abs(),
+                height: (selection_rect.current_position.y - selection_rect.start_position.y).abs(),
+            };
+            
+            let tree_style = theme.style(&self.class);
+            
+            // Draw selection rectangle outline
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: rect_bounds,
+                    border: Border {
+                        color: tree_style.selection_border,
+                        width: 1.0,
+                        radius: Radius::from(2.0),
+                    },
+                    ..Default::default()
+                },
+                Color::from_rgba(
+                    tree_style.selection_border.r,
+                    tree_style.selection_border.g,
+                    tree_style.selection_border.b,
+                    0.1  // Semi-transparent fill
+                ),
+            );
+        }
+    
     }
 
     fn mouse_interaction(
@@ -2227,6 +2349,14 @@ fn filter_redundant_selections(selected_ids: &[usize], branches: &[Branch_], bra
     }
     
     filtered
+}
+
+// helper function for rectangle intersection ( ctrl + click selection )
+fn rectangles_intersect(a: &Rectangle, b: &Rectangle) -> bool {
+    !(a.x + a.width < b.x || 
+      b.x + b.width < a.x || 
+      a.y + a.height < b.y || 
+      b.y + b.height < a.y)
 }
 
 impl<'a, Message, Theme, Renderer> From<TreeHandle<'a, Message, Theme, Renderer>>
