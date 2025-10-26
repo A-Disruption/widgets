@@ -7,7 +7,8 @@ use iced::{
         Clipboard, Layout, Shell, Widget,
     }, border::Radius, keyboard, mouse, widget::text::Alignment, Border, Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector
 };
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet, HashMap,};
+use std::hash::Hash;
 
 // Constants for layout
 const LINE_HEIGHT: f32 = 32.0;       
@@ -31,14 +32,17 @@ where
 }
 
 /// Creates a new [`Branch`] with the given content element.
-pub fn branch<'a, Message, Theme, Renderer>(
+pub fn branch<'a, Message, Theme, Renderer, Id>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> Branch<'a, Message, Theme, Renderer>
+) -> Branch<'a, Message, Theme, Renderer, Id>
+where
+    Id: TreeId,
+
 {
     Branch {
         content: content.into(),
         children: Vec::new(),
-        external_id: 0,
+        external_id: Id::default(),
         align_x: iced::Alignment::Start,
         align_y: iced::Alignment::Center,
         accepts_drops: false,
@@ -47,9 +51,12 @@ pub fn branch<'a, Message, Theme, Renderer>(
 }
 
 #[derive(Debug, Clone)]
-pub struct DropInfo{
-    pub dragged_ids: Vec<usize>,
-    pub target_id: Option<usize>,
+pub struct DropInfo<Id = usize> 
+where
+    Id: TreeId,
+{
+    pub dragged_ids: Vec<Id>,
+    pub target_id: Option<Id>,
     pub position: DropPosition,
 }
 
@@ -61,11 +68,12 @@ pub enum DropPosition {
 }
 
 #[allow(missing_debug_implementations)]
-pub struct TreeHandle<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> 
+pub struct TreeHandle<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer, Id = usize> 
 where 
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::text::Renderer,
+    Id: TreeId,
 {
     branches: Vec<Branch_>,
     branch_content: Vec<Element<'a, Message, Theme, Renderer>>, 
@@ -75,11 +83,11 @@ where
     indent: f32, 
     padding_x: f32,
     padding_y: f32,
-    on_drop: Option<Box<dyn Fn(DropInfo) -> Message + 'a>>,
-    on_select: Option<Box< dyn Fn(HashSet<usize>) -> Message + 'a>>,
+    on_drop: Option<Box<dyn Fn(DropInfo<Id>) -> Message + 'a>>,
+    on_select: Option<Box<dyn Fn(HashSet<Id>) -> Message + 'a>>,
     force_reset_order: bool,
-    ext_to_int: HashMap<usize, usize>,
-    int_to_ext: Vec<usize>, // index is internal id; value is external id or 0
+    ext_to_int: HashMap<Id, usize>,
+    int_to_ext: Vec<Id>, // Vec indexed by internal usize, stores external Id
     class: Theme::Class<'a>,
 }
 
@@ -158,6 +166,11 @@ struct SelectionRect {
     current_position: Point,
     initial_selection: HashSet<usize>,  // Items selected before drag started
 }
+
+pub trait TreeId: Copy + Eq + Hash + Clone + Default + std::fmt::Debug + 'static {}
+
+// Blanket implementation
+impl<T> TreeId for T where T: Copy + Eq + Hash + Clone + Default + std::fmt::Debug + 'static {}
 
 impl<'a, Message, Theme, Renderer> 
     TreeHandle<'a, Message, Theme, Renderer>
@@ -2373,21 +2386,24 @@ where
 
 /// A branch in a tree that contains content and can have children.
 #[allow(missing_debug_implementations)]
-pub struct Branch<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
+pub struct Branch<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer, Id = usize> {
     pub content: Element<'a, Message, Theme, Renderer>,
-    pub children: Vec<Branch<'a, Message, Theme, Renderer>>,
-    pub external_id: usize, 
+    pub children: Vec<Branch<'a, Message, Theme, Renderer, Id>>,
+    pub external_id: Id, 
     pub align_x: iced::Alignment,
     pub align_y: iced::Alignment,
     pub accepts_drops: bool,
     pub draggable: bool, 
 }
 
-impl<'a, Message, Theme, Renderer> 
-    Branch<'a, Message, Theme, Renderer> {
+impl<'a, Message, Theme, Renderer, Id> 
+    Branch<'a, Message, Theme, Renderer, Id> {
 
     /// Adds children to this branch
-    pub fn with_children(mut self, children: Vec<Self>) -> Self {
+    pub fn with_children(mut self, children: Vec<Self>) -> Self 
+    where
+        Id: TreeId,
+    {
         self.children = children;
         self
     }
@@ -2412,7 +2428,7 @@ impl<'a, Message, Theme, Renderer>
         self
     }
 
-    pub fn with_id(mut self, id: usize) -> Self {
+    pub fn with_id(mut self, id: Id) -> Self {
         self.external_id = id;
         self
     }
