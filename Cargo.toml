@@ -11,6 +11,7 @@ iced = { version = "0.14.0-dev", features = [
     "debug",
     "canvas",
 ] }
+uuid = { version = "1.6", features = ["v4", "serde"] }
 
 [patch.crates-io]
 iced = { git = "https://github.com/iced-rs/iced", branch = "master" }
@@ -18,6 +19,10 @@ iced = { git = "https://github.com/iced-rs/iced", branch = "master" }
 [[example]]
 name = "tree_example"
 path = "examples\\tree_example.rs"
+
+[[example]]
+name = "tree_example_advanced"
+path = "examples\\tree_example_advanced.rs"
 
 [[example]]
 name = "color_picker_example"
