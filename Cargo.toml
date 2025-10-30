@@ -27,3 +27,7 @@ path = "examples\\tree_example_advanced.rs"
 [[example]]
 name = "color_picker_example"
 path = "examples\\color_picker_example.rs"
+
+[[example]]
+name = "collasible_example"
+path = "examples\\collasible_example.rs"
