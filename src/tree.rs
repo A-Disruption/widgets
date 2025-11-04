@@ -3,14 +3,11 @@ use iced::{
         layout,
         renderer,
         text::Renderer as _,
-        widget,
+        widget::{self, tree::Tree},
         Clipboard, Layout, Shell, Widget,
     }, border::Radius, keyboard, mouse, widget::text::Alignment, Border, Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector
 };
-use std::collections::{HashSet, HashMap,};
-use std::hash::Hash;
-
-pub mod tree_node;
+use std::collections::{HashSet, HashMap};
 
 // Constants for layout
 const LINE_HEIGHT: f32 = 32.0;       
@@ -21,45 +18,38 @@ const HANDLE_STRIPE_W: f32 = 2.0;
 const CONTENT_GAP: f32 = 14.0;       
 const DRAG_THRESHOLD: f32 = 5.0;     // Minimum distance to start drag
 
-/// Creates a new [`Tree`] with the given root branches.
-pub fn tree_handle<'a, Message, Theme, Renderer, Id>(
-    roots: impl IntoIterator<Item = Branch<'a, Message, Theme, Renderer, Id>>,
-) -> Tree<'a, Message, Theme, Renderer, Id>
+/// Creates a new [`TreeHandle`] with the given root branches.
+pub fn tree_handle<'a, Message, Theme, Renderer>(
+    roots: impl IntoIterator<Item = Branch<'a, Message, Theme, Renderer>>,
+) -> TreeHandle<'a, Message, Theme, Renderer>
 where
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
-    Id: TreeId,
 {
-    Tree::new(roots)
+    TreeHandle::new(roots)
 }
 
 /// Creates a new [`Branch`] with the given content element.
-pub fn branch<'a, Message, Theme, Renderer, Id>(
+pub fn branch<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> Branch<'a, Message, Theme, Renderer, Id>
-where
-    Id: TreeId,
+) -> Branch<'a, Message, Theme, Renderer>
 {
     Branch {
         content: content.into(),
         children: Vec::new(),
-        external_id: Id::default(),
+        external_id: 0,
         align_x: iced::Alignment::Start,
         align_y: iced::Alignment::Center,
         accepts_drops: false,
         draggable: true,
-        expanded: false,
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct DropInfo<Id = usize> 
-where
-    Id: TreeId,
-{
-    pub dragged_ids: Vec<Id>,
-    pub target_id: Option<Id>,
+pub struct DropInfo{
+    pub dragged_ids: Vec<usize>,
+    pub target_id: Option<usize>,
     pub position: DropPosition,
 }
 
@@ -71,14 +61,13 @@ pub enum DropPosition {
 }
 
 #[allow(missing_debug_implementations)]
-pub struct Tree<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer, Id = usize> 
+pub struct TreeHandle<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> 
 where 
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::text::Renderer,
-    Id: TreeId,
 {
-    branches: Vec<Branch_<Id>>,
+    branches: Vec<Branch_>,
     branch_content: Vec<Element<'a, Message, Theme, Renderer>>, 
     width: Length, 
     height: Length,
@@ -86,27 +75,21 @@ where
     indent: f32, 
     padding_x: f32,
     padding_y: f32,
-    initial_expanded: Option<HashSet<Id>>,
-    on_expand: Option<Box<dyn Fn(Id, bool) -> Message + 'a>>,
-    on_drop: Option<Box<dyn Fn(DropInfo<Id>) -> Message + 'a>>,
-    on_select: Option<Box<dyn Fn(HashSet<Id>) -> Message + 'a>>,
+    on_drop: Option<Box<dyn Fn(DropInfo) -> Message + 'a>>,
+    on_select: Option<Box< dyn Fn(HashSet<usize>) -> Message + 'a>>,
     force_reset_order: bool,
-    ext_to_int: HashMap<Id, usize>,
-    int_to_ext: Vec<Id>, // Vec indexed by internal usize, stores external Id
+    ext_to_int: HashMap<usize, usize>,
+    int_to_ext: Vec<usize>, // index is internal id; value is external id or 0
     class: Theme::Class<'a>,
 }
 
 #[derive(Clone, Debug)]
-struct Branch_<Id>
-where 
-    Id: TreeId,
- {
+struct Branch_ {
     id: usize,
-    external_id: Id,
+    external_id: usize,
     parent_id: Option<usize>,
     depth: u16,
     has_children: bool,
-    expanded: bool,
     accepts_drops: bool,
     draggable: bool,
     align_x: iced::Alignment,
@@ -124,6 +107,7 @@ struct BranchState {
 #[derive(Default)]
 struct TreeState {
     // Visual state
+    expanded: HashSet<usize>,
     branch_heights: Vec<f32>,
     branch_widths: Vec<f32>,
     visible_branches: Vec<bool>,
@@ -175,22 +159,16 @@ struct SelectionRect {
     initial_selection: HashSet<usize>,  // Items selected before drag started
 }
 
-pub trait TreeId: Copy + Eq + Hash + Clone + Default + std::fmt::Debug + 'static {}
-
-// Blanket implementation
-impl<T> TreeId for T where T: Copy + Eq + Hash + Clone + Default + std::fmt::Debug + 'static {}
-
-impl<'a, Message, Theme, Renderer, Id> 
-    Tree<'a, Message, Theme, Renderer, Id>
+impl<'a, Message, Theme, Renderer> 
+    TreeHandle<'a, Message, Theme, Renderer>
 where 
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::Renderer  + iced::advanced::text::Renderer,
-    Id: TreeId,
 {
-    /// Creates a new [`Tree`] from root branches.
+    /// Creates a new [`TreeHandle`] from root branches.
     pub fn new<'b>( 
-        roots: impl IntoIterator<Item = Branch<'a, Message, Theme, Renderer, Id>>,
+        roots: impl IntoIterator<Item = Branch<'a, Message, Theme, Renderer>>,
     ) -> Self {
         let roots = roots.into_iter();
 
@@ -202,18 +180,17 @@ where
         let mut next_id = 0usize;
 
         // Flatten the tree structure into arrays
-        fn flatten_branch<'a, Message, Theme, Renderer, Id>(
-            branch: Branch<'a, Message, Theme, Renderer, Id>,
+        fn flatten_branch<'a, Message, Theme, Renderer>(
+            branch: Branch<'a, Message, Theme, Renderer>,
             parent_id: Option<usize>,
             depth: u16,
             next_id: &mut usize,
-            branches: &mut Vec<Branch_<Id>>,
+            branches: &mut Vec<Branch_>,
             branch_content: &mut Vec<Element<'a, Message, Theme, Renderer>>,
             width: &mut Length,
             height: &mut Length,
         ) where
             Renderer: iced::advanced::Renderer  + iced::advanced::text::Renderer,
-            Id: TreeId,
         {
             let current_id = *next_id;
             *next_id += 1;
@@ -226,7 +203,6 @@ where
                 parent_id,
                 depth,
                 has_children,
-                expanded: branch.expanded,
                 accepts_drops: branch.accepts_drops,
                 draggable: branch.draggable,
                 align_x: branch.align_x,
@@ -266,15 +242,17 @@ where
         }
 
         let mut ext_to_int = HashMap::new();
-        let mut int_to_ext = vec![Id::default(); branches.len()];
+        let mut int_to_ext = vec![0usize; branches.len()];
 
         for b in &branches {
-            // Always insert, but warn on duplicates
-            if ext_to_int.contains_key(&b.external_id) {
-                eprintln!("Warning: duplicate external_id {:?} found", b.external_id);
+            if b.external_id != 0 {
+                // Use debug_assert for development, or handle duplicates gracefully
+                if ext_to_int.contains_key(&b.external_id) {
+                    eprintln!("Warning: duplicate external_id {} found", b.external_id);
+                }
+                ext_to_int.insert(b.external_id, b.id);
+                int_to_ext[b.id] = b.external_id;
             }
-            ext_to_int.insert(b.external_id, b.id);
-            int_to_ext[b.id] = b.external_id;
         }
 
         Self {
@@ -286,8 +264,6 @@ where
             indent: 20.0,
             padding_x: 10.0,
             padding_y: 5.0,
-            initial_expanded: None,
-            on_expand: None,
             on_drop: None,
             on_select: None,
             force_reset_order: false,
@@ -297,20 +273,10 @@ where
         }
     }
 
-
-    /// Sets a callback for expansion toggles (emits external ID and new state).
-    pub fn on_expand<F>(mut self, f: F) -> Self 
-    where 
-        F: Fn(Id, bool) -> Message + 'a,
-    {
-        self.on_expand = Some(Box::new(f));
-        self
-    }
-
     /// Sets the message to emit when a drop occurs
     pub fn on_drop<F>(mut self, f: F) -> Self 
     where
-        F: Fn(DropInfo<Id>) -> Message + 'a,
+        F: Fn(DropInfo) -> Message + 'a,
     {
         self.on_drop = Some(Box::new(f));
         self
@@ -319,7 +285,7 @@ where
     /// Sets the message emit when a branch is selected
     pub fn on_select<F>(mut self, f: F) -> Self
     where 
-        F: Fn(HashSet<Id>) -> Message + 'a
+        F: Fn(HashSet<usize>) -> Message + 'a
     {
         self.on_select = Some(Box::new(f));
         self
@@ -463,7 +429,7 @@ where
         if let Some(parent_id) = parent_id {
             if let Some(parent_index) = self.branches.iter().position(|b| b.id == parent_id) {
                 return self.is_branch_visible(parent_index, state) 
-                    && self.is_expanded(parent_id);
+                    && state.expanded.contains(&parent_id);
             }
         }
         
@@ -560,48 +526,19 @@ where
     }
 
     #[inline]
-    fn preferred_id(&self, internal_id: usize) -> Id {
+    fn preferred_id(&self, internal_id: usize) -> usize {
         // Always prefer the external ID if it exists
-        self.int_to_ext.get(internal_id).copied().unwrap_or_else(Id::default)
-    }
-
-    /// Get the expanded state of a branch by internal ID
-    #[inline]
-    fn is_expanded(&self, branch_id: usize) -> bool {
-        self.branches.iter()
-            .find(|b| b.id == branch_id)
-            .map(|b| b.expanded)
-            .unwrap_or(false)
-    }
-
-    /// Set the expanded state of a branch by internal ID
-    #[inline]
-    fn set_expanded(&mut self, branch_id: usize, expanded: bool) {
-        if let Some(branch) = self.branches.iter_mut().find(|b| b.id == branch_id) {
-            branch.expanded = expanded;
-        }
-    }
-
-    /// Toggle the expanded state of a branch by internal ID, returns new state
-    #[inline]
-    fn toggle_expanded(&mut self, branch_id: usize) -> bool {
-        if let Some(branch) = self.branches.iter_mut().find(|b| b.id == branch_id) {
-            branch.expanded = !branch.expanded;
-            branch.expanded
-        } else {
-            false
-        }
+        self.int_to_ext.get(internal_id).copied().unwrap_or(internal_id)
     }
 
 }
 
-impl<'a, Message, Theme, Renderer, Id> Widget<Message, Theme, Renderer>
-    for Tree<'a, Message, Theme, Renderer, Id>
+impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for TreeHandle<'a, Message, Theme, Renderer>
 where
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
-    Id: TreeId,
 {
     fn size(&self) -> Size<Length> {
         Size {
@@ -614,23 +551,30 @@ where
         widget::tree::Tag::of::<TreeState>()
     }
 
-    fn state(&self) -> widget::tree::State {   
-        widget::tree::State::new(
-            TreeState {
-                branch_heights: Vec::new(),
-                branch_widths: Vec::new(),
-                visible_branches: Vec::new(),
-                selected: HashSet::new(),
-                focused: None,
-                hovered: None,
-                hovered_handle: None,
-                drag_pending: None,
-                drag_active: None,
-                selection_rect: None,
-                branch_order: None,
-                current_modifiers: keyboard::Modifiers::empty(),
+    fn state(&self) -> widget::tree::State {
+        let mut expanded = HashSet::new();
+        
+        for branch in &self.branches {
+            if branch.has_children {
+                expanded.insert(branch.id.clone());
             }
-        )
+        }
+        
+        widget::tree::State::new(TreeState {
+            expanded,
+            branch_heights: Vec::new(),
+            branch_widths: Vec::new(),
+            visible_branches: Vec::new(),
+            selected: HashSet::new(),
+            focused: None,
+            hovered: None,
+            hovered_handle: None,
+            drag_pending: None,
+            drag_active: None,
+            selection_rect: None,
+            branch_order: None,
+            current_modifiers: keyboard::Modifiers::empty(),
+        })
     }
 
     fn children(&self) -> Vec<widget::Tree> {
@@ -677,7 +621,7 @@ where
 
         // Auto-expand branches that just gained children
         for branch_id in newly_has_children {
-            self.set_expanded(branch_id, true);
+            state.expanded.insert(branch_id);
         }
 
         let ordered_indices = self.get_ordered_indices(state);
@@ -901,7 +845,7 @@ where
 
             if let Some(ref drag) = state.drag_active {
                 if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::Into {
-                    if self.is_expanded(branch.id) {
+                    if state.expanded.contains(&branch.id) {
                         y += drop_indicator_space;
                     }
                 }
@@ -992,7 +936,7 @@ where
                             continue;
                         }
                         
-                        let branch = &self.branches[i].clone();
+                        let branch = &self.branches[i];
                         let (_, _, effective_depth) = self.get_branch_info(i, state);
                         
                         if let Some(ref drag) = state.drag_active {
@@ -1020,13 +964,11 @@ where
                             };
                             
                             if arrow_bounds.contains(position) {
-                                let is_now_expanded = self.toggle_expanded(branch.id);
-                                let external_id = self.preferred_id(branch.id); 
-
-                                if let Some(ref on_expand) = self.on_expand {
-                                    shell.publish(on_expand(external_id, is_now_expanded)); // Emit callback with updated state
+                                if state.expanded.contains(&branch.id) {
+                                    state.expanded.remove(&branch.id);
+                                } else {
+                                    state.expanded.insert(branch.id);
                                 }
-                                
                                 shell.invalidate_layout();
                                 shell.request_redraw();
                                 return;
@@ -1050,7 +992,7 @@ where
                                 state.focused = Some(branch.id);
 
                                 if let Some(ref on_select) = self.on_select {
-                                    let external_ids: HashSet<Id> = state
+                                    let external_ids: HashSet<usize> = state
                                         .selected
                                         .iter()
                                         .map(|&internal| self.preferred_id(internal))
@@ -1097,7 +1039,7 @@ where
                             state.focused = Some(branch.id);
 
                             if let Some(ref on_select) = self.on_select {
-                                let external_ids: HashSet<Id> = state
+                                let external_ids: HashSet<usize> = state
                                     .selected
                                     .iter()
                                     .map(|&internal| self.preferred_id(internal))
@@ -1118,7 +1060,7 @@ where
                     
                     // Trigger selection callback if present
                     if let Some(ref on_select) = self.on_select {
-                        let external_ids: HashSet<Id> = state
+                        let external_ids: HashSet<usize> = state
                             .selected
                             .iter()
                             .map(|&internal| self.preferred_id(internal))
@@ -1288,14 +1230,8 @@ where
                         }
                         keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
                             if let Some(branch) = self.branches.iter().find(|b| b.id == focused) {
-                                if branch.has_children && self.is_expanded(focused) {
-                                    self.set_expanded(focused, false);
-                                    let external_id = self.preferred_id(focused);
-
-                                    if let Some(ref on_expand) = self.on_expand {
-                                        shell.publish(on_expand(external_id, false)); // Emit callback, branch is no longer expanded
-                                    }
-
+                                if branch.has_children && state.expanded.contains(&focused) {
+                                    state.expanded.remove(&focused);
                                     shell.invalidate_layout();
                                     shell.request_redraw();
                                 }
@@ -1303,14 +1239,8 @@ where
                         }
                         keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
                             if let Some(branch) = self.branches.iter().find(|b| b.id == focused) {
-                                if branch.has_children && !self.is_expanded(focused) {
-                                    self.set_expanded(focused, true);
-                                    let external_id = self.preferred_id(focused);
-
-                                    if let Some(ref on_expand) = self.on_expand {
-                                        shell.publish(on_expand(external_id, true));// Emit callback, branch is now expanded
-                                    }
-
+                                if branch.has_children && !state.expanded.contains(&focused) {
+                                    state.expanded.insert(focused);
                                     shell.invalidate_layout();
                                     shell.request_redraw();
                                 }
@@ -1329,7 +1259,7 @@ where
                             }
 
                             if let Some(ref on_select) = self.on_select {
-                                let external_ids: HashSet<Id> = state
+                                let external_ids: HashSet<usize> = state
                                     .selected
                                     .iter()
                                     .map(|&internal| self.preferred_id(internal))
@@ -1462,7 +1392,7 @@ where
 
             if let Some(ref drag) = state.drag_active {
                 if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
-                    if self.is_expanded(id) {
+                    if state.expanded.contains(&id) {
                         pending_into_adjustment = true;
                     } else {
                         let indicator_width = 30.0;
@@ -1570,7 +1500,7 @@ where
             
             // Draw expand/collapse arrow
             if branch.has_children {
-                let arrow = if self.is_expanded(id) { "🠻" } else { "🠺" };
+                let arrow = if state.expanded.contains(&id) { "🠻" } else { "🠺" };
                 
                 renderer.fill_text(
                     iced::advanced::Text {
@@ -1641,8 +1571,7 @@ where
             if let Some(ref drag) = state.drag_active {
                 if drag.drop_target == Some(id) && 
                    drag.drop_position == DropPosition::Into && 
-                   self.is_expanded(id) 
-                {
+                   state.expanded.contains(&id) {
                     let child_preview_y = branch_y + branch_height + self.spacing;
                     let child_depth = effective_depth + 1;
                     draw_drop_preview(renderer, child_preview_y, child_depth, bounds.width);
@@ -1815,14 +1744,13 @@ where
 }
 
 // Custom overlay for rendering dragged items
-struct DragOverlay<'a, 'b, Message, Theme, Renderer, Id>
+struct DragOverlay<'a, 'b, Message, Theme, Renderer>
 where 
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::text::Renderer,
-    Id: TreeId,
 {
-    tree_handle: &'a mut Tree<'b, Message, Theme, Renderer, Id>,
+    tree_handle: &'a mut TreeHandle<'b, Message, Theme, Renderer>,
     state: &'a mut widget::Tree,
     layout: Layout<'a>,
     tree_layout: Layout<'a>,
@@ -1831,13 +1759,12 @@ where
     translation: Vector,
 }
 
-impl<'a, Message, Theme, Renderer, Id> iced::advanced::overlay::Overlay<Message, Theme, Renderer> 
-    for DragOverlay<'_, '_, Message, Theme, Renderer, Id>
+impl<'a, Message, Theme, Renderer> iced::advanced::overlay::Overlay<Message, Theme, Renderer> 
+    for DragOverlay<'_, '_, Message, Theme, Renderer>
 where
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
-    Id: TreeId,
 {
     fn layout(&mut self, _renderer: &Renderer, _bounds: Size) -> layout::Node {
         let state = self.state.state.downcast_ref::<TreeState>();
@@ -1929,7 +1856,7 @@ where
                                 depth,
                                 branch_height,
                                 branch.has_children,
-                                self.tree_handle.is_expanded(id),
+                                state.expanded.contains(&id),
                                 branch.accepts_drops
                             ))
                         })
@@ -2024,7 +1951,7 @@ where
                     let state = self.state.state.downcast_ref::<TreeState>();
                     if let Some(ref drag) = state.drag_active {
                         // Convert internal IDs to external IDs while we have access to everything
-                        let dragged_ext: Vec<Id> = drag
+                        let dragged_ext: Vec<usize> = drag
                             .dragged_nodes
                             .iter()
                             .map(|&internal| self.tree_handle.preferred_id(internal))
@@ -2132,13 +2059,23 @@ where
                 renderer::Quad {
                     bounds: branch_bounds,
                     border: Border {
-                        color: tree_style.selection_background.scale_alpha(0.9),
+                        color: Color::from_rgba(
+                            tree_style.selection_border.r,
+                            tree_style.selection_border.g,
+                            tree_style.selection_border.b,
+                            0.9
+                        ),
                         width: 2.0,
                         radius: Radius::from(2.0),
                     },
                     ..Default::default()
                 },
-                tree_style.selection_background.scale_alpha(0.9),
+                Color::from_rgba(
+                    tree_style.selection_background.r,
+                    tree_style.selection_background.g,
+                    tree_style.selection_background.b,
+                    0.9
+                ),
             );
 
             // Draw the handle stripe
@@ -2156,7 +2093,12 @@ where
                     border: Border::default(),
                     ..Default::default()
                 },
-                tree_style.line_color.scale_alpha(0.7),
+                Color::from_rgba(
+                    tree_style.line_color.r,
+                    tree_style.line_color.g,
+                    tree_style.line_color.b,
+                    0.7
+                ),
             );
             
             // Draw the content
@@ -2167,7 +2109,12 @@ where
             );
             
             let transparent_style = renderer::Style {
-                text_color: style.text_color.scale_alpha(0.9),
+                text_color: Color::from_rgba(
+                    style.text_color.r,
+                    style.text_color.g,
+                    style.text_color.b,
+                    0.9
+                ),
             };
 
             renderer.with_translation(translation, |renderer| {
@@ -2202,12 +2149,11 @@ where
     }
 }
 
-impl<'a, 'b, Message, Theme, Renderer, Id> DragOverlay<'a, 'b, Message, Theme, Renderer, Id>
+impl<'a, 'b, Message, Theme, Renderer> DragOverlay<'a, 'b, Message, Theme, Renderer>
 where 
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::text::Renderer<Font = iced::Font>,
-    Id: TreeId
 {
     fn reorder_branches(
         &mut self,
@@ -2369,10 +2315,7 @@ fn collect_branch_and_descendants(branch_id: usize, result: &mut HashSet<usize>,
     }
 }
 
-fn filter_redundant_selections<'a, Id>(selected_ids: &[usize], branches: &[Branch_<Id>], branch_order: &Option<Vec<BranchState>>) -> Vec<usize> 
-where 
-    Id: TreeId,
-{
+fn filter_redundant_selections(selected_ids: &[usize], branches: &[Branch_], branch_order: &Option<Vec<BranchState>>) -> Vec<usize> {
     let mut filtered = Vec::new();
     
     for &id in selected_ids {
@@ -2416,45 +2359,39 @@ fn rectangles_intersect(a: &Rectangle, b: &Rectangle) -> bool {
       b.y + b.height < a.y)
 }
 
-impl<'a, Message, Theme, Renderer, Id> From<Tree<'a, Message, Theme, Renderer, Id>>
+impl<'a, Message, Theme, Renderer> From<TreeHandle<'a, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: Catalog + 'a,
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font> + 'a,
-    Id: TreeId,
 {
-    fn from(tree: Tree<'a, Message, Theme, Renderer, Id>) -> Self {
+    fn from(tree: TreeHandle<'a, Message, Theme, Renderer>) -> Self {
         Element::new(tree)
     }
 }
 
 /// A branch in a tree that contains content and can have children.
 #[allow(missing_debug_implementations)]
-pub struct Branch<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer, Id = usize> {
+pub struct Branch<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     pub content: Element<'a, Message, Theme, Renderer>,
-    pub children: Vec<Branch<'a, Message, Theme, Renderer, Id>>,
-    pub external_id: Id,
-    pub expanded: bool,
+    pub children: Vec<Branch<'a, Message, Theme, Renderer>>,
+    pub external_id: usize, 
     pub align_x: iced::Alignment,
     pub align_y: iced::Alignment,
     pub accepts_drops: bool,
     pub draggable: bool, 
 }
 
-impl<'a, Message, Theme, Renderer, Id> 
-    Branch<'a, Message, Theme, Renderer, Id> {
+impl<'a, Message, Theme, Renderer> 
+    Branch<'a, Message, Theme, Renderer> {
 
     /// Adds children to this branch
-    pub fn with_children(mut self, children: Vec<Self>) -> Self 
-    where
-        Id: TreeId,
-    {
+    pub fn with_children(mut self, children: Vec<Self>) -> Self {
         self.children = children;
         self
     }
 
-    /// Sets whether this branch can have branches added via drag and drop
     pub fn accepts_drops(mut self) -> Self {
         self.accepts_drops = true;
         self
@@ -2470,19 +2407,12 @@ impl<'a, Message, Theme, Renderer, Id>
         self
     }
 
-    /// Sets whether this branch can be dragged to reordered
     pub fn block_dragging(mut self) -> Self {
         self.draggable = false;
         self
     }
 
-    /// Sets whether this branch should start expanded
-    pub fn expanded(mut self, expanded: bool) -> Self {
-        self.expanded = expanded;
-        self
-    }
-
-    pub fn with_id(mut self, id: Id) -> Self {
+    pub fn with_id(mut self, id: usize) -> Self {
         self.external_id = id;
         self
     }
@@ -2554,7 +2484,12 @@ impl Catalog for iced::Theme {
                 selection_background: palette.background.weakest.color,
                 selection_text: palette.background.base.text,
                 selection_border: palette.secondary.base.color,
-                focus_border: palette.secondary.base.color.scale_alpha(0.5),
+                focus_border: Color::from_rgba(
+                    palette.secondary.base.color.r,
+                    palette.secondary.base.color.g,
+                    palette.secondary.base.color.b,
+                    0.5
+                ),
                 arrow_color: palette.background.strong.color,
                 line_color: palette.primary.weak.color,
                 accept_drop_indicator_color: palette.primary.strong.color,

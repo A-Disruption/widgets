@@ -94,14 +94,14 @@ where
     Renderer: text::Renderer,
 {
     /// The default height of the header.
-    pub const DEFAULT_HEADER_HEIGHT: f32 = 40.0;
+    pub const DEFAULT_HEADER_HEIGHT: f32 = 32.0;
 
     /// The default padding for the header content.
     pub const DEFAULT_PADDING: Padding = Padding {
-        top: 8.0,
-        right: 12.0,
-        bottom: 8.0,
-        left: 12.0,
+        top: 4.0,
+        right: 8.0,
+        bottom: 4.0,
+        left: 8.0,
     };
 
     /// The default spacing between icon and title.
@@ -122,7 +122,7 @@ where
             height: Length::Shrink,
             header_height: Self::DEFAULT_HEADER_HEIGHT,
             title_alignment: Alignment::Start,
-            header_clickable: true,  // Changed to true by default
+            header_clickable: true,
             padding: Self::DEFAULT_PADDING,
             text_size: None,
             font: None,
@@ -236,6 +236,30 @@ where
         self.class = class.into();
         self
     }
+
+    fn child_indices(&self) -> (Option<usize>, Option<usize>, usize) {
+        let mut index = 0;
+        let expand_index = if self.expand_icon.is_some() {
+            let i = index;
+            index += 1;
+            Some(i)
+        } else {
+            None
+        };
+        
+        let collapse_index = if self.collapse_icon.is_some() {
+            let i = index;
+            index += 1;
+            Some(i)
+        } else {
+            None
+        };
+        
+        let content_index = index;
+        
+        (expand_index, collapse_index, content_index)
+    }
+
 }
 
 /// Easing functions for animation.
@@ -282,6 +306,7 @@ where
 {
     animation: State,
     text: widget::text::State<P>,
+    icon_text: widget::text::State<P>,
 }
 
 impl Default for State {
@@ -345,15 +370,40 @@ where
         tree::State::new(CombinedState {
             animation: animation_state,
             text: widget::text::State::<Renderer::Paragraph>::default(),
+            icon_text: widget::text::State::<Renderer::Paragraph>::default(),
         })
     }
 
     fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&self.content)]
+        let mut children = vec![];
+        
+        if let Some(ref expand_icon) = self.expand_icon {
+            children.push(Tree::new(expand_icon));
+        }
+        
+        if let Some(ref collapse_icon) = self.collapse_icon {
+            children.push(Tree::new(collapse_icon));
+        }
+        
+        children.push(Tree::new(&self.content));
+        
+        children
     }
 
     fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(&[&self.content]);
+        let mut children = vec![];
+        
+        if let Some(ref expand_icon) = self.expand_icon {
+            children.push(expand_icon);
+        }
+        
+        if let Some(ref collapse_icon) = self.collapse_icon {
+            children.push(collapse_icon);
+        }
+        
+        children.push(&self.content);
+        
+        tree.diff_children(&children);
     }
 
     fn size(&self) -> Size<Length> {
@@ -373,12 +423,62 @@ where
         let state = &combined_state.animation;
         let limits = limits.width(self.width).height(self.height);
 
-        // Calculate icon size and position
-        let icon_size = self.header_height - self.padding.vertical();
-        let icon_node = layout::Node::new(Size::new(icon_size, icon_size));
+        let icon_node = if self.expand_icon.is_none() && self.collapse_icon.is_none() {
+            // Use default text icon
+            let arrow = if state.is_expanded { "🠻" } else { "🠺" };
+            
+            let icon_limits = layout::Limits::new(
+                Size::ZERO,
+                Size::new(self.header_height, self.header_height),
+            );
+
+            widget::text::layout(
+                &mut combined_state.icon_text,
+                renderer,
+                &icon_limits,
+                arrow,
+                widget::text::Format {
+                    width: Length::Shrink,
+                    height: Length::Shrink,
+                    line_height: text::LineHeight::default(),
+                    size: self.text_size,
+                    font: self.font,
+                    align_x: text::Alignment::Center,
+                    align_y: alignment::Vertical::Center,
+                    shaping: text::Shaping::Advanced,
+                    wrapping: text::Wrapping::default(),
+                },
+            )
+        } else {
+            // Layout custom icon Element
+            let icon_index = if state.is_expanded { 
+                if self.expand_icon.is_some() { 1 } else { 0 }
+            } else { 
+                0 
+            };
+            
+            let icon_element = if state.is_expanded {
+                self.collapse_icon.as_mut().unwrap()
+            } else {
+                self.expand_icon.as_mut().unwrap()
+            };
+            
+            let icon_limits = layout::Limits::new(
+                Size::ZERO,
+                Size::new(self.header_height, self.header_height),
+            );
+            
+            icon_element.as_widget_mut().layout(
+                &mut tree.children[icon_index],
+                renderer,
+                &icon_limits,
+            )
+        };
+
+        let icon_size = icon_node.size();
 
         // Layout title text after icon
-        let title_x = self.padding.left + icon_size + Self::ICON_SPACING;
+        let title_x = self.header_height + Self::ICON_SPACING;
         let available_title_width = limits.max().width - title_x - self.padding.right;
         
         let title_limits = layout::Limits::new(
@@ -407,19 +507,19 @@ where
         let title_size = title_node.size();
 
         // Align icon and title vertically relative to each other
-        let (icon_y, title_y) = if icon_size > title_size.height {
-            (0.0, (icon_size - title_size.height) / 2.0)
+        let (icon_y, title_y) = if icon_size.height > title_size.height {
+            (0.0, (icon_size.height - title_size.height) / 2.0)
         } else {
-            ((title_size.height - icon_size) / 2.0, 0.0)
+            ((title_size.height - icon_size.height) / 2.0, 0.0)
         };
 
         // Position icon and title within the header, centering the pair vertically
-        let content_height = icon_size.max(title_size.height);
+        let content_height = icon_size.height.max(title_size.height);
         let header_offset = (self.header_height - content_height) / 2.0;
 
         let positioned_icon = icon_node.move_to(Point::new(
             self.padding.left,
-            header_offset + icon_y + 2.0,
+            header_offset + icon_y,
         ));
 
         let positioned_title = title_node.move_to(Point::new(
@@ -668,47 +768,37 @@ where
             }
         }
 
-        // Draw icon using layout bounds
-        let icon_to_draw = if state.is_expanded {
-            self.collapse_icon.as_ref()
-        } else {
-            self.expand_icon.as_ref()
-        };
+        let (expand_child, collapse_child, content_child) = self.child_indices();
 
-        let icon_bounds = icon_layout.bounds();
-        
-        if let Some(icon) = icon_to_draw {
-            let icon_tree = Tree::empty();
-            icon.as_widget().draw(
-                &icon_tree,
+        // Draw icon - either default text or custom Element
+        if self.expand_icon.is_none() && self.collapse_icon.is_none() {
+            // Draw default text icon using icon_text state
+            widget::text::draw(
+                renderer,
+                defaults,
+                icon_layout.bounds(),
+                combined_state.icon_text.raw(),
+                iced::widget::text::Style {
+                    color: style.title_text_color,
+                },
+                viewport,
+            );
+        } else {
+            // Draw custom icon Element
+            let (icon_element, icon_tree_index) = if state.is_expanded {
+                (self.collapse_icon.as_ref().unwrap(), collapse_child.unwrap())
+            } else {
+                (self.expand_icon.as_ref().unwrap(), expand_child.unwrap())
+            };
+            
+            icon_element.as_widget().draw(
+                &tree.children[icon_tree_index],
                 renderer,
                 theme,
                 defaults,
                 icon_layout,
                 cursor,
                 viewport,
-            );
-        } else {
-            // Draw default triangle
-            let triangle_char = if state.is_expanded { "🠻" } else { "🠺" };
-            let icon_text_size = self.text_size.unwrap_or(Pixels(20.0)).0 * 0.8;
-            let icon_text_size = icon_text_size.min(icon_bounds.height);
-            
-            renderer.fill_text(
-                Text {
-                    content: triangle_char.to_string(),
-                    bounds: Size::new(icon_bounds.width, icon_bounds.height),
-                    size: Pixels::from(icon_text_size),
-                    font: renderer.default_font(),
-                    align_x: Alignment::Center.into(),
-                    align_y: alignment::Vertical::Top,
-                    line_height: text::LineHeight::default(),
-                    shaping: text::Shaping::Advanced,
-                    wrapping: text::Wrapping::default(),
-                },
-                Point::new(icon_bounds.x, icon_bounds.y),
-                style.title_text_color.unwrap_or(defaults.text_color),
-                *viewport,
             );
         }
 
@@ -741,7 +831,7 @@ where
 
                 if let Some(clipped) = clipped_viewport {
                     self.content.as_widget().draw(
-                        &tree.children[0],
+                        &tree.children[content_child],
                         renderer,
                         theme,
                         &renderer::Style {
