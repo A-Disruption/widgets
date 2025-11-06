@@ -1327,12 +1327,7 @@ where
                     },
                     ..Default::default()
                 },
-                Color::from_rgba(
-                    tree_style.accept_drop_indicator_color.r,
-                    tree_style.accept_drop_indicator_color.g,
-                    tree_style.accept_drop_indicator_color.b,
-                    0.1
-                ),
+                tree_style.accept_drop_indicator_color.scale_alpha(0.1),
             );
             
             let handle_x = preview_indent + ARROW_W;
@@ -1347,12 +1342,7 @@ where
                     border: Border::default(),
                     ..Default::default()
                 },
-                Color::from_rgba(
-                    tree_style.line_color.r,
-                    tree_style.line_color.g,
-                    tree_style.line_color.b,
-                    0.3
-                ),
+                tree_style.line_color.scale_alpha(0.3),
             );
         };
 
@@ -1467,12 +1457,7 @@ where
                             },
                             ..Default::default()
                         },
-                        Color::from_rgba(
-                            tree_style.accept_drop_indicator_color.r,
-                            tree_style.accept_drop_indicator_color.g,
-                            tree_style.accept_drop_indicator_color.b,
-                            0.1
-                        ),
+                        tree_style.accept_drop_indicator_color.scale_alpha(0.1),
                     );
                 }
             }
@@ -1524,17 +1509,6 @@ where
             let handle_x = indent_x + ARROW_W;
             let handle_width = HANDLE_STRIPE_W;
             
-            let handle_color = if state.hovered_handle == Some(id) {
-                Color::from_rgba(
-                    tree_style.line_color.r,
-                    tree_style.line_color.g,
-                    tree_style.line_color.b,
-                    0.3,
-                )
-            } else {
-                tree_style.line_color
-            };
-            
             renderer.fill_quad(
                 renderer::Quad {
                     bounds: Rectangle {
@@ -1546,7 +1520,7 @@ where
                     border: Border::default(),
                     ..Default::default()
                 },
-                handle_color,
+                tree_style.line_color,
             );
             
             // Draw the branch content HERE for this specific branch
@@ -1620,12 +1594,7 @@ where
                     },
                     ..Default::default()
                 },
-                Color::from_rgba(
-                    tree_style.selection_border.r,
-                    tree_style.selection_border.g,
-                    tree_style.selection_border.b,
-                    0.1  // Semi-transparent fill
-                ),
+                tree_style.selection_border.scale_alpha(0.1),
             );
         }
     
@@ -2059,23 +2028,13 @@ where
                 renderer::Quad {
                     bounds: branch_bounds,
                     border: Border {
-                        color: Color::from_rgba(
-                            tree_style.selection_border.r,
-                            tree_style.selection_border.g,
-                            tree_style.selection_border.b,
-                            0.9
-                        ),
+                        color: tree_style.selection_border.scale_alpha(0.9),
                         width: 2.0,
                         radius: Radius::from(2.0),
                     },
                     ..Default::default()
                 },
-                Color::from_rgba(
-                    tree_style.selection_background.r,
-                    tree_style.selection_background.g,
-                    tree_style.selection_background.b,
-                    0.9
-                ),
+                tree_style.selection_background.scale_alpha(0.9),
             );
 
             // Draw the handle stripe
@@ -2093,12 +2052,7 @@ where
                     border: Border::default(),
                     ..Default::default()
                 },
-                Color::from_rgba(
-                    tree_style.line_color.r,
-                    tree_style.line_color.g,
-                    tree_style.line_color.b,
-                    0.7
-                ),
+                tree_style.line_color.scale_alpha(0.7),
             );
             
             // Draw the content
@@ -2109,12 +2063,7 @@ where
             );
             
             let transparent_style = renderer::Style {
-                text_color: Color::from_rgba(
-                    style.text_color.r,
-                    style.text_color.g,
-                    style.text_color.b,
-                    0.9
-                ),
+                text_color: style.text_color.scale_alpha(0.9),
             };
 
             renderer.with_translation(translation, |renderer| {
@@ -2484,12 +2433,7 @@ impl Catalog for iced::Theme {
                 selection_background: palette.background.weakest.color,
                 selection_text: palette.background.base.text,
                 selection_border: palette.secondary.base.color,
-                focus_border: Color::from_rgba(
-                    palette.secondary.base.color.r,
-                    palette.secondary.base.color.g,
-                    palette.secondary.base.color.b,
-                    0.5
-                ),
+                focus_border: palette.secondary.base.color.scale_alpha(0.5),
                 arrow_color: palette.background.strong.color,
                 line_color: palette.primary.weak.color,
                 accept_drop_indicator_color: palette.primary.strong.color,

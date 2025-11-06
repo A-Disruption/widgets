@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, space::horizontal as horizontal_space, row, scrollable, text};
+use iced::widget::{button, column, container, space, row, scrollable, text};
 use iced::{Element, Task, Theme};
 use widgets::collapsible::{self, collapsible};
 use widgets::collapsible_group;
@@ -93,7 +93,7 @@ impl App {
             branch(
                 row![
                     button("button1").on_press(Message::ButtonPressed),
-                    horizontal_space(),
+                    space::horizontal(),
                     button("button2").on_press(Message::ButtonPressed)
                 ].spacing(50) // If using a horizonal_space() inside a row, set the row to shrink or the branch will not render
             ).with_id(19).accepts_drops(),
@@ -101,21 +101,24 @@ impl App {
         .on_drop(Message::HandleBranchDropped)
         .on_select(Message::TreeSelect);
 
-        scrollable(
-            column![
-                iced::widget::text("Tree Widget Example").size(24),
-                collapsible_group![
-                    collapsible(
-                        "Tree 1",
-                        tree_widget,
-                    )
-                    .style(collapsible::primary),
-                ].spacing(10.0),
-            ]
-            .width(400)
-            .spacing(20)
-            .padding(20)
-        )
+        column![
+            iced::widget::text("Tree Widget Example").size(24),
+            space::vertical().height(5),
+            scrollable(
+                column![
+                    collapsible_group![
+                        collapsible(
+                            "Tree 1",
+                            tree_widget,
+                        )
+                        .style(collapsible::primary),
+                    ].spacing(10.0),
+                ]
+                .width(400)
+                .spacing(20)
+                .padding(20)
+            )
+        ].align_x(iced::Alignment::Center)
         .into()
     }
 }

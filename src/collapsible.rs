@@ -84,6 +84,7 @@ pub struct Collapsible<
     title_alignment: Alignment,
     header_clickable: bool,
     padding: Padding,
+    content_padding: Padding,
     text_size: Option<Pixels>,
     font: Option<Renderer::Font>,
     class: Theme::Class<'a>,
@@ -102,6 +103,14 @@ where
         right: 8.0,
         bottom: 4.0,
         left: 8.0,
+    };
+
+    /// The default padding for the content area.
+    pub const DEFAULT_CONTENT_PADDING: Padding = Padding {
+        top: 2.0,
+        right: 2.0,
+        bottom: 2.0,
+        left: 2.0,
     };
 
     /// The default spacing between icon and title.
@@ -124,6 +133,7 @@ where
             title_alignment: Alignment::Start,
             header_clickable: true,
             padding: Self::DEFAULT_PADDING,
+            content_padding: Self::DEFAULT_CONTENT_PADDING,
             text_size: None,
             font: None,
             class: Theme::default(),
@@ -533,7 +543,11 @@ where
         // Layout content below header
         let content_limits = limits
             .width(self.width)
-            .height(Length::Shrink);
+            .height(Length::Shrink)
+            .shrink(Size::new(
+                self.content_padding.horizontal(),
+                self.content_padding.vertical(),
+            ));
 
         let mut content_node = self.content.as_widget_mut().layout(
             &mut tree.children[0],
@@ -541,9 +555,12 @@ where
             &content_limits,
         );
 
-        content_node.move_to_mut(Point::new(0.0, self.header_height));
+        content_node.move_to_mut(Point::new(
+            self.content_padding.left,
+            self.header_height + self.content_padding.top,
+        ));
         
-        let full_content_height = content_node.size().height;
+        let full_content_height = content_node.size().height + self.content_padding.vertical();
         let animated_height = full_content_height * state.animation_progress;
 
         let total_height = self.header_height + animated_height;
