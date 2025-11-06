@@ -57,6 +57,9 @@ macro_rules! collapsible_group {
     };
 }
 
+/// The default height of the header.
+pub const DEFAULT_HEADER_HEIGHT: f32 = 32.0;
+
 /// A collapsible container with a clickable header and expandable content.
 /// 
 /// By default, manages its own expand/collapse state internally.
@@ -93,9 +96,6 @@ where
     Theme: Catalog,
     Renderer: text::Renderer,
 {
-    /// The default height of the header.
-    pub const DEFAULT_HEADER_HEIGHT: f32 = 32.0;
-
     /// The default padding for the header content.
     pub const DEFAULT_PADDING: Padding = Padding {
         top: 4.0,
@@ -120,7 +120,7 @@ where
             collapse_icon: None,
             width: Length::Fill,
             height: Length::Shrink,
-            header_height: Self::DEFAULT_HEADER_HEIGHT,
+            header_height: DEFAULT_HEADER_HEIGHT,
             title_alignment: Alignment::Start,
             header_clickable: true,
             padding: Self::DEFAULT_PADDING,
@@ -297,6 +297,7 @@ struct State {
     raw_animation_progress: f32,
     animation_progress: f32,
     last_update: Option<Instant>,
+    header_height: f32,
 }
 
 /// Combined state that includes both animation state and text state
@@ -318,6 +319,7 @@ impl Default for State {
             raw_animation_progress: 0.0,
             animation_progress: 0.0,
             last_update: None,
+            header_height: DEFAULT_HEADER_HEIGHT,
         }
     }
 }
@@ -366,6 +368,7 @@ where
         animation_state.is_expanded = self.initially_expanded;
         animation_state.raw_animation_progress = if self.initially_expanded { 1.0 } else { 0.0 };
         animation_state.animation_progress = if self.initially_expanded { 1.0 } else { 0.0 };
+        animation_state.header_height = self.header_height;
         
         tree::State::new(CombinedState {
             animation: animation_state,
@@ -571,7 +574,7 @@ where
             x: bounds.x,
             y: bounds.y,
             width: bounds.width,
-            height: self.header_height,
+            height: state.header_height,
         };
 
         // Icon bounds from first layout child
@@ -600,6 +603,7 @@ where
                     cursor.is_over(icon_bounds)
                 };
                 state.header_is_hovered = is_over_header;
+                shell.request_redraw();
             }
             Event::Window(window::Event::RedrawRequested(now)) => {
                 if state.update_animation(*now, self.easing, state.is_expanded) {
@@ -668,7 +672,7 @@ where
             x: bounds.x,
             y: bounds.y,
             width: bounds.width,
-            height: self.header_height,
+            height: state.header_height,
         };
 
         // Get layout children: icon, title, content
@@ -683,7 +687,7 @@ where
                 let animated_height = full_bounds.height * state.animation_progress;
                 Rectangle {
                     x: bounds.x,
-                    y: bounds.y + self.header_height,
+                    y: bounds.y + state.header_height,
                     width: bounds.width,
                     height: animated_height,
                 }
@@ -822,14 +826,14 @@ where
                 let full_content_height = content_layout.bounds().height;
                 let animated_height = full_content_height * state.animation_progress;
                 
-                let clipped_viewport = viewport.intersection(&Rectangle {
+                let clip_bounds = Rectangle {
                     x: bounds.x,
                     y: bounds.y + self.header_height,
                     width: bounds.width,
                     height: animated_height,
-                });
+                };
 
-                if let Some(clipped) = clipped_viewport {
+                renderer.with_layer(clip_bounds, |renderer| {
                     self.content.as_widget().draw(
                         &tree.children[content_child],
                         renderer,
@@ -841,9 +845,9 @@ where
                         },
                         content_layout,
                         cursor,
-                        &clipped,
+                        viewport,
                     );
-                }
+                });
             }
         }
     }
@@ -864,13 +868,14 @@ where
             x: bounds.x,
             y: bounds.y,
             width: bounds.width,
-            height: self.header_height,
+            height: state.header_height,
         };
 
         // Get icon bounds from first layout child
         let mut children = layout.children();
         let icon_layout = children.next().unwrap();
         let icon_bounds = icon_layout.bounds();
+        let _title_layout = children.next(); // Skip title
 
         let is_over_clickable = if self.header_clickable {
             cursor.is_over(header_bounds)
@@ -880,8 +885,7 @@ where
 
         if is_over_clickable && self.on_toggle.is_some() {
             mouse::Interaction::Pointer
-        } else if state.animation_progress > 0.0 {
-            children.next(); // Skip title
+        } else if state.animation_progress != 0.0 {
             if let Some(content_layout) = children.next() {
                 self.content.as_widget().mouse_interaction(
                     &tree.children[0],
@@ -1060,11 +1064,13 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let group_state = tree.state.downcast_ref::<GroupState>();
+        let group_state = tree.state.downcast_mut::<GroupState>();
         let limits = limits.width(self.width).height(self.height);
 
         let mut nodes = Vec::new();
         let mut y_offset = 0.0;
+
+        let mut header_heights = Vec::new();
 
         for (index, (item, child_tree)) in self.items.iter_mut()
             .zip(&mut tree.children)
@@ -1081,6 +1087,7 @@ where
                 // Always reset the animation timer so both opening and closing animate together
                 child_state.last_update = Some(Instant::now());
             }
+            header_heights.push(child_state.header_height);
 
             let mut node = item.as_widget_mut().layout(
                 child_tree,
@@ -1122,14 +1129,16 @@ where
         {
             if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
                 let child_bounds = child_layout.bounds();
+                let child_combined = child_tree.state.downcast_ref::<CombinedState<Renderer::Paragraph>>();
+                let child_header_height = child_combined.animation.header_height;
                 
                 // Check if click is in this child's header area
                 if cursor.is_over(child_bounds) {
                     if let Some(pos) = cursor.position() {
                         let relative_y = pos.y - child_bounds.y;
                         
-                        // Check if in header area (assuming 40-50px header)
-                        if relative_y < 50.0 {
+                        // Check if in header area
+                        if relative_y < child_header_height {
                             // Toggle: if already expanded, collapse. Otherwise expand this one.
                             if group_state.expanded_index == Some(index) {
                                 group_state.expanded_index = None;
@@ -1351,7 +1360,7 @@ pub fn primary(theme: &iced::Theme, _status: Status) -> Style {
     Style {
         title_text_color: Some(palette.primary.weak.text),
         header_background: Some(palette.primary.weak.color.into()),
-        content_text_color: Some(palette.primary.weak.text),
+        content_text_color: Some(palette.primary.base.text),
         content_background: Some(palette.primary.base.color.into()),
         border: iced::border::rounded(8),
         shadow: iced::Shadow::default(),
@@ -1366,7 +1375,7 @@ pub fn success(theme: &iced::Theme, _status: Status) -> Style {
     Style {
         title_text_color: Some(palette.success.weak.text),
         header_background: Some(palette.success.weak.color.into()),
-        content_text_color: Some(palette.success.weak.text),
+        content_text_color: Some(palette.success.base.text),
         content_background: Some(palette.success.base.color.into()),
         border: iced::border::rounded(8),
         shadow: iced::Shadow::default(),
@@ -1380,7 +1389,7 @@ pub fn danger(theme: &iced::Theme, _status: Status) -> Style {
     Style {
         title_text_color: Some(palette.danger.weak.text),
         header_background: Some(palette.danger.weak.color.into()),
-        content_text_color: Some(palette.danger.weak.text),
+        content_text_color: Some(palette.danger.base.text),
         content_background: Some(palette.danger.base.color.into()),
         border: iced::border::rounded(8),
         shadow: iced::Shadow::default(),
@@ -1394,7 +1403,7 @@ pub fn warning(theme: &iced::Theme, _status: Status) -> Style {
     Style {
         title_text_color: Some(palette.warning.weak.text),
         header_background: Some(palette.warning.weak.color.into()),
-        content_text_color: Some(palette.warning.weak.text),
+        content_text_color: Some(palette.warning.base.text),
         content_background: Some(palette.warning.base.color.into()),
         border: iced::border::rounded(8),
         shadow: iced::Shadow::default(),

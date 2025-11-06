@@ -21,8 +21,8 @@ name = "tree_example"
 path = "examples\\tree_example.rs"
 
 [[example]]
-name = "tree_example_advanced"
-path = "examples\\tree_example_advanced.rs"
+name = "tree_in_collapsible"
+path = "examples\\tree_in_collapsible_example.rs"
 
 [[example]]
 name = "color_picker_example"
