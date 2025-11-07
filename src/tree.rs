@@ -80,6 +80,8 @@ where
     force_reset_order: bool,
     ext_to_int: HashMap<usize, usize>,
     int_to_ext: Vec<usize>, // index is internal id; value is external id or 0
+    expand_icon: Option<Element<'a, Message, Theme, Renderer>>,
+    collapse_icon: Option<Element<'a, Message, Theme, Renderer>>,
     class: Theme::Class<'a>,
 }
 
@@ -130,6 +132,15 @@ struct TreeState {
 
     // Track keyboard modifiers
     current_modifiers: keyboard::Modifiers,
+}
+
+/// Combined state that includes both animation state and text state
+struct CombinedState<P> 
+where 
+    P: iced::advanced::text::Paragraph
+{
+    tree_state: TreeState,
+    icon_text: widget::text::State<P>,
 }
 
 #[derive(Debug, Clone)]
@@ -269,6 +280,8 @@ where
             force_reset_order: false,
             ext_to_int,
             int_to_ext,
+            expand_icon: None,
+            collapse_icon: None,
             class: Theme::default(),
         }
     }
@@ -288,6 +301,24 @@ where
         F: Fn(HashSet<usize>) -> Message + 'a
     {
         self.on_select = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the collapse icon (shown when branch is expanded)
+    pub fn collapse_icon(
+        mut self,
+        icon: impl Into<Element<'a, Message, Theme, Renderer>>,
+    ) -> Self {
+        self.collapse_icon = Some(icon.into());
+        self
+    }
+
+    /// Sets the expand icon (shown when branch is collapsed)
+    pub fn expand_icon(
+        mut self,
+        icon: impl Into<Element<'a, Message, Theme, Renderer>>,
+    ) -> Self {
+        self.expand_icon = Some(icon.into());
         self
     }
 
@@ -531,6 +562,15 @@ where
         self.int_to_ext.get(internal_id).copied().unwrap_or(internal_id)
     }
 
+    /// returns the actual starting index of the branch layouts.
+    fn get_child_content_index(&self) -> usize {
+        match (&self.expand_icon, &self.collapse_icon) {
+            (Some(_), Some(_)) => return 2,
+            (Some(_), None) | (None, Some(_)) => return 1,
+            (None, None) => return 0,
+        }
+    }
+
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -548,7 +588,7 @@ where
     }
 
     fn tag(&self) -> widget::tree::Tag {
-        widget::tree::Tag::of::<TreeState>()
+        widget::tree::Tag::of::<CombinedState<Renderer::Paragraph>>()
     }
 
     fn state(&self) -> widget::tree::State {
@@ -560,32 +600,65 @@ where
             }
         }
         
-        widget::tree::State::new(TreeState {
-            expanded,
-            branch_heights: Vec::new(),
-            branch_widths: Vec::new(),
-            visible_branches: Vec::new(),
-            selected: HashSet::new(),
-            focused: None,
-            hovered: None,
-            hovered_handle: None,
-            drag_pending: None,
-            drag_active: None,
-            selection_rect: None,
-            branch_order: None,
-            current_modifiers: keyboard::Modifiers::empty(),
-        })
+        widget::tree::State::new(
+            CombinedState{
+                tree_state: TreeState {
+                    expanded,
+                    branch_heights: Vec::new(),
+                    branch_widths: Vec::new(),
+                    visible_branches: Vec::new(),
+                    selected: HashSet::new(),
+                    focused: None,
+                    hovered: None,
+                    hovered_handle: None,
+                    drag_pending: None,
+                    drag_active: None,
+                    selection_rect: None,
+                    branch_order: None,
+                    current_modifiers: keyboard::Modifiers::empty(),
+                },
+                icon_text: widget::text::State::<Renderer::Paragraph>::default(),
+            }
+)
     }
 
-    fn children(&self) -> Vec<widget::Tree> {
-        self.branch_content
-            .iter()
-            .map(|branch| widget::Tree::new(branch.as_widget()))
-            .collect()
+    fn children(&self) -> Vec<Tree> {
+        let mut children = vec![];
+        
+        // Add trees for branch content
+        for content in &self.branch_content {
+            children.push(Tree::new(content));
+        }
+        
+        // Add trees for expand/collapse icons (one pair per branch with children)
+        let branches_with_children = self.branches.iter().filter(|b| b.has_children).count();
+        
+        if self.expand_icon.is_some() && self.collapse_icon.is_some() {
+            for _ in 0..branches_with_children {
+                children.push(Tree::new(self.expand_icon.as_ref().unwrap()));
+                children.push(Tree::new(self.collapse_icon.as_ref().unwrap()));
+            }
+        }
+        
+        children
     }
 
     fn diff(&self, state: &mut widget::Tree) {
-        state.diff_children(&self.branch_content);
+        let mut children = vec![];
+        
+        if let Some(ref expand_icon) = self.expand_icon {
+            children.push(expand_icon);
+        }
+        
+        if let Some(ref collapse_icon) = self.collapse_icon {
+            children.push(collapse_icon);
+        }
+
+        for child in &self.branch_content {
+            children.push(child);
+        }
+
+        state.diff_children(&children);
     }
 
     fn layout(
@@ -594,17 +667,17 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let state = tree.state.downcast_mut::<TreeState>();
+        let combined_state = tree.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
 
         // Check if we need to force reset the order
         if self.force_reset_order {
-            state.branch_order = None;
+            combined_state.tree_state.branch_order = None;
             self.force_reset_order = false;
         }
 
         // Initialize branch order if not present
-        if state.branch_order.is_none() {
-            state.branch_order = Some(
+        if combined_state.tree_state.branch_order.is_none() {
+            combined_state.tree_state.branch_order = Some(
                 self.branches
                     .iter()
                     .map(|b| BranchState {
@@ -617,14 +690,14 @@ where
         }
 
         // Update has_children flags based on current state and get newly parented branches
-        let newly_has_children = self.update_has_children(state);
+        let newly_has_children = self.update_has_children(&combined_state.tree_state);
 
         // Auto-expand branches that just gained children
         for branch_id in newly_has_children {
-            state.expanded.insert(branch_id);
+            combined_state.tree_state.expanded.insert(branch_id);
         }
 
-        let ordered_indices = self.get_ordered_indices(state);
+        let ordered_indices = self.get_ordered_indices(&combined_state.tree_state);
         let branch_count = self.branches.len();
 
         let limits = limits.width(self.width).height(self.height);
@@ -632,16 +705,16 @@ where
         let tree_fluid = self.width.fluid();
 
         // Update visibility
-        state.visible_branches = vec![false; branch_count];
+        combined_state.tree_state.visible_branches = vec![false; branch_count];
         for i in 0..branch_count {
-            state.visible_branches[i] = self.is_branch_visible(i, state);
+            combined_state.tree_state.visible_branches[i] = self.is_branch_visible(i, &combined_state.tree_state);
         }
 
         let mut cells = Vec::with_capacity(branch_count);
         cells.resize(branch_count, layout::Node::default());
 
-        state.branch_heights = vec![0.0; branch_count];
-        state.branch_widths = vec![0.0; branch_count];
+        combined_state.tree_state.branch_heights = vec![0.0; branch_count];
+        combined_state.tree_state.branch_widths = vec![0.0; branch_count];
 
         // Layout passes
         let mut y = self.padding_y;
@@ -660,13 +733,13 @@ where
             }
 
             // For invisible branches, keep default height so rows still occupy space for hover math
-            if !state.visible_branches[i] {
+            if !combined_state.tree_state.visible_branches[i] {
                 cells[i] = layout::Node::new(Size::ZERO);
-                state.branch_heights[i] = LINE_HEIGHT;
-                state.branch_widths[i] = 0.0;
+                combined_state.tree_state.branch_heights[i] = LINE_HEIGHT;
+                combined_state.tree_state.branch_widths[i] = 0.0;
             }
 
-            let (_, _, effective_depth) = self.get_branch_info(i, state);
+            let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
             let child_state = &mut tree.children[i];
             let content = &mut self.branch_content[i];
 
@@ -698,8 +771,8 @@ where
             let content_size =
                 content_limits.resolve(Length::Shrink, Length::Shrink, content_layout.size());
 
-            state.branch_heights[i] = content_size.height.max(LINE_HEIGHT);
-            state.branch_widths[i] = content_size.width;
+            combined_state.tree_state.branch_heights[i] = content_size.height.max(LINE_HEIGHT);
+            combined_state.tree_state.branch_widths[i] = content_size.width;
 
             let total_w = content_x + content_size.width;
             max_content_width = max_content_width.max(total_w);
@@ -708,9 +781,9 @@ where
         }
 
         // Sum up non-fluid heights
-        for (i, &h) in state.branch_heights.iter().enumerate() {
-            if state.visible_branches[i] && row_fill_factors[i] == 0 {
-                if let Some(ref drag) = state.drag_active {
+        for (i, &h) in combined_state.tree_state.branch_heights.iter().enumerate() {
+            if combined_state.tree_state.visible_branches[i] && row_fill_factors[i] == 0 {
+                if let Some(ref drag) = combined_state.tree_state.drag_active {
                     if !drag.dragged_nodes.contains(&self.branches[i].id) {
                         total_nonfluid_height += h;
                     }
@@ -724,7 +797,7 @@ where
         let total_height_fill: u16 = row_fill_factors
             .iter()
             .enumerate()
-            .filter(|(i, _)| state.visible_branches.get(*i).copied().unwrap_or(false))
+            .filter(|(i, _)| combined_state.tree_state.visible_branches.get(*i).copied().unwrap_or(false))
             .map(|(_, &f)| f)
             .sum();
 
@@ -732,7 +805,7 @@ where
             - total_nonfluid_height
             - self.padding_y * 2.0
             - self.spacing
-                * state
+                * combined_state.tree_state
                     .visible_branches
                     .iter()
                     .filter(|&&v| v)
@@ -758,7 +831,7 @@ where
                 continue;
             } // Continue to handle fluid branches
 
-            let (_, _, effective_depth) = self.get_branch_info(i, state);
+            let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
             let child_state = &mut tree.children[i];
             let content = &mut self.branch_content[i];
             let size_hint = content.as_widget().size();
@@ -772,7 +845,7 @@ where
 
             let max_h = if row_fill_factors[i] == 0 {
                 if size_hint.height.is_fill() {
-                    state.branch_heights[i]
+                    combined_state.tree_state.branch_heights[i]
                 } else {
                     (available.height - y).max(0.0)
                 }
@@ -791,8 +864,8 @@ where
                 content_layout.size(),
             );
 
-            state.branch_heights[i] = state.branch_heights[i].max(content_size.height);
-            state.branch_widths[i] = state.branch_widths[i].max(content_size.width);
+            combined_state.tree_state.branch_heights[i] = combined_state.tree_state.branch_heights[i].max(content_size.height);
+            combined_state.tree_state.branch_widths[i] = combined_state.tree_state.branch_widths[i].max(content_size.width);
             cells[i] = content_layout;
 
             let total_w = content_x + content_size.width;
@@ -802,20 +875,20 @@ where
         // THIRD PASS — position each visible branch
         y = self.padding_y;
 
-        let drop_indicator_space = if state.drag_active.is_some() {
+        let drop_indicator_space = if combined_state.tree_state.drag_active.is_some() {
             LINE_HEIGHT + self.spacing
         } else {
             0.0
         };
 
         for &i in &ordered_indices {
-            if i >= self.branches.len() || !state.visible_branches[i] {
+            if i >= self.branches.len() || !combined_state.tree_state.visible_branches[i] {
                 continue;
             }
 
             let branch = &self.branches[i];
 
-            if let Some(ref drag) = state.drag_active {
+            if let Some(ref drag) = combined_state.tree_state.drag_active {
                 if drag.dragged_nodes.contains(&branch.id) {
                     continue;
                 }
@@ -827,7 +900,7 @@ where
                 }
             }
 
-            let (_, _, effective_depth) = self.get_branch_info(i, state);
+            let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
 
             let indent_x = self.padding_x + (effective_depth as f32 * self.indent);
             let content_x = indent_x + ARROW_W + CONTENT_GAP;
@@ -838,14 +911,14 @@ where
             cells[i].align_mut(
                 *align_x,
                 *align_y,
-                Size::new(state.branch_widths[i], state.branch_heights[i]),
+                Size::new(combined_state.tree_state.branch_widths[i], combined_state.tree_state.branch_heights[i]),
             );
 
-            y += state.branch_heights[i] + self.spacing;
+            y += combined_state.tree_state.branch_heights[i] + self.spacing;
 
-            if let Some(ref drag) = state.drag_active {
+            if let Some(ref drag) = combined_state.tree_state.drag_active {
                 if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::Into {
-                    if state.expanded.contains(&branch.id) {
+                    if combined_state.tree_state.expanded.contains(&branch.id) {
                         y += drop_indicator_space;
                     }
                 }
@@ -880,18 +953,19 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let state = tree.state.downcast_mut::<TreeState>();
-        let ordered_indices = self.get_ordered_indices(state);
+        let combined_state = tree.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+        //let state = tree.state.downcast_mut::<TreeState>();
+        let ordered_indices = self.get_ordered_indices(&combined_state.tree_state);
         
         // Update all visible children
         for &i in &ordered_indices {
             if i >= self.branches.len() || 
-               i >= state.visible_branches.len() || 
-               !state.visible_branches[i] {
+               i >= combined_state.tree_state.visible_branches.len() || 
+               !combined_state.tree_state.visible_branches[i] {
                 continue;
             }
             
-            if let Some(ref drag) = state.drag_active {
+            if let Some(ref drag) = combined_state.tree_state.drag_active {
                 if drag.dragged_nodes.contains(&self.branches[i].id) {
                     continue;
                 }
@@ -909,7 +983,7 @@ where
         // Handle tree-specific events
         match event {
             Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
-                state.current_modifiers = *modifiers;
+                combined_state.tree_state.current_modifiers = *modifiers;
             }
 
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -917,12 +991,12 @@ where
                     let bounds = layout.bounds();
 
                     // Check if Ctrl is held for selection rectangle
-                    if state.current_modifiers.control() || state.current_modifiers.command() {
+                    if combined_state.tree_state.current_modifiers.control() || combined_state.tree_state.current_modifiers.command() {
                         // Start selection rectangle
-                        state.selection_rect = Some(SelectionRect {
+                        combined_state.tree_state.selection_rect = Some(SelectionRect {
                             start_position: position,
                             current_position: position,
-                            initial_selection: state.selected.clone(),
+                            initial_selection: combined_state.tree_state.selected.clone(),
                         });
                         shell.request_redraw();
                     }
@@ -931,22 +1005,22 @@ where
                     
                     for &i in &ordered_indices {
                         if i >= self.branches.len() || 
-                           i >= state.visible_branches.len() || 
-                           !state.visible_branches[i] {
+                           i >= combined_state.tree_state.visible_branches.len() || 
+                           !combined_state.tree_state.visible_branches[i] {
                             continue;
                         }
                         
                         let branch = &self.branches[i];
-                        let (_, _, effective_depth) = self.get_branch_info(i, state);
+                        let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
                         
-                        if let Some(ref drag) = state.drag_active {
+                        if let Some(ref drag) = combined_state.tree_state.drag_active {
                             if drag.dragged_nodes.contains(&branch.id) {
                                 continue;
                             }
                         }
                         
                         let indent_x = bounds.x + self.padding_x + (effective_depth as f32 * self.indent);
-                        let branch_height = state.branch_heights[i];
+                        let branch_height = combined_state.tree_state.branch_heights[i];
                         let branch_bounds = Rectangle {
                             x: bounds.x,
                             y,
@@ -964,10 +1038,10 @@ where
                             };
                             
                             if arrow_bounds.contains(position) {
-                                if state.expanded.contains(&branch.id) {
-                                    state.expanded.remove(&branch.id);
+                                if combined_state.tree_state.expanded.contains(&branch.id) {
+                                    combined_state.tree_state.expanded.remove(&branch.id);
                                 } else {
-                                    state.expanded.insert(branch.id);
+                                    combined_state.tree_state.expanded.insert(branch.id);
                                 }
                                 shell.invalidate_layout();
                                 shell.request_redraw();
@@ -979,20 +1053,20 @@ where
 
                             if !branch.draggable {
                                 // Branch is not draggable - only allow selection
-                                if state.current_modifiers.control() || state.current_modifiers.command() {
-                                    if state.selected.contains(&branch.id) {
-                                        state.selected.remove(&branch.id);
+                                if combined_state.tree_state.current_modifiers.control() || combined_state.tree_state.current_modifiers.command() {
+                                    if combined_state.tree_state.selected.contains(&branch.id) {
+                                        combined_state.tree_state.selected.remove(&branch.id);
                                     } else {
-                                        state.selected.insert(branch.id);
+                                        combined_state.tree_state.selected.insert(branch.id);
                                     }
                                 } else {
-                                    state.selected.clear();
-                                    state.selected.insert(branch.id);
+                                    combined_state.tree_state.selected.clear();
+                                    combined_state.tree_state.selected.insert(branch.id);
                                 }
-                                state.focused = Some(branch.id);
+                                combined_state.tree_state.focused = Some(branch.id);
 
                                 if let Some(ref on_select) = self.on_select {
-                                    let external_ids: HashSet<usize> = state
+                                    let external_ids: HashSet<usize> = combined_state.tree_state
                                         .selected
                                         .iter()
                                         .map(|&internal| self.preferred_id(internal))
@@ -1006,19 +1080,19 @@ where
                             }
 
                             // Set up pending drag
-                            let mut filtered_ids: Vec<usize> = if state.selected.contains(&branch.id) {
-                                state.selected.iter().copied().collect()
+                            let mut filtered_ids: Vec<usize> = if combined_state.tree_state.selected.contains(&branch.id) {
+                                combined_state.tree_state.selected.iter().copied().collect()
                             } else {
                                 vec![branch.id]
                             };
-                            filtered_ids = filter_redundant_selections(&filtered_ids, &self.branches, &state.branch_order);
+                            filtered_ids = filter_redundant_selections(&filtered_ids, &self.branches, &combined_state.tree_state.branch_order);
                             
                             let click_offset = Vector::new(
                                 position.x - branch_bounds.x,
                                 position.y - branch_bounds.y,
                             );
                             
-                            state.drag_pending = Some(DragPending {
+                            combined_state.tree_state.drag_pending = Some(DragPending {
                                 start_position: position,
                                 branch_ids: filtered_ids,
                                 primary_branch_id: branch.id,
@@ -1026,20 +1100,20 @@ where
                                 click_offset,
                             });
                             
-                            if state.current_modifiers.control() || state.current_modifiers.command() {
-                                if state.selected.contains(&branch.id) {
-                                    state.selected.remove(&branch.id);
+                            if combined_state.tree_state.current_modifiers.control() || combined_state.tree_state.current_modifiers.command() {
+                                if combined_state.tree_state.selected.contains(&branch.id) {
+                                    combined_state.tree_state.selected.remove(&branch.id);
                                 } else {
-                                    state.selected.insert(branch.id);
+                                    combined_state.tree_state.selected.insert(branch.id);
                                 }
                             } else {
-                                state.selected.clear();
-                                state.selected.insert(branch.id);
+                                combined_state.tree_state.selected.clear();
+                                combined_state.tree_state.selected.insert(branch.id);
                             }
-                            state.focused = Some(branch.id);
+                            combined_state.tree_state.focused = Some(branch.id);
 
                             if let Some(ref on_select) = self.on_select {
-                                let external_ids: HashSet<usize> = state
+                                let external_ids: HashSet<usize> = combined_state.tree_state
                                     .selected
                                     .iter()
                                     .map(|&internal| self.preferred_id(internal))
@@ -1055,12 +1129,12 @@ where
 
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 // End selection rectangle if active
-                if state.selection_rect.is_some() {
-                    state.selection_rect = None;
+                if combined_state.tree_state.selection_rect.is_some() {
+                    combined_state.tree_state.selection_rect = None;
                     
                     // Trigger selection callback if present
                     if let Some(ref on_select) = self.on_select {
-                        let external_ids: HashSet<usize> = state
+                        let external_ids: HashSet<usize> = combined_state.tree_state
                             .selected
                             .iter()
                             .map(|&internal| self.preferred_id(internal))
@@ -1071,14 +1145,14 @@ where
                     shell.request_redraw();
                 }
 
-                state.drag_pending = None;
+                combined_state.tree_state.drag_pending = None;
             }
 
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position() {
 
                     // Handle selection rectangle
-                    if let Some(ref mut selection_rect) = state.selection_rect {
+                    if let Some(ref mut selection_rect) = combined_state.tree_state.selection_rect {
                         selection_rect.current_position = position;
                         
                         // Calculate which branches are within the selection rectangle
@@ -1091,19 +1165,19 @@ where
                         };
                         
                         // Start with initial selection
-                        state.selected = selection_rect.initial_selection.clone();
+                        combined_state.tree_state.selected = selection_rect.initial_selection.clone();
                         
                         // Add branches that intersect with selection rectangle
                         let mut y = bounds.y + self.padding_y;
                         for &i in &ordered_indices {
                             if i >= self.branches.len() || 
-                            i >= state.visible_branches.len() || 
-                            !state.visible_branches[i] {
+                            i >= combined_state.tree_state.visible_branches.len() || 
+                            !combined_state.tree_state.visible_branches[i] {
                                 continue;
                             }
                             
                             let branch = &self.branches[i];
-                            let branch_height = state.branch_heights[i];
+                            let branch_height = combined_state.tree_state.branch_heights[i];
                             let branch_bounds = Rectangle {
                                 x: bounds.x,
                                 y,
@@ -1113,11 +1187,11 @@ where
                             
                             // Check if branch intersects with selection rectangle
                             if rectangles_intersect(&branch_bounds, &rect_bounds) {
-                                if state.current_modifiers.shift() {
+                                if combined_state.tree_state.current_modifiers.shift() {
                                     // Shift+Ctrl removes from selection
-                                    state.selected.remove(&branch.id);
+                                    combined_state.tree_state.selected.remove(&branch.id);
                                 } else {
-                                    state.selected.insert(branch.id);
+                                    combined_state.tree_state.selected.insert(branch.id);
                                 }
                             }
                             
@@ -1129,13 +1203,13 @@ where
                     }
 
                     // Check if we should start dragging
-                    if let Some(ref pending) = state.drag_pending {
+                    if let Some(ref pending) = combined_state.tree_state.drag_pending {
                         let distance = ((position.x - pending.start_position.x).powi(2) + 
                                        (position.y - pending.start_position.y).powi(2)).sqrt();
                         
                         if distance >= DRAG_THRESHOLD {
                             // Start actual drag
-                            state.drag_active = Some(DragActive {
+                            combined_state.tree_state.drag_active = Some(DragActive {
                                 dragged_nodes: pending.branch_ids.clone(),
                                 primary_node: pending.primary_branch_id,
                                 drag_start_bounds: pending.branch_bounds,
@@ -1144,11 +1218,11 @@ where
                                 drop_target: None,
                                 drop_position: DropPosition::Before,
                             });
-                            state.drag_pending = None;
+                            combined_state.tree_state.drag_pending = None;
                             shell.invalidate_layout();
                             shell.request_redraw();
                         }
-                    } else if state.drag_active.is_none() {
+                    } else if combined_state.tree_state.drag_active.is_none() {
                         // Handle hover states
                         let bounds = layout.bounds();
                         let mut y = bounds.y + self.padding_y;
@@ -1157,13 +1231,13 @@ where
                         
                         for &i in &ordered_indices {
                             if i >= self.branches.len() || 
-                               i >= state.visible_branches.len() || 
-                               !state.visible_branches[i] {
+                               i >= combined_state.tree_state.visible_branches.len() || 
+                               !combined_state.tree_state.visible_branches[i] {
                                 continue;
                             }
                             
                             let branch = &self.branches[i];
-                            let branch_height = state.branch_heights[i];
+                            let branch_height = combined_state.tree_state.branch_heights[i];
                             let branch_bounds = Rectangle {
                                 x: bounds.x,
                                 y,
@@ -1174,7 +1248,7 @@ where
                             if branch_bounds.contains(position) {
                                 new_hovered = Some(branch.id);
                                 
-                                let (_, _, effective_depth) = self.get_branch_info(i, state);
+                                let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
                                 let indent_x = bounds.x + self.padding_x + (effective_depth as f32 * self.indent);
                                 let handle_x = indent_x + ARROW_W;
                                 let handle_bounds = Rectangle {
@@ -1193,9 +1267,9 @@ where
                             y += branch_height + self.spacing;
                         }
                         
-                        if new_hovered != state.hovered || new_hovered_handle != state.hovered_handle {
-                            state.hovered = new_hovered;
-                            state.hovered_handle = new_hovered_handle;
+                        if new_hovered != combined_state.tree_state.hovered || new_hovered_handle != combined_state.tree_state.hovered_handle {
+                            combined_state.tree_state.hovered = new_hovered;
+                            combined_state.tree_state.hovered_handle = new_hovered_handle;
                             shell.request_redraw();
                         }
                     }
@@ -1203,9 +1277,9 @@ where
             }
 
             Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                if let Some(focused) = state.focused {
+                if let Some(focused) = combined_state.tree_state.focused {
                     let visible_ordered: Vec<usize> = ordered_indices.iter()
-                        .filter(|&&i| i < state.visible_branches.len() && state.visible_branches[i])
+                        .filter(|&&i| i < combined_state.tree_state.visible_branches.len() && combined_state.tree_state.visible_branches[i])
                         .map(|&i| self.branches[i].id)
                         .collect();
 
@@ -1213,7 +1287,7 @@ where
                         keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
                             if let Some(current_pos) = visible_ordered.iter().position(|&id| id == focused) {
                                 if current_pos > 0 {
-                                    state.focused = Some(visible_ordered[current_pos - 1]);
+                                    combined_state.tree_state.focused = Some(visible_ordered[current_pos - 1]);
                                     shell.invalidate_widgets();
                                     shell.request_redraw();
                                 }
@@ -1222,7 +1296,7 @@ where
                         keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
                             if let Some(current_pos) = visible_ordered.iter().position(|&id| id == focused) {
                                 if current_pos < visible_ordered.len() - 1 {
-                                    state.focused = Some(visible_ordered[current_pos + 1]);
+                                    combined_state.tree_state.focused = Some(visible_ordered[current_pos + 1]);
                                     shell.invalidate_widgets();
                                     shell.request_redraw();
                                 }
@@ -1230,8 +1304,8 @@ where
                         }
                         keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
                             if let Some(branch) = self.branches.iter().find(|b| b.id == focused) {
-                                if branch.has_children && state.expanded.contains(&focused) {
-                                    state.expanded.remove(&focused);
+                                if branch.has_children && combined_state.tree_state.expanded.contains(&focused) {
+                                    combined_state.tree_state.expanded.remove(&focused);
                                     shell.invalidate_layout();
                                     shell.request_redraw();
                                 }
@@ -1239,8 +1313,8 @@ where
                         }
                         keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
                             if let Some(branch) = self.branches.iter().find(|b| b.id == focused) {
-                                if branch.has_children && !state.expanded.contains(&focused) {
-                                    state.expanded.insert(focused);
+                                if branch.has_children && !combined_state.tree_state.expanded.contains(&focused) {
+                                    combined_state.tree_state.expanded.insert(focused);
                                     shell.invalidate_layout();
                                     shell.request_redraw();
                                 }
@@ -1248,18 +1322,18 @@ where
                         }
                         keyboard::Key::Named(keyboard::key::Named::Space) => {
                             if modifiers.control() || modifiers.command() {
-                                if state.selected.contains(&focused) {
-                                    state.selected.remove(&focused);
+                                if combined_state.tree_state.selected.contains(&focused) {
+                                    combined_state.tree_state.selected.remove(&focused);
                                 } else {
-                                    state.selected.insert(focused);
+                                    combined_state.tree_state.selected.insert(focused);
                                 }
                             } else {
-                                state.selected.clear();
-                                state.selected.insert(focused);
+                                combined_state.tree_state.selected.clear();
+                                combined_state.tree_state.selected.insert(focused);
                             }
 
                             if let Some(ref on_select) = self.on_select {
-                                let external_ids: HashSet<usize> = state
+                                let external_ids: HashSet<usize> = combined_state.tree_state
                                     .selected
                                     .iter()
                                     .map(|&internal| self.preferred_id(internal))
@@ -1301,7 +1375,10 @@ where
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let state = tree.state.downcast_ref::<TreeState>();
+        let combined_state = tree.state.downcast_ref::<CombinedState<Renderer::Paragraph>>();
+
+        let state = &combined_state.tree_state;
+        let child_layout_index = self.get_child_content_index();
         let ordered_indices = self.get_ordered_indices(state);
         let tree_style = theme.style(&self.class);
         
@@ -1485,24 +1562,63 @@ where
             
             // Draw expand/collapse arrow
             if branch.has_children {
-                let arrow = if state.expanded.contains(&id) { "🠻" } else { "🠺" };
-                
-                renderer.fill_text(
-                    iced::advanced::Text {
-                        content: arrow.into(),
-                        bounds: Size::new(ARROW_W, branch_height),
-                        size: Pixels(24.0),
-                        font: iced::Font::default(),
-                        align_x: Alignment::Center,
-                        align_y: iced::alignment::Vertical::Center,
-                        line_height: iced::advanced::text::LineHeight::default(),
-                        shaping: iced::advanced::text::Shaping::Advanced,
-                        wrapping: iced::advanced::text::Wrapping::default(),
-                    },
-                    Point::new(indent_x + ARROW_X_PAD, y + (branch_height / 2.0)),
-                    tree_style.arrow_color,
-                    *viewport,
-                );
+                if self.expand_icon.is_none() && self.collapse_icon.is_none() {
+                    // Use default text icons
+                    let arrow = if state.expanded.contains(&id) { "🠻" } else { "🠺" };
+                    
+                    renderer.fill_text(
+                        iced::advanced::Text {
+                            content: arrow.into(),
+                            bounds: Size::new(ARROW_W, branch_height),
+                            size: Pixels(16.0),
+                            font: iced::Font::default(),
+                            align_x: Alignment::Center,
+                            align_y: iced::alignment::Vertical::Center,
+                            line_height: iced::advanced::text::LineHeight::default(),
+                            shaping: iced::advanced::text::Shaping::Advanced,
+                            wrapping: iced::advanced::text::Wrapping::default(),
+                        },
+                        Point::new(indent_x + ARROW_X_PAD, y + (branch_height / 2.0)),
+                        tree_style.arrow_color,
+                        *viewport,
+                    );
+                } else {
+                    // Draw custom icon Element
+                    // Calculate which icon tree to use based on branch index among expandable branches
+                    let expandable_branch_index = self.branches[..i]
+                        .iter()
+                        .filter(|b| b.has_children)
+                        .count();
+                    
+                    let icon_tree_base = self.branch_content.len() + (expandable_branch_index * 2);
+                    
+                    let (icon_element, icon_tree_index) = if state.expanded.contains(&id) {
+                        (self.collapse_icon.as_ref().unwrap(), icon_tree_base + 1)
+                    } else {
+                        (self.expand_icon.as_ref().unwrap(), icon_tree_base)
+                    };
+                    
+                    // Create a simple layout for the icon
+                    let icon_bounds = Rectangle {
+                        x: indent_x + ARROW_X_PAD,
+                        y: branch_y,
+                        width: ARROW_W,
+                        height: branch_height,
+                    };
+                    
+                    let icon_layout = layout::Node::new(Size::new(ARROW_W, branch_height))
+                        .move_to(Point::new(icon_bounds.x, icon_bounds.y));
+                    
+                    icon_element.as_widget().draw(
+                        &tree.children[icon_tree_index],
+                        renderer,
+                        theme,
+                        style,
+                        Layout::new(&icon_layout),
+                        cursor,
+                        viewport,
+                    );
+                }
             }
             
             // Draw handle/drag area
@@ -1526,14 +1642,14 @@ where
             // Draw the branch content HERE for this specific branch
             if let Some(ref drag) = state.drag_active {
                 if !drag.dragged_nodes.contains(&id) {
-                    let child_state = &tree.children[i];
+                    let child_state = &tree.children[i + child_layout_index];
                     let child_layout = layout.children().nth(i).unwrap();
                     self.branch_content[i].as_widget().draw(
                         child_state, renderer, theme, style, child_layout, cursor, viewport,
                     );
                 }
             } else {
-                let child_state = &tree.children[i];
+                let child_state = &tree.children[i + child_layout_index];
                 let child_layout = layout.children().nth(i).unwrap();
                 self.branch_content[i].as_widget().draw(
                     child_state, renderer, theme, style, child_layout, cursor, viewport,
@@ -1572,7 +1688,6 @@ where
         }
 
         // Draw selection rectangle if active
-        let state = tree.state.downcast_ref::<TreeState>();
         if let Some(ref selection_rect) = state.selection_rect {
             let rect_bounds = Rectangle {
                 x: selection_rect.start_position.x.min(selection_rect.current_position.x),
@@ -1608,7 +1723,8 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        let state = tree.state.downcast_ref::<TreeState>();
+        let combined_state = tree.state.downcast_ref::<CombinedState<Renderer::Paragraph>>();
+        let state = &combined_state.tree_state;
         
         // First check children interactions - prioritize them
         let child_interaction = self.branch_content
@@ -1645,10 +1761,12 @@ where
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
+        let child_layout_index = self.get_child_content_index();
+        
         for i in 0..self.branch_content.len() {
             if let Some(child_layout) = layout.children().nth(i) {
                 self.branch_content[i].as_widget_mut().operate(
-                    &mut tree.children[i],
+                    &mut tree.children[i + child_layout_index],
                     child_layout,
                     renderer,
                     operation
@@ -1666,8 +1784,8 @@ where
         translation: iced::Vector,
     ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
         let drag_active_clone = {
-            let state = tree.state.downcast_mut::<TreeState>();
-            state.drag_active.clone()
+            let combined_state = tree.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+            combined_state.tree_state.drag_active.clone()
         };
 
         if let Some(ref drag_active) = drag_active_clone {
@@ -1736,9 +1854,9 @@ where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
 {
     fn layout(&mut self, _renderer: &Renderer, _bounds: Size) -> layout::Node {
-        let state = self.state.state.downcast_ref::<TreeState>();
+        let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
 
-        let position = if let Some(ref drag) = state.drag_active {
+        let position = if let Some(ref drag) = combined_state.tree_state.drag_active {
             Point::new(
                 drag.current_position.x - drag.click_offset.x + self.translation.x,
                 drag.current_position.y - drag.click_offset.y + self.translation.y,
@@ -1747,13 +1865,13 @@ where
             Point::ORIGIN
         };        
 
-        let (width, height) = if let Some(ref _drag) = state.drag_active {
+        let (width, height) = if let Some(ref _drag) = combined_state.tree_state.drag_active {
             let mut max_width = 0.0f32;
             let mut total_height = 0.0f32;
             
             for &i in &self.dragged_indices {
-                if i < state.branch_widths.len() {
-                    let effective_depth = if let Some(ref branch_order) = state.branch_order {
+                if i < combined_state.tree_state.branch_widths.len() {
+                    let effective_depth = if let Some(ref branch_order) = combined_state.tree_state.branch_order {
                         branch_order.iter()
                             .find(|bs| self.tree_handle.branches.get(i).map(|b| b.id == bs.id).unwrap_or(false))
                             .map(|bs| bs.depth)
@@ -1763,10 +1881,10 @@ where
                     };
                     
                     let indent_x = effective_depth as f32 * self.tree_handle.indent;
-                    let content_width = indent_x + ARROW_W + CONTENT_GAP + state.branch_widths[i] + self.tree_handle.padding_x;
+                    let content_width = indent_x + ARROW_W + CONTENT_GAP + combined_state.tree_state.branch_widths[i] + self.tree_handle.padding_x;
                     max_width = max_width.max(content_width);
                     
-                    total_height += state.branch_heights[i].max(LINE_HEIGHT);
+                    total_height += combined_state.tree_state.branch_heights[i].max(LINE_HEIGHT);
                     if i < self.dragged_indices.len() - 1 {
                         total_height += self.tree_handle.spacing;
                     }
@@ -1794,8 +1912,8 @@ where
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position() {
-                    let state = self.state.state.downcast_mut::<TreeState>();
-                    let ordered_indices = self.tree_handle.get_ordered_indices(state);
+                    let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+                    let ordered_indices = self.tree_handle.get_ordered_indices(&combined_state.tree_state);
         
                     let position = Point::new(
                         position.x - self.translation.x,
@@ -1805,16 +1923,16 @@ where
                     let branch_infos: Vec<_> = ordered_indices.iter()
                         .filter_map(|&i| {
                             if i >= self.tree_handle.branches.len() || 
-                               i >= state.visible_branches.len() || 
-                               !state.visible_branches[i] {
+                               i >= combined_state.tree_state.visible_branches.len() || 
+                               !combined_state.tree_state.visible_branches[i] {
                                 return None;
                             }
                             
                             let branch = &self.tree_handle.branches[i];
-                            let (id, parent_id, depth) = self.tree_handle.get_branch_info(i, state);
+                            let (id, parent_id, depth) = self.tree_handle.get_branch_info(i, &combined_state.tree_state);
                             
-                            let branch_height = if i < state.branch_heights.len() {
-                                state.branch_heights[i]
+                            let branch_height = if i < combined_state.tree_state.branch_heights.len() {
+                                combined_state.tree_state.branch_heights[i]
                             } else {
                                 LINE_HEIGHT
                             };
@@ -1825,13 +1943,13 @@ where
                                 depth,
                                 branch_height,
                                 branch.has_children,
-                                state.expanded.contains(&id),
+                                combined_state.tree_state.expanded.contains(&id),
                                 branch.accepts_drops
                             ))
                         })
                         .collect();
                     
-                    if let Some(ref mut drag) = state.drag_active {
+                    if let Some(ref mut drag) = combined_state.tree_state.drag_active {
                         drag.current_position = position;
                         
                         let tree_bounds = self.tree_layout.bounds();
@@ -1917,8 +2035,9 @@ where
             
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let (drop_target, drop_position, dragged_nodes, dragged_external, target_external) = {
-                    let state = self.state.state.downcast_ref::<TreeState>();
-                    if let Some(ref drag) = state.drag_active {
+                    let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+
+                    if let Some(ref drag) = combined_state.tree_state.drag_active {
                         // Convert internal IDs to external IDs while we have access to everything
                         let dragged_ext: Vec<usize> = drag
                             .dragged_nodes
@@ -1956,16 +2075,16 @@ where
                         }
                     }
                 }
-                
-                let state = self.state.state.downcast_mut::<TreeState>();
-                state.drag_active = None;
+
+                let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+                combined_state.tree_state.drag_active = None;
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
             
             Event::Mouse(mouse::Event::CursorLeft) => {
-                let state = self.state.state.downcast_mut::<TreeState>();
-                state.drag_active = None;
+                let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+                combined_state.tree_state.drag_active = None;
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
@@ -1981,7 +2100,7 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
-        let state = self.state.state.downcast_ref::<TreeState>();
+        let combined_state = self.state.state.downcast_ref::<CombinedState<Renderer::Paragraph>>();
         let drag_bounds = layout.bounds();
         let tree_style = theme.style(&self.tree_handle.class);
         
@@ -1989,7 +2108,7 @@ where
             let primary_index = self.tree_handle.branches
                 .iter()
                 .position(|b| {
-                    if let Some(ref drag) = state.drag_active {
+                    if let Some(ref drag) = combined_state.tree_state.drag_active {
                         b.id == drag.primary_node
                     } else {
                         false
@@ -2001,13 +2120,13 @@ where
                 return;
             }
             
-            let branch_height = if primary_index < state.branch_heights.len() {
-                state.branch_heights[primary_index].max(LINE_HEIGHT)
+            let branch_height = if primary_index < combined_state.tree_state.branch_heights.len() {
+                combined_state.tree_state.branch_heights[primary_index].max(LINE_HEIGHT)
             } else {
                 LINE_HEIGHT
             };
 
-            let effective_depth = if let Some(ref branch_order) = state.branch_order {
+            let effective_depth = if let Some(ref branch_order) = combined_state.tree_state.branch_order {
                 branch_order.iter()
                     .find(|bs| self.tree_handle.branches.get(primary_index).map(|b| b.id == bs.id).unwrap_or(false))
                     .map(|bs| bs.depth)
@@ -2019,7 +2138,7 @@ where
             let branch_bounds = Rectangle {
                 x: drag_bounds.x,
                 y: drag_bounds.y,
-                width: state.drag_active.as_ref().unwrap().drag_start_bounds.width,
+                width: combined_state.tree_state.drag_active.as_ref().unwrap().drag_start_bounds.width,
                 height: branch_height,
             };
 
@@ -2112,8 +2231,8 @@ where
     ) {
         // Get the current order before we borrow state mutably
         let (current_order, branches_copy) = {
-            let state = self.state.state.downcast_ref::<TreeState>();
-            let order = if let Some(ref branch_order) = state.branch_order {
+            let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+            let order = if let Some(ref branch_order) = combined_state.tree_state.branch_order {
                 branch_order.clone()
             } else {
                 self.tree_handle.branches.iter().map(|b| BranchState {
@@ -2227,10 +2346,10 @@ where
         }
         
         // Now update the state
-        let state = self.state.state.downcast_mut::<TreeState>();
-        state.branch_order = Some(new_order);
+        let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+        combined_state.tree_state.branch_order = Some(new_order);
         
-        self.tree_handle.update_has_children(state);
+        self.tree_handle.update_has_children(&combined_state.tree_state);
     }
 }
 
@@ -2430,11 +2549,11 @@ impl Catalog for iced::Theme {
             
             Style {
                 text: palette.background.base.text,
-                selection_background: palette.background.weakest.color,
+                selection_background: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
                 selection_text: palette.background.base.text,
                 selection_border: palette.secondary.base.color,
                 focus_border: palette.secondary.base.color.scale_alpha(0.5),
-                arrow_color: palette.background.strong.color,
+                arrow_color: palette.background.base.text,
                 line_color: palette.primary.weak.color,
                 accept_drop_indicator_color: palette.primary.strong.color,
                 deny_drop_indicator_color: palette.danger.strong.color,

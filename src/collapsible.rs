@@ -505,7 +505,7 @@ where
             &title_limits,
             &self.title,
             widget::text::Format {
-                width: Length::Fill,
+                width: Length::Shrink,
                 height: Length::Shrink,
                 line_height: text::LineHeight::default(),
                 size: self.text_size,
@@ -535,10 +535,24 @@ where
             header_offset + icon_y,
         ));
 
-        let positioned_title = title_node.move_to(Point::new(
+        let mut positioned_title = if self.title_alignment == Alignment::Center {
+            title_node.move_to(Point::new(
+                0.0,
+                header_offset + title_y,
+            ))
+        } else {
+          title_node.move_to(Point::new(
             title_x,
             header_offset + title_y,
-        ));
+            ))
+        };
+
+        // Apply horizontal alignment within available space
+        positioned_title.align_mut(
+            self.title_alignment,
+            Alignment::Center,  // Keep vertical center alignment
+            Size::new(available_title_width, content_height),
+        );
 
         // Layout content below header
         let content_limits = limits

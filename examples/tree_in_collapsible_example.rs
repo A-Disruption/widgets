@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, space, row, scrollable, text};
-use iced::{Element, Task, Theme};
+use iced::{Alignment, Element, Task, Theme};
 use widgets::collapsible::{self, collapsible};
 use widgets::collapsible_group;
 use widgets::tree::{branch, tree_handle, DropInfo, DropPosition};
@@ -25,7 +25,7 @@ impl App {
     }
     
     fn theme(&self) -> Theme {
-        iced::Theme::Dark
+        iced::Theme::Light
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -110,8 +110,7 @@ impl App {
                         collapsible(
                             "Tree 1",
                             tree_widget,
-                        )
-                        .style(collapsible::primary),
+                        ).title_alignment(Alignment::Center),
                     ].spacing(10.0),
                 ]
                 .width(400)
