@@ -954,7 +954,6 @@ where
         viewport: &Rectangle,
     ) {
         let combined_state = tree.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
-        //let state = tree.state.downcast_mut::<TreeState>();
         let ordered_indices = self.get_ordered_indices(&combined_state.tree_state);
         
         // Update all visible children
@@ -992,7 +991,6 @@ where
 
                     // Check if Ctrl is held for selection rectangle
                     if combined_state.tree_state.current_modifiers.control() || combined_state.tree_state.current_modifiers.command() {
-                        // Start selection rectangle
                         combined_state.tree_state.selection_rect = Some(SelectionRect {
                             start_position: position,
                             current_position: position,
@@ -1382,143 +1380,166 @@ where
         let ordered_indices = self.get_ordered_indices(state);
         let tree_style = theme.style(&self.class);
         
-        let mut y = bounds.y + self.padding_y;
+        renderer.with_layer(*viewport, |renderer| {
+            let mut y = bounds.y + self.padding_y;
 
-        // Helper to draw drop preview
-        let draw_drop_preview = |renderer: &mut Renderer, y: f32, depth: u16, width: f32| {
-            let preview_indent = bounds.x + self.padding_x + (depth as f32 * self.indent);
-            let preview_height = LINE_HEIGHT;
-            
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: Rectangle {
-                        x: preview_indent,
-                        y,
-                        width: width - preview_indent + bounds.x,
-                        height: preview_height,
-                    },
-                    border: Border {
-                        color: tree_style.accept_drop_indicator_color,
-                        width: 2.0,
-                        radius: Radius::from(4.0),
-                    },
-                    ..Default::default()
-                },
-                tree_style.accept_drop_indicator_color.scale_alpha(0.1),
-            );
-            
-            let handle_x = preview_indent + ARROW_W;
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: Rectangle {
-                        x: handle_x,
-                        y: y + 2.0,
-                        width: HANDLE_STRIPE_W,
-                        height: preview_height - 4.0,
-                    },
-                    border: Border::default(),
-                    ..Default::default()
-                },
-                tree_style.line_color.scale_alpha(0.3),
-            );
-        };
-
-        let mut pending_into_adjustment = false;
-        
-        for &i in &ordered_indices {
-            if i >= self.branches.len() || 
-               i >= state.visible_branches.len() || 
-               !state.visible_branches[i] ||
-               i >= state.branch_heights.len() {
-                continue;
-            }
-            
-            let branch = &self.branches[i];
-            let (id, parent_id, effective_depth) = self.get_branch_info(i, state);
-
-            if let Some(ref drag) = state.drag_active {
-                if drag.dragged_nodes.contains(&id) {
-                    continue;
-                }
+            // Helper to draw drop preview
+            let draw_drop_preview = |renderer: &mut Renderer, y: f32, depth: u16, width: f32| {
+                let preview_indent = bounds.x + self.padding_x + (depth as f32 * self.indent);
+                let preview_height = LINE_HEIGHT;
                 
-                if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Before {
-                    let preview_depth = effective_depth;
-                    draw_drop_preview(renderer, y, preview_depth, bounds.width);
-                    y += LINE_HEIGHT + self.spacing;
-                }
-            }
-
-            if pending_into_adjustment {
-                y += LINE_HEIGHT + self.spacing;
-                pending_into_adjustment = false;
-            }
-            
-            let indent_x = bounds.x + self.padding_x + (effective_depth as f32 * self.indent);
-            let branch_height = state.branch_heights[i];
-            let branch_y = y;
-
-            if let Some(ref drag) = state.drag_active {
-                if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
-                    if state.expanded.contains(&id) {
-                        pending_into_adjustment = true;
-                    } else {
-                        let indicator_width = 30.0;
-                        let indicator_x = bounds.x + bounds.width - indicator_width - 10.0;
-                        
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: Rectangle {
-                                    x: indicator_x,
-                                    y: y + branch_height / 2.0 - 1.5,
-                                    width: indicator_width,
-                                    height: 3.0,
-                                },
-                                border: Border::default(),
-                                ..Default::default()
-                            },
-                            tree_style.accept_drop_indicator_color,
-                        );
-                        
-                        renderer.fill_text(
-                            iced::advanced::Text {
-                                content: "→".into(),
-                                bounds: Size::new(20.0, branch_height),
-                                size: Pixels(16.0),
-                                font: iced::Font::default(),
-                                align_x: Alignment::Center,
-                                align_y: iced::alignment::Vertical::Center,
-                                line_height: iced::advanced::text::LineHeight::default(),
-                                shaping: iced::advanced::text::Shaping::Advanced,
-                                wrapping: iced::advanced::text::Wrapping::default(),
-                            },
-                            Point::new(indicator_x - 20.0, y + (branch_height / 2.0)),
-                            tree_style.accept_drop_indicator_color,
-                            *viewport,
-                        );
-                    }
-                }
-            }
-
-            // Draw selection background
-            if state.selected.contains(&id) {
                 renderer.fill_quad(
                     renderer::Quad {
                         bounds: Rectangle {
-                            x: bounds.x,
+                            x: preview_indent,
                             y,
-                            width: bounds.width,
-                            height: branch_height,
+                            width: width - preview_indent + bounds.x,
+                            height: preview_height,
+                        },
+                        border: Border {
+                            color: tree_style.accept_drop_indicator_color,
+                            width: 2.0,
+                            radius: Radius::from(4.0),
+                        },
+                        ..Default::default()
+                    },
+                    tree_style.accept_drop_indicator_color.scale_alpha(0.1),
+                );
+                
+                let handle_x = preview_indent + ARROW_W;
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle {
+                            x: handle_x,
+                            y: y + 2.0,
+                            width: HANDLE_STRIPE_W,
+                            height: preview_height - 4.0,
                         },
                         border: Border::default(),
                         ..Default::default()
                     },
-                    tree_style.selection_background,
+                    tree_style.line_color.scale_alpha(0.3),
                 );
-            }
+            };
 
-            // Draw drop-into indicator border
-            if let Some(ref drag) = state.drag_active {
-                if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
+            let mut pending_into_adjustment = false;
+            
+            for &i in &ordered_indices {
+                if i >= self.branches.len() || 
+                i >= state.visible_branches.len() || 
+                !state.visible_branches[i] ||
+                i >= state.branch_heights.len() {
+                    continue;
+                }
+                
+                let branch = &self.branches[i];
+                let (id, parent_id, effective_depth) = self.get_branch_info(i, state);
+
+                if let Some(ref drag) = state.drag_active {
+                    if drag.dragged_nodes.contains(&id) {
+                        continue;
+                    }
+                    
+                    if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Before {
+                        let preview_depth = effective_depth;
+                        draw_drop_preview(renderer, y, preview_depth, bounds.width);
+                        y += LINE_HEIGHT + self.spacing;
+                    }
+                }
+
+                if pending_into_adjustment {
+                    y += LINE_HEIGHT + self.spacing;
+                    pending_into_adjustment = false;
+                }
+                
+                let indent_x = bounds.x + self.padding_x + (effective_depth as f32 * self.indent);
+                let branch_height = state.branch_heights[i];
+                let branch_y = y;
+
+                if let Some(ref drag) = state.drag_active {
+                    if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
+                        if state.expanded.contains(&id) {
+                            pending_into_adjustment = true;
+                        } else {
+                            let indicator_width = 30.0;
+                            let indicator_x = bounds.x + bounds.width - indicator_width - 10.0;
+                            
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: Rectangle {
+                                        x: indicator_x,
+                                        y: y + branch_height / 2.0 - 1.5,
+                                        width: indicator_width,
+                                        height: 3.0,
+                                    },
+                                    border: Border::default(),
+                                    ..Default::default()
+                                },
+                                tree_style.accept_drop_indicator_color,
+                            );
+                            
+                            renderer.fill_text(
+                                iced::advanced::Text {
+                                    content: "→".into(),
+                                    bounds: Size::new(20.0, branch_height),
+                                    size: Pixels(16.0),
+                                    font: iced::Font::default(),
+                                    align_x: Alignment::Center,
+                                    align_y: iced::alignment::Vertical::Center,
+                                    line_height: iced::advanced::text::LineHeight::default(),
+                                    shaping: iced::advanced::text::Shaping::Advanced,
+                                    wrapping: iced::advanced::text::Wrapping::default(),
+                                },
+                                Point::new(indicator_x - 20.0, y + (branch_height / 2.0)),
+                                tree_style.accept_drop_indicator_color,
+                                *viewport,
+                            );
+                        }
+                    }
+                }
+
+                // Draw selection background
+                if state.selected.contains(&id) {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: bounds.x,
+                                y,
+                                width: bounds.width,
+                                height: branch_height,
+                            },
+                            border: Border::default(),
+                            ..Default::default()
+                        },
+                        tree_style.selection_background,
+                    );
+                }
+
+                // Draw drop-into indicator border
+                if let Some(ref drag) = state.drag_active {
+                    if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: bounds.x,
+                                    y,
+                                    width: bounds.width,
+                                    height: branch_height,
+                                },
+                                border: Border {
+                                    color: tree_style.accept_drop_indicator_color,
+                                    width: 2.0,
+                                    radius: Radius::from(4.0),
+                                },
+                                ..Default::default()
+                            },
+                            tree_style.accept_drop_indicator_color.scale_alpha(0.1),
+                        );
+                    }
+                }
+                
+                // Draw hover/focus border
+                if state.focused == Some(id) || state.hovered == Some(id) {
                     renderer.fill_quad(
                         renderer::Quad {
                             bounds: Rectangle {
@@ -1528,191 +1549,169 @@ where
                                 height: branch_height,
                             },
                             border: Border {
-                                color: tree_style.accept_drop_indicator_color,
-                                width: 2.0,
-                                radius: Radius::from(4.0),
+                                color: tree_style.focus_border,
+                                width: 1.0,
+                                radius: Radius::from(2.0),
                             },
                             ..Default::default()
                         },
-                        tree_style.accept_drop_indicator_color.scale_alpha(0.1),
+                        iced::Background::Color(Color::TRANSPARENT),
                     );
                 }
-            }
-            
-            // Draw hover/focus border
-            if state.focused == Some(id) || state.hovered == Some(id) {
+                
+                // Draw expand/collapse arrow
+                if branch.has_children {
+                    if self.expand_icon.is_none() && self.collapse_icon.is_none() {
+                        // Use default text icons
+                        let arrow = if state.expanded.contains(&id) { "🠻" } else { "🠺" };
+                        
+                        renderer.fill_text(
+                            iced::advanced::Text {
+                                content: arrow.into(),
+                                bounds: Size::new(ARROW_W, branch_height),
+                                size: Pixels(16.0),
+                                font: iced::Font::default(),
+                                align_x: Alignment::Center,
+                                align_y: iced::alignment::Vertical::Center,
+                                line_height: iced::advanced::text::LineHeight::default(),
+                                shaping: iced::advanced::text::Shaping::Advanced,
+                                wrapping: iced::advanced::text::Wrapping::default(),
+                            },
+                            Point::new(indent_x + ARROW_X_PAD, y + (branch_height / 2.0)),
+                            tree_style.arrow_color,
+                            *viewport,
+                        );
+                    } else {
+                        // Draw custom icon Element
+                        // Calculate which icon tree to use based on branch index among expandable branches
+                        let expandable_branch_index = self.branches[..i]
+                            .iter()
+                            .filter(|b| b.has_children)
+                            .count();
+                        
+                        let icon_tree_base = self.branch_content.len() + (expandable_branch_index * 2);
+                        
+                        let (icon_element, icon_tree_index) = if state.expanded.contains(&id) {
+                            (self.collapse_icon.as_ref().unwrap(), icon_tree_base + 1)
+                        } else {
+                            (self.expand_icon.as_ref().unwrap(), icon_tree_base)
+                        };
+                        
+                        // Create a simple layout for the icon
+                        let icon_bounds = Rectangle {
+                            x: indent_x + ARROW_X_PAD,
+                            y: branch_y,
+                            width: ARROW_W,
+                            height: branch_height,
+                        };
+                        
+                        let icon_layout = layout::Node::new(Size::new(ARROW_W, branch_height))
+                            .move_to(Point::new(icon_bounds.x, icon_bounds.y));
+                        
+                        icon_element.as_widget().draw(
+                            &tree.children[icon_tree_index],
+                            renderer,
+                            theme,
+                            style,
+                            Layout::new(&icon_layout),
+                            cursor,
+                            viewport,
+                        );
+                    }
+                }
+                
+                // Draw handle/drag area
+                let handle_x = indent_x + ARROW_W;
+                let handle_width = HANDLE_STRIPE_W;
+                
                 renderer.fill_quad(
                     renderer::Quad {
                         bounds: Rectangle {
-                            x: bounds.x,
-                            y,
-                            width: bounds.width,
-                            height: branch_height,
+                            x: handle_x,
+                            y: branch_y + 2.0,
+                            width: handle_width,
+                            height: branch_height - 4.0,
                         },
-                        border: Border {
-                            color: tree_style.focus_border,
-                            width: 1.0,
-                            radius: Radius::from(2.0),
-                        },
+                        border: Border::default(),
                         ..Default::default()
                     },
-                    iced::Background::Color(Color::TRANSPARENT),
+                    tree_style.line_color,
                 );
-            }
-            
-            // Draw expand/collapse arrow
-            if branch.has_children {
-                if self.expand_icon.is_none() && self.collapse_icon.is_none() {
-                    // Use default text icons
-                    let arrow = if state.expanded.contains(&id) { "🠻" } else { "🠺" };
-                    
-                    renderer.fill_text(
-                        iced::advanced::Text {
-                            content: arrow.into(),
-                            bounds: Size::new(ARROW_W, branch_height),
-                            size: Pixels(16.0),
-                            font: iced::Font::default(),
-                            align_x: Alignment::Center,
-                            align_y: iced::alignment::Vertical::Center,
-                            line_height: iced::advanced::text::LineHeight::default(),
-                            shaping: iced::advanced::text::Shaping::Advanced,
-                            wrapping: iced::advanced::text::Wrapping::default(),
-                        },
-                        Point::new(indent_x + ARROW_X_PAD, y + (branch_height / 2.0)),
-                        tree_style.arrow_color,
-                        *viewport,
-                    );
+                
+                // Draw the branch content HERE for this specific branch
+                if let Some(ref drag) = state.drag_active {
+                    if !drag.dragged_nodes.contains(&id) {
+                        let child_state = &tree.children[i + child_layout_index];
+                        let child_layout = layout.children().nth(i).unwrap();
+                        self.branch_content[i].as_widget().draw(
+                            child_state, renderer, theme, style, child_layout, cursor, viewport,
+                        );
+                    }
                 } else {
-                    // Draw custom icon Element
-                    // Calculate which icon tree to use based on branch index among expandable branches
-                    let expandable_branch_index = self.branches[..i]
-                        .iter()
-                        .filter(|b| b.has_children)
-                        .count();
-                    
-                    let icon_tree_base = self.branch_content.len() + (expandable_branch_index * 2);
-                    
-                    let (icon_element, icon_tree_index) = if state.expanded.contains(&id) {
-                        (self.collapse_icon.as_ref().unwrap(), icon_tree_base + 1)
-                    } else {
-                        (self.expand_icon.as_ref().unwrap(), icon_tree_base)
-                    };
-                    
-                    // Create a simple layout for the icon
-                    let icon_bounds = Rectangle {
-                        x: indent_x + ARROW_X_PAD,
-                        y: branch_y,
-                        width: ARROW_W,
-                        height: branch_height,
-                    };
-                    
-                    let icon_layout = layout::Node::new(Size::new(ARROW_W, branch_height))
-                        .move_to(Point::new(icon_bounds.x, icon_bounds.y));
-                    
-                    icon_element.as_widget().draw(
-                        &tree.children[icon_tree_index],
-                        renderer,
-                        theme,
-                        style,
-                        Layout::new(&icon_layout),
-                        cursor,
-                        viewport,
-                    );
-                }
-            }
-            
-            // Draw handle/drag area
-            let handle_x = indent_x + ARROW_W;
-            let handle_width = HANDLE_STRIPE_W;
-            
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: Rectangle {
-                        x: handle_x,
-                        y: branch_y + 2.0,
-                        width: handle_width,
-                        height: branch_height - 4.0,
-                    },
-                    border: Border::default(),
-                    ..Default::default()
-                },
-                tree_style.line_color,
-            );
-            
-            // Draw the branch content HERE for this specific branch
-            if let Some(ref drag) = state.drag_active {
-                if !drag.dragged_nodes.contains(&id) {
                     let child_state = &tree.children[i + child_layout_index];
                     let child_layout = layout.children().nth(i).unwrap();
                     self.branch_content[i].as_widget().draw(
                         child_state, renderer, theme, style, child_layout, cursor, viewport,
                     );
                 }
-            } else {
-                let child_state = &tree.children[i + child_layout_index];
-                let child_layout = layout.children().nth(i).unwrap();
-                self.branch_content[i].as_widget().draw(
-                    child_state, renderer, theme, style, child_layout, cursor, viewport,
+                
+                y += branch_height + self.spacing;
+
+                if let Some(ref drag) = state.drag_active {
+                    if drag.drop_target == Some(id) && 
+                    drag.drop_position == DropPosition::Into && 
+                    state.expanded.contains(&id) {
+                        let child_preview_y = branch_y + branch_height + self.spacing;
+                        let child_depth = effective_depth + 1;
+                        draw_drop_preview(renderer, child_preview_y, child_depth, bounds.width);
+                    }
+                }
+
+                if let Some(ref drag) = state.drag_active {
+                    if drag.drop_target == Some(id) && drag.drop_position == DropPosition::After {
+                        let is_last_visible_item = !ordered_indices.iter()
+                            .skip_while(|&&j| j != i)
+                            .skip(1)
+                            .any(|&j| j < self.branches.len() && state.visible_branches[j]);
+                        
+                        let preview_depth = if parent_id.is_some() && is_last_visible_item {
+                            0
+                        } else {
+                            effective_depth
+                        };
+                        
+                        draw_drop_preview(renderer, y, preview_depth, bounds.width);
+                        y += LINE_HEIGHT + self.spacing;
+                    }
+                }
+            }
+
+            // Draw selection rectangle if active
+            if let Some(ref selection_rect) = state.selection_rect {
+                let rect_bounds = Rectangle {
+                    x: selection_rect.start_position.x.min(selection_rect.current_position.x),
+                    y: selection_rect.start_position.y.min(selection_rect.current_position.y),
+                    width: (selection_rect.current_position.x - selection_rect.start_position.x).abs(),
+                    height: (selection_rect.current_position.y - selection_rect.start_position.y).abs(),
+                };
+                
+                let tree_style = theme.style(&self.class);
+                
+                // Draw selection rectangle outline
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: rect_bounds,
+                        border: Border {
+                            color: tree_style.selection_border,
+                            width: 1.0,
+                            radius: Radius::from(2.0),
+                        },
+                        ..Default::default()
+                    },
+                    tree_style.selection_border.scale_alpha(0.1),
                 );
             }
-            
-            y += branch_height + self.spacing;
-
-            if let Some(ref drag) = state.drag_active {
-                if drag.drop_target == Some(id) && 
-                   drag.drop_position == DropPosition::Into && 
-                   state.expanded.contains(&id) {
-                    let child_preview_y = branch_y + branch_height + self.spacing;
-                    let child_depth = effective_depth + 1;
-                    draw_drop_preview(renderer, child_preview_y, child_depth, bounds.width);
-                }
-            }
-
-            if let Some(ref drag) = state.drag_active {
-                if drag.drop_target == Some(id) && drag.drop_position == DropPosition::After {
-                    let is_last_visible_item = !ordered_indices.iter()
-                        .skip_while(|&&j| j != i)
-                        .skip(1)
-                        .any(|&j| j < self.branches.len() && state.visible_branches[j]);
-                    
-                    let preview_depth = if parent_id.is_some() && is_last_visible_item {
-                        0
-                    } else {
-                        effective_depth
-                    };
-                    
-                    draw_drop_preview(renderer, y, preview_depth, bounds.width);
-                    y += LINE_HEIGHT + self.spacing;
-                }
-            }
-        }
-
-        // Draw selection rectangle if active
-        if let Some(ref selection_rect) = state.selection_rect {
-            let rect_bounds = Rectangle {
-                x: selection_rect.start_position.x.min(selection_rect.current_position.x),
-                y: selection_rect.start_position.y.min(selection_rect.current_position.y),
-                width: (selection_rect.current_position.x - selection_rect.start_position.x).abs(),
-                height: (selection_rect.current_position.y - selection_rect.start_position.y).abs(),
-            };
-            
-            let tree_style = theme.style(&self.class);
-            
-            // Draw selection rectangle outline
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: rect_bounds,
-                    border: Border {
-                        color: tree_style.selection_border,
-                        width: 1.0,
-                        radius: Radius::from(2.0),
-                    },
-                    ..Default::default()
-                },
-                tree_style.selection_border.scale_alpha(0.1),
-            );
-        }
-    
+        });
     }
 
     fn mouse_interaction(
@@ -2189,15 +2188,17 @@ where
                 if let Some(branch_content) = self.tree_handle.branch_content.get(primary_index) {
                     let branch_tree = &self.state.children[primary_index];
 
-                    branch_content.as_widget().draw(
-                        branch_tree,
-                        renderer,
-                        theme,
-                        &transparent_style,
-                        self.layout,
-                        cursor,
-                        &self.tree_layout.bounds()
-                    );
+                    if let Some(child_layout) = self.tree_layout.children().nth(primary_index) {
+                        branch_content.as_widget().draw(
+                            branch_tree,
+                            renderer,
+                            theme,
+                            &transparent_style,
+                            child_layout,
+                            cursor,
+                            &self.tree_layout.bounds()
+                        );
+                    }
                 }
             });
         });
