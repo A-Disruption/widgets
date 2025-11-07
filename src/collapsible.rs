@@ -78,6 +78,8 @@ pub struct Collapsible<
     on_toggle: Option<Box<dyn Fn(bool) -> Message + 'a>>,
     expand_icon: Option<Element<'a, Message, Theme, Renderer>>,
     collapse_icon: Option<Element<'a, Message, Theme, Renderer>>,
+    action_icon: Option<Element<'a, Message, Theme, Renderer>>, // right aligned icon to use as a button
+    on_action: Option<Box<dyn Fn() -> Message + 'a>>,   
     width: Length,
     height: Length,
     header_height: f32,
@@ -127,6 +129,8 @@ where
             on_toggle: None,
             expand_icon: None,
             collapse_icon: None,
+            action_icon: None,
+            on_action: None,
             width: Length::Fill,
             height: Length::Shrink,
             header_height: DEFAULT_HEADER_HEIGHT,
@@ -148,6 +152,15 @@ where
         on_toggle: impl Fn(bool) -> Message + 'a,
     ) -> Self {
         self.on_toggle = Some(Box::new(on_toggle));
+        self
+    }
+
+    /// Sets the callback for when the action icon is clicked.
+    pub fn on_action(
+        mut self,
+        on_action: impl Fn() -> Message + 'a,
+    ) -> Self {
+        self.on_action = Some(Box::new(on_action));
         self
     }
 
@@ -190,6 +203,15 @@ where
         icon: impl Into<Element<'a, Message, Theme, Renderer>>,
     ) -> Self {
         self.expand_icon = Some(icon.into());
+        self
+    }
+
+    /// Sets the action icon on the right side of the header.
+    pub fn action_icon(
+        mut self,
+        icon: impl Into<Element<'a, Message, Theme, Renderer>>,
+    ) -> Self {
+        self.action_icon = Some(icon.into());
         self
     }
 
@@ -247,7 +269,7 @@ where
         self
     }
 
-    fn child_indices(&self) -> (Option<usize>, Option<usize>, usize) {
+    fn child_indices(&self) -> (Option<usize>, Option<usize>, Option<usize>, usize) {
         let mut index = 0;
         let expand_index = if self.expand_icon.is_some() {
             let i = index;
@@ -264,10 +286,18 @@ where
         } else {
             None
         };
+
+        let action_index = if self.action_icon.is_some() {
+            let i = index;
+            index += 1;
+            Some(i)
+        } else {
+            None
+        };
         
         let content_index = index;
         
-        (expand_index, collapse_index, content_index)
+        (expand_index, collapse_index, action_index, content_index)
     }
 
 }
@@ -397,6 +427,10 @@ where
         if let Some(ref collapse_icon) = self.collapse_icon {
             children.push(Tree::new(collapse_icon));
         }
+
+        if let Some(ref action_icon) = self.action_icon {
+            children.push(Tree::new(action_icon));
+        }
         
         children.push(Tree::new(&self.content));
         
@@ -412,6 +446,10 @@ where
         
         if let Some(ref collapse_icon) = self.collapse_icon {
             children.push(collapse_icon);
+        }
+
+        if let Some(ref action_icon) = self.action_icon {
+            children.push(action_icon);
         }
         
         children.push(&self.content);
@@ -464,7 +502,7 @@ where
             )
         } else {
             // Layout custom icon Element
-            let (expand_index, collapse_index, _) = self.child_indices();
+            let (expand_index, collapse_index, _, _) = self.child_indices();
             
             let (icon_element, icon_tree_index) = if state.is_expanded {
                 // When expanded, show collapse icon if available, otherwise expand icon
@@ -496,9 +534,34 @@ where
 
         let icon_size = icon_node.size();
 
+        // Layout action icon if present
+        let (_, _, action_index, _) = self.child_indices();
+        let action_node_opt = if let Some(ref mut action_icon) = self.action_icon {
+            let icon_limits = layout::Limits::new(
+                Size::ZERO,
+                Size::new(self.header_height, self.header_height),
+            );
+            
+            Some((
+                action_icon.as_widget_mut().layout(
+                    &mut tree.children[action_index.unwrap()],
+                    renderer,
+                    &icon_limits,
+                ),
+                action_index.unwrap(),
+            ))
+        } else {
+            None
+        };
+
+        let action_icon_width = action_node_opt
+            .as_ref()
+            .map(|(node, _)| node.size().width + Self::ICON_SPACING)
+            .unwrap_or(0.0);
+
         // Layout title text after icon
         let title_x = self.header_height + Self::ICON_SPACING;
-        let available_title_width = limits.max().width - title_x - self.padding.right;
+        let available_title_width = limits.max().width - title_x - self.padding.right - action_icon_width;
         
         let title_limits = layout::Limits::new(
             Size::ZERO,
@@ -541,6 +604,22 @@ where
             header_offset + icon_y,
         ));
 
+        // Always create action icon node (zero-sized if not present)
+        let positioned_action = if let Some((mut node, _)) = action_node_opt {
+            let action_x = limits.max().width - self.padding.right - node.size().width;
+            let action_size = node.size();
+            let action_y = if action_size.height > title_size.height {
+                0.0
+            } else {
+                (title_size.height - action_size.height) / 2.0
+            };
+            
+            node.move_to(Point::new(action_x, header_offset + action_y))
+        } else {
+            // Zero-sized placeholder
+            layout::Node::new(Size::ZERO)
+        };
+
         let mut positioned_title = if self.title_alignment == Alignment::Center {
             title_node.move_to(Point::new(
                 0.0,
@@ -569,7 +648,7 @@ where
                 self.content_padding.vertical(),
             ));
 
-        let (_, _, content_index) = self.child_indices();
+        let (_, _, _, content_index) = self.child_indices();
         let mut content_node = self.content.as_widget_mut().layout(
             &mut tree.children[content_index],
             renderer,
@@ -586,10 +665,10 @@ where
 
         let total_height = self.header_height + animated_height;
 
-        // Return node with icon, title, and content as layout children
+        // Return node with icon, title, action_icon, and content as layout children
         layout::Node::with_children(
             Size::new(limits.max().width, total_height),
-            vec![positioned_icon, positioned_title, content_node],
+            vec![positioned_icon, positioned_title, positioned_action, content_node],
         )
     }
 
@@ -618,12 +697,22 @@ where
         // Icon bounds from first layout child
         let mut children = layout.children();
         let icon_layout = children.next().unwrap();
+        let _title_layout = children.next();  
+        let action_layout = children.next().unwrap();
+        let content_layout = children.next();
+
         let icon_bounds = icon_layout.bounds();
+        let action_bounds = action_layout.bounds();
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if (self.header_clickable && cursor.is_over(header_bounds)) 
+                if self.on_action.is_some() && cursor.is_over(action_bounds) {  // ← NEW
+                    if let Some(ref on_action) = self.on_action {
+                        shell.publish(on_action());
+                    }
+                } else if (self.header_clickable && cursor.is_over(header_bounds)) 
                     || cursor.is_over(icon_bounds) {
+                    // Existing toggle logic
                     state.is_expanded = !state.is_expanded;
                     state.last_update = Some(Instant::now());
                     shell.invalidate_layout();
@@ -653,9 +742,8 @@ where
         }
 
         // Forward events to content (third layout child, but content_index tree child)
-        let (_, _, content_index) = self.child_indices();
-        children.next(); // Skip title
-        if let Some(content_layout) = children.next() {
+        let (_, _, _, content_index) = self.child_indices();
+        if let Some(content_layout) = content_layout {
             self.content.as_widget_mut().update(
                 &mut tree.children[content_index],
                 event,
@@ -718,6 +806,7 @@ where
         let mut layout_children = layout.children();
         let icon_layout = layout_children.next().unwrap();
         let title_layout = layout_children.next().unwrap();
+        let action_layout = layout_children.next().unwrap();
         let content_layout_opt = layout_children.next();
 
         let content_bounds = if state.animation_progress > 0.0 {
@@ -811,7 +900,7 @@ where
             }
         }
 
-        let (expand_child, collapse_child, content_child) = self.child_indices();
+        let (expand_child, collapse_child, action_child, content_child) = self.child_indices();
 
         // Draw icon - either default text or custom Element
         if self.expand_icon.is_none() && self.collapse_icon.is_none() {
@@ -858,6 +947,19 @@ where
             },
             viewport,
         );
+
+        // Draw action icon if present (after drawing title, around line 854)
+        if let Some(ref action_icon) = self.action_icon {
+            action_icon.as_widget().draw(
+                &tree.children[action_child.unwrap()],
+                renderer,
+                theme,
+                defaults,
+                action_layout,
+                cursor,
+                viewport,
+            );
+        }
 
         // Draw content
         if state.animation_progress > 0.0 {
@@ -913,8 +1015,16 @@ where
         // Get icon bounds from first layout child
         let mut children = layout.children();
         let icon_layout = children.next().unwrap();
+        let _title_layout = children.next();
+        let action_layout = children.next().unwrap();
+        let content_layout = children.next();
+
         let icon_bounds = icon_layout.bounds();
-        let _title_layout = children.next(); // Skip title
+        let action_bounds = action_layout.bounds();
+
+        if self.on_action.is_some() && cursor.is_over(action_bounds) {
+            return mouse::Interaction::Pointer;
+        }
 
         let is_over_clickable = if self.header_clickable {
             cursor.is_over(header_bounds)
@@ -925,8 +1035,8 @@ where
         if is_over_clickable && self.on_toggle.is_some() {
             mouse::Interaction::Pointer
         } else if state.animation_progress != 0.0 {
-            let (_, _, content_index) = self.child_indices();
-            if let Some(content_layout) = children.next() {
+            let (_, _, _, content_index) = self.child_indices();
+            if let Some(content_layout) = content_layout {
                 self.content.as_widget().mouse_interaction(
                     &tree.children[content_index],
                     content_layout,
@@ -953,12 +1063,14 @@ where
         let state = &combined_state.animation;
         
         if state.animation_progress > 0.0 {
-            let (_, _, content_index) = self.child_indices();
+            let (_, _, _, content_index) = self.child_indices();
             let mut children = layout.children();
-            children.next(); // Skip icon
-            children.next(); // Skip title
+            let _icon_layout = children.next().unwrap();
+            let _title_layout = children.next();  
+            let _action_layout = children.next().unwrap();
+            let content_layout = children.next();
             
-            if let Some(content_layout) = children.next() {
+            if let Some(content_layout) = content_layout {
                 self.content.as_widget_mut().operate(
                     &mut tree.children[content_index],
                     content_layout,
@@ -981,12 +1093,14 @@ where
         let state = &mut combined_state.animation;
 
         if state.animation_progress > 0.0 {
-            let (_, _, content_index) = self.child_indices();
+            let (_, _, _, content_index) = self.child_indices();
             let mut children = layout.children();
-            children.next(); // icon
-            children.next(); // title
+            let _icon_layout = children.next().unwrap();
+            let _title_layout = children.next();  
+            let _action_layout = children.next().unwrap();
+            let content_layout = children.next();
             
-            if let Some(content_layout) = children.next() {
+            if let Some(content_layout) = content_layout {
                 self.content.as_widget_mut().overlay(
                     &mut tree.children[content_index],
                     content_layout,
