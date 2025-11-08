@@ -706,13 +706,12 @@ where
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if self.on_action.is_some() && cursor.is_over(action_bounds) {  // ← NEW
+                if self.on_action.is_some() && cursor.is_over(action_bounds) {
                     if let Some(ref on_action) = self.on_action {
                         shell.publish(on_action());
                     }
                 } else if (self.header_clickable && cursor.is_over(header_bounds)) 
                     || cursor.is_over(icon_bounds) {
-                    // Existing toggle logic
                     state.is_expanded = !state.is_expanded;
                     state.last_update = Some(Instant::now());
                     shell.invalidate_layout();
@@ -741,7 +740,7 @@ where
             _ => {}
         }
 
-        // Forward events to content (third layout child, but content_index tree child)
+        // Forward events to content / children
         let (_, _, _, content_index) = self.child_indices();
         if let Some(content_layout) = content_layout {
             self.content.as_widget_mut().update(
@@ -974,7 +973,14 @@ where
                     height: animated_height,
                 };
 
-                renderer.with_layer(clip_bounds, |renderer| {
+                // Use intersection of clip_bounds with parent viewport
+                let effective_clip = if let Some(clipped) = viewport.intersection(&clip_bounds) {
+                    clipped
+                } else {
+                    return; // Not visible at all, don't draw
+                };
+
+                renderer.with_layer(effective_clip, |renderer| {
                     self.content.as_widget().draw(
                         &tree.children[content_child],
                         renderer,
@@ -986,7 +992,7 @@ where
                         },
                         content_layout,
                         cursor,
-                        &clip_bounds,
+                        &effective_clip,
                     );
                 });
             }

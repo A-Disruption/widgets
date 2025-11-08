@@ -136,12 +136,18 @@ impl App {
                     collapsible_group![
                         collapsible(
                             "Tree 1",
-                            tree_widget,
-                        ).title_alignment(Alignment::Center),
+                            collapsible(
+                                "Nested Collapsible 1",
+                                tree_widget,
+                            ).title_alignment(Alignment::Center),
+                        ),
                         collapsible(
                             "Tree 2",
-                            tree_widget1,
-                        ).title_alignment(Alignment::Center),
+                            collapsible(
+                                "Nested Collapsible 2",
+                                tree_widget1,
+                            ).title_alignment(Alignment::Center),
+                        )
                     ].spacing(10.0),
                 ]
                 .width(400)

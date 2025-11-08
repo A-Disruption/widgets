@@ -1684,32 +1684,32 @@ where
                         y += LINE_HEIGHT + self.spacing;
                     }
                 }
-            }
 
-            // Draw selection rectangle if active
-            if let Some(ref selection_rect) = state.selection_rect {
-                let rect_bounds = Rectangle {
-                    x: selection_rect.start_position.x.min(selection_rect.current_position.x),
-                    y: selection_rect.start_position.y.min(selection_rect.current_position.y),
-                    width: (selection_rect.current_position.x - selection_rect.start_position.x).abs(),
-                    height: (selection_rect.current_position.y - selection_rect.start_position.y).abs(),
-                };
-                
-                let tree_style = theme.style(&self.class);
-                
-                // Draw selection rectangle outline
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: rect_bounds,
-                        border: Border {
-                            color: tree_style.selection_border,
-                            width: 1.0,
-                            radius: Radius::from(2.0),
+                // Draw selection rectangle if active
+                if let Some(ref selection_rect) = state.selection_rect {
+                    let rect_bounds = Rectangle {
+                        x: selection_rect.start_position.x.min(selection_rect.current_position.x),
+                        y: selection_rect.start_position.y.min(selection_rect.current_position.y),
+                        width: (selection_rect.current_position.x - selection_rect.start_position.x).abs(),
+                        height: (selection_rect.current_position.y - selection_rect.start_position.y).abs(),
+                    };
+                    
+                    let tree_style = theme.style(&self.class);
+                    
+                    // Draw selection rectangle outline
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: rect_bounds,
+                            border: Border {
+                                color: tree_style.selection_border,
+                                width: 1.0,
+                                radius: Radius::from(2.0),
+                            },
+                            ..Default::default()
                         },
-                        ..Default::default()
-                    },
-                    tree_style.selection_border.scale_alpha(0.1),
-                );
+                        tree_style.selection_border.scale_alpha(0.1),
+                    );
+                }
             }
         });
     }
