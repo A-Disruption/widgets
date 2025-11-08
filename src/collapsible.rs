@@ -986,7 +986,7 @@ where
                         },
                         content_layout,
                         cursor,
-                        viewport,
+                        &clip_bounds,
                     );
                 });
             }

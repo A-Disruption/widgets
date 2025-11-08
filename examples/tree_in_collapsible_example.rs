@@ -101,6 +101,33 @@ impl App {
         .on_drop(Message::HandleBranchDropped)
         .on_select(Message::TreeSelect);
 
+        let tree_widget1 = tree_handle(vec![
+            branch(button("Fruit").on_press(Message::ButtonPressed)).with_id(10).block_dragging()
+                .with_children(vec![
+                    branch(text("Strawberries")).with_id(1),
+                    branch(text("Blueberries")).with_id(2),
+                    branch(container(text("Citrus")).padding(5)).with_id(3)
+                        .with_children(vec![
+                            branch(text("Oranges")).with_id(4),
+                            branch(text("Lemons")).with_id(5),
+                        ]).accepts_drops(),
+                ]).accepts_drops(),
+            branch(button("Vegetables").on_press(Message::ButtonPressed)).with_id(6)
+                .with_children(vec![
+                    branch(text("Carrots")).with_id(7),
+                    branch(text("Broccoli")).with_id(8),
+                ]).accepts_drops(),
+            branch(
+                row![
+                    button("button1").on_press(Message::ButtonPressed),
+                    space::horizontal(),
+                    button("button2").on_press(Message::ButtonPressed)
+                ].spacing(50) // If using a horizonal_space() inside a row, set the row to shrink or the branch will not render
+            ).with_id(19).accepts_drops(),
+        ])
+        .on_drop(Message::HandleBranchDropped)
+        .on_select(Message::TreeSelect);
+
         column![
             iced::widget::text("Tree Widget Example").size(24),
             space::vertical().height(5),
@@ -110,6 +137,10 @@ impl App {
                         collapsible(
                             "Tree 1",
                             tree_widget,
+                        ).title_alignment(Alignment::Center),
+                        collapsible(
+                            "Tree 2",
+                            tree_widget1,
                         ).title_alignment(Alignment::Center),
                     ].spacing(10.0),
                 ]
