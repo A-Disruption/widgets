@@ -181,6 +181,7 @@ pub enum Message {
 
     //Color_picker widget
     ColorPickerChanged(ColorField, Color),
+    ColorPickerChangedWithSource(ColorField, Color, Option<String>),
 
     UpdateTheme(Theme),
 }
@@ -352,8 +353,63 @@ impl PaletteBuilder {
                         self.danger_input = color_to_hex(color);
                     }
                 }
-                let theme = self.palette.to_iced_theme_frfr("Custom");
-                self.theme = theme;
+
+                //let theme = self.palette.to_iced_theme_frfr("Custom");
+                //self.theme = theme;
+            }
+            Message::ColorPickerChangedWithSource(field, color, source) => {
+                // Update the color
+                match field {
+                    ColorField::Background => {
+                        self.palette.background = color;
+                        self.background_input = color_to_hex(color);
+                    }
+                    ColorField::Text => {
+                        self.palette.text = color;
+                        self.text_input = color_to_hex(color);
+                    }
+                    ColorField::Primary => {
+                        self.palette.primary = color;
+                        self.primary_input = color_to_hex(color);
+                    }
+                    ColorField::Success => {
+                        self.palette.success = color;
+                        self.success_input = color_to_hex(color);
+                    }
+                    ColorField::Warning => {
+                        self.palette.warning = color;
+                        self.warning_input = color_to_hex(color);
+                    }
+                    ColorField::Danger => {
+                        self.palette.danger = color;
+                        self.danger_input = color_to_hex(color);
+                    }
+                }
+                
+                // Update the text in text_input
+                let display_text = source.unwrap_or_else(|| color_to_hex(color));
+                match field {
+                    ColorField::Background => {
+                        self.background_input = display_text;
+                    }
+                    ColorField::Text => {
+                        self.text_input = display_text;
+                    }
+                    ColorField::Primary => {
+                        self.primary_input = display_text;
+                    }
+                    ColorField::Success => {
+                        self.success_input = display_text;
+                    }
+                    ColorField::Warning => {
+                        self.warning_input = display_text;
+                    }
+                    ColorField::Danger => {
+                        self.danger_input = display_text;
+                    }
+                }
+                
+
             }
         }
         Task::none()
@@ -398,8 +454,8 @@ impl PaletteBuilder {
                                 row![
                                     color_button(
                                         self.palette.background,
-                                        |color| Message::ColorPickerChanged(ColorField::Background, color)
                                     )
+                                    .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Background, color, source))
                                     .title("Background Color")
                                     .width(30)
                                     .height(20),
@@ -411,13 +467,11 @@ impl PaletteBuilder {
                             column![
                                 text("Primary"),
                                 row![
-                                    color_button(
-                                        self.palette.primary,
-                                        |color| Message::ColorPickerChanged(ColorField::Primary, color)
-                                    )
-                                    .title("Primary Color")
-                                    .width(30)
-                                    .height(20),
+                                    color_button(self.palette.primary)
+                                        .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Primary, color, source))
+                                        .title("Primary Color")
+                                        .width(30)
+                                        .height(20),
                                     text_input("Primary", &self.primary_input)
                                         .on_input(|s| Message::ColorChanged(ColorField::Primary, s))
                                 ].align_y(iced::Alignment::Center).spacing(5),
@@ -426,13 +480,11 @@ impl PaletteBuilder {
                             column![
                                 text("Warning"),
                                 row![
-                                    color_button(
-                                        self.palette.warning,
-                                        |color| Message::ColorPickerChanged(ColorField::Warning, color)
-                                    )
-                                    .title("Warning Color")
-                                    .width(30)
-                                    .height(20),
+                                    color_button(self.palette.warning)
+                                        .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Warning, color, source))
+                                        .title("Warning Color")
+                                        .width(30)
+                                        .height(20),
                                     text_input("Warning", &self.warning_input)
                                         .on_input(|s| Message::ColorChanged(ColorField::Warning, s))
                                 ].align_y(iced::Alignment::Center).spacing(5),
@@ -443,13 +495,11 @@ impl PaletteBuilder {
                             column![
                                 text("Text"),
                                 row![
-                                    color_button(
-                                        self.palette.text,
-                                        |color| Message::ColorPickerChanged(ColorField::Text, color)
-                                    )
-                                    .title("Text Color")
-                                    .width(30)
-                                    .height(20),
+                                    color_button(self.palette.text)
+                                        .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Text, color, source))
+                                        .title("Text Color")
+                                        .width(30)
+                                        .height(20),
                                     text_input("Text", &self.text_input)
                                         .on_input(|s| Message::ColorChanged(ColorField::Text, s))
                                 ].align_y(iced::Alignment::Center).spacing(5),
@@ -458,13 +508,11 @@ impl PaletteBuilder {
                             column![
                                 text("Success"),
                                 row![
-                                    color_button(
-                                        self.palette.success,
-                                        |color| Message::ColorPickerChanged(ColorField::Success, color)
-                                    )
-                                    .title("Success Color")
-                                    .width(30)
-                                    .height(20),
+                                    color_button(self.palette.success)
+                                        .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Success, color, source))
+                                        .title("Success Color")
+                                        .width(30)
+                                        .height(20),
                                     text_input("Success", &self.success_input)
                                         .on_input(|s| Message::ColorChanged(ColorField::Success, s))
                                 ].align_y(iced::Alignment::Center).spacing(5),
@@ -473,13 +521,11 @@ impl PaletteBuilder {
                             column![
                                 text("Danger"),
                                 row![
-                                    color_button(
-                                        self.palette.danger,
-                                        |color| Message::ColorPickerChanged(ColorField::Danger, color)
-                                    )
-                                    .title("Danger Color")
-                                    .width(30)
-                                    .height(20),
+                                    color_button(self.palette.danger)
+                                        .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Danger, color, source))
+                                        .title("Danger Color")
+                                        .width(30)
+                                        .height(20),
                                     text_input("Danger", &self.danger_input)
                                         .on_input(|s| Message::ColorChanged(ColorField::Danger, s))
                                 ].align_y(iced::Alignment::Center).spacing(5),
