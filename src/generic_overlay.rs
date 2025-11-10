@@ -7,7 +7,7 @@ use iced::{
         text,
         widget::{self, tree::Tree},
         Clipboard, Layout, Overlay as _, Renderer as _, Shell, Widget,
-    }, alignment::Vertical, border::Radius, event, keyboard, mouse, touch, widget::button, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow, Size, Theme, Vector
+    }, alignment::Vertical, border::Radius, event, keyboard, mouse, touch, widget::button, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow, Size, Theme, Vector, Background
 };
 
 // Constants matching color_picker.rs for consistency
@@ -21,7 +21,7 @@ const MIN_OVERLAY_SIZE: f32 = 100.0;   // Minimum overlay dimensions
 
 /// Helper function to create an overlay button
 pub fn overlay_button<'a, Message, Theme, Renderer>(
-    label: impl Into<String>,
+    label: impl Into<Element<'a, Message, Theme, Renderer>>,
     title: impl Into<String>,
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
 ) -> OverlayButton<'a, Message, Theme, Renderer> 
@@ -40,11 +40,7 @@ where
     Renderer: text::Renderer,
 {
     /// The button label
-    label: String,
-    /// text size for button text
-    label_text_size: Option<Pixels>,
-    /// font for button text
-    label_font: Option<Renderer::Font>,
+    button_content: Element<'a, Message, Theme, Renderer>,
     /// The overlay title
     title: String,
     /// text size for title text
@@ -63,6 +59,8 @@ where
     height: Length,
     /// Button padding
     padding: Padding,
+    /// Should button clip content
+    clip: bool,
     /// Callback when the overlay is opened
     on_open: Option<Box<dyn Fn() -> Message + 'a>>,
     /// Callback when the overlay is closed
@@ -94,24 +92,25 @@ where
 {
     /// Creates a new overlay button with the given label and content function
     pub fn new(
-        label: impl Into<String>,
+        label: impl Into<Element<'a, Message, Theme, Renderer>>,
         title: impl Into<String>,
         content: impl Into<Element<'a, Message, Theme, Renderer>>,
     ) -> Self {
+        let button_content = label.into();
+        let size = button_content.as_widget().size_hint();
 
         Self {
-            label: label.into(),
-            label_text_size: None,
-            label_font: None,
+            button_content,
             title: title.into(),
             title_text_size: None,
             title_font: None,
             content: content.into(),
             overlay_width: None,
             overlay_height: None,
-            width: Length::Fixed(50.0),
-            height: Length::Fixed(30.0),
+            width: size.width.fluid(),
+            height: size.height.fluid(),
             padding: DEFAULT_PADDING,
+            clip: false,
             on_open: None,
             on_close: None,
             class: <Theme as Catalog>::default(),
@@ -165,6 +164,13 @@ where
     /// Sets a callback for when the overlay is closed
     pub fn on_close(mut self, callback: impl Fn() -> Message + 'a) -> Self {
         self.on_close = Some(Box::new(callback));
+        self
+    }
+
+    /// Sets whether the contents of the [`Button`] should be clipped on
+    /// overflow.
+    pub fn button_clip(mut self, clip: bool) -> Self {
+        self.clip = clip;
         self
     }
 
@@ -314,7 +320,6 @@ where
     current_width: f32,
     current_height: f32,
     height_auto: bool,
-    label_text: widget::text::State<P>,
     title_text: widget::text::State<P>,
 }
 
@@ -346,18 +351,17 @@ where
                 current_width: 0.0,
                 current_height: 0.0,
                 height_auto: false,
-                label_text: widget::text::State::<Renderer::Paragraph>::default(),
                 title_text: widget::text::State::<Renderer::Paragraph>::default(),
             }
         )
     }
 
     fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&(self.content))]
+        vec![Tree::new(&(self.content)), Tree::new(&(self.button_content))]
     }
 
     fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(&[&self.content]);
+        tree.diff_children(&[&self.content, &self.button_content]);
     }
 
     fn size(&self) -> Size<Length> {
@@ -370,37 +374,19 @@ where
         renderer: &Renderer, 
         limits: &Limits
     ) -> Node {
-        let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
-
-        let size = self.size();
-
-        let available_label_width = limits.max().width + self.padding.horizontal();
-        let available_label_height = limits.max().height + self.padding.vertical();
-        let label_limits = layout::Limits::new(
-            Size::ZERO,
-            Size::new(available_label_width.max(0.0), available_label_height.max(0.0)),
-        );
-
-        // Calculate intrinsic size based on text content
-        let label_node = widget::text::layout(
-            &mut state.label_text,
-            renderer,
-            &label_limits,
-            &self.label,
-            widget::text::Format {
-                width: Length::Shrink,
-                height: Length::Shrink,
-                line_height: text::LineHeight::default(),
-                size: self.label_text_size,
-                font: self.label_font,
-                align_x: text::Alignment::Default,
-                align_y: iced::alignment::Vertical::Center,
-                shaping: text::Shaping::Basic,
-                wrapping: text::Wrapping::default(),
+        layout::padded(
+            limits,
+            self.width,
+            self.height,
+            self.padding,
+            |limits| {
+                self.button_content.as_widget_mut().layout(
+                    &mut tree.children[1],
+                    renderer,
+                    limits,
+                )
             },
-        );
-        
-        label_node
+        )
     }
 
     fn draw(
@@ -411,48 +397,51 @@ where
         _style: &renderer::Style,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
     ) 
     where 
         Theme: Catalog + button::Catalog,
     {
         let state = tree.state.downcast_ref::<State<Renderer::Paragraph>>();
 
-        let bounds = layout.bounds().expand(self.padding);
+        let bounds = layout.bounds();
+        let button_content_layout = layout.children().next().unwrap();
 //        let is_hovered = cursor.is_over(bounds);
         let style = <Theme as button::Catalog>::style(theme, &self.button_class, self.status.unwrap_or(button::Status::Active));
 
-        // Draw button background
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds,
-                border: Border {
-                    color: style.border.color,
-                    width: 1.0,
-                    radius: 4.0.into(),
+        if style.background.is_some()
+            || style.border.width > 0.0
+            || style.shadow.color.a > 0.0
+        {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds,
+                    border: style.border,
+                    shadow: style.shadow,
+                    snap: style.snap,
                 },
-                shadow: Shadow::default(),
-                snap: true,
-            },
-            style.background.unwrap()
-        );
+                style
+                    .background
+                    .unwrap_or(Background::Color(Color::TRANSPARENT)),
+            );
+        }
 
-        // Draw button text
-        renderer.fill_text(
-            iced::advanced::Text {
-                content: self.label.clone(),
-                bounds: Size::new(bounds.width, bounds.height),
-                size: iced::Pixels(16.0),
-                font: iced::Font::default(),
-                align_x: iced::advanced::text::Alignment::Center,
-                align_y: Vertical::Center,
-                line_height: iced::advanced::text::LineHeight::default(),
-                shaping: iced::advanced::text::Shaping::Advanced,
-                wrapping: iced::advanced::text::Wrapping::default(),
+        let viewport = if self.clip {
+            bounds.intersection(viewport).unwrap_or(*viewport)
+        } else {
+            *viewport
+        };
+
+        self.button_content.as_widget().draw(
+            &tree.children[1],
+            renderer,
+            theme,
+            &renderer::Style {
+                text_color: style.text_color,
             },
-            Point::new(bounds.center_x(), bounds.center_y()),
-            style.text_color,
-            bounds,
+            button_content_layout,
+            cursor,
+            &viewport,
         );
     }
 

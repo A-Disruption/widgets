@@ -142,7 +142,7 @@ impl App {
 
         // EXAMPLE 1: Basic overlay with header (matching color_picker header size)
         let basic_overlay = overlay_button(
-            "Open Default Overlay",
+            text("Open Default Overlay"),
             "Default Generic Overlay Example",
             basic_overlay_content,
         )
