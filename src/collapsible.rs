@@ -740,19 +740,21 @@ where
             _ => {}
         }
 
-        // Forward events to content / children
+        // Forward events to content / children when expanded
         let (_, _, _, content_index) = self.child_indices();
-        if let Some(content_layout) = content_layout {
-            self.content.as_widget_mut().update(
-                &mut tree.children[content_index],
-                event,
-                content_layout,
-                cursor,
-                renderer,
-                clipboard,
-                shell,
-                viewport,
-            );
+        if state.animation_progress > 0.0 {
+            if let Some(content_layout) = content_layout {
+                self.content.as_widget_mut().update(
+                    &mut tree.children[content_index],
+                    event,
+                    content_layout,
+                    cursor,
+                    renderer,
+                    clipboard,
+                    shell,
+                    viewport,
+                );
+            }
         }
     }
 
