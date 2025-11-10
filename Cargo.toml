@@ -31,3 +31,7 @@ path = "examples\\color_picker_example.rs"
 [[example]]
 name = "collasible_example"
 path = "examples\\collasible_example.rs"
+
+[[example]]
+name = "generic_overlay_example"
+path = "examples\\generic_overlay_example.rs"
