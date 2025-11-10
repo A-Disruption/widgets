@@ -122,7 +122,7 @@ impl App {
                     button("button1").on_press(Message::ButtonPressed),
                     space::horizontal(),
                     button("button2").on_press(Message::ButtonPressed)
-                ].spacing(50) // If using a horizonal_space() inside a row, set the row to shrink or the branch will not render
+                ].spacing(50)
             ).with_id(19).accepts_drops(),
         ])
         .on_drop(Message::HandleBranchDropped)
@@ -135,19 +135,19 @@ impl App {
                 column![
                     collapsible_group![
                         collapsible(
-                            "Tree 1",
+                            "Tree 1 - Very Slow - EaseInOutBounce",
                             collapsible(
                                 "Nested Collapsible 1",
                                 tree_widget,
                             ).title_alignment(Alignment::Center),
-                        ),
+                        ).easing(iced::animation::Easing::EaseInOutBounce).very_slow(),
                         collapsible(
-                            "Tree 2",
+                            "Tree 2 - Very Slow - EaseInOutBounce",
                             collapsible(
                                 "Nested Collapsible 2",
                                 tree_widget1,
                             ).title_alignment(Alignment::Center),
-                        )
+                        ).easing(iced::animation::Easing::EaseInOutBounce).very_slow()
                     ].spacing(10.0),
                 ]
                 .width(400)

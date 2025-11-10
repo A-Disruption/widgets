@@ -5,6 +5,7 @@
 //! 2. Group: Wrap multiple collapsibles in `collapsible_group![]` for accordion behavior
 
 use iced::{alignment, Alignment};
+use iced::animation::{Animation, Easing};
 use iced::border::{self, Border};
 use iced::advanced::Clipboard;
 use iced::advanced::layout;
@@ -92,6 +93,7 @@ pub struct Collapsible<
     class: Theme::Class<'a>,
     initially_expanded: bool,
     easing: Easing,
+    duration: Option<iced::time::Duration>,
 }
 
 impl<'a, Message, Theme, Renderer> Collapsible<'a, Message, Theme, Renderer>
@@ -143,6 +145,7 @@ where
             class: Theme::default(),
             initially_expanded: false,
             easing: Easing::Linear,
+            duration: None,
         }
     }
 
@@ -251,6 +254,36 @@ where
         self
     }
 
+    /// Sets the animation duration to 100ms (very quick).
+    pub fn very_quick(mut self) -> Self {
+        self.duration = Some(Duration::from_millis(100));
+        self
+    }
+
+    /// Sets the animation duration to 200ms (quick) - this is the default.
+    pub fn quick(mut self) -> Self {
+        self.duration = Some(Duration::from_millis(200));
+        self
+    }
+
+    /// Sets the animation duration to 400ms (slow).
+    pub fn slow(mut self) -> Self {
+        self.duration = Some(Duration::from_millis(400));
+        self
+    }
+
+    /// Sets the animation duration to 500ms (very slow).
+    pub fn very_slow(mut self) -> Self {
+        self.duration = Some(Duration::from_millis(500));
+        self
+    }
+
+    /// Sets a custom animation duration.
+    pub fn duration(mut self, duration: Duration) -> Self {
+        self.duration = Some(duration);
+        self
+    }
+
     /// Sets the style.
     #[must_use]
     pub fn style(mut self, style: impl Fn(&Theme, Status) -> Style + 'a) -> Self
@@ -302,41 +335,13 @@ where
 
 }
 
-/// Easing functions for animation.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Easing {
-    Linear,
-    EaseIn,
-    EaseOut,
-    EaseInOut,
-}
-
-impl Easing {
-    fn apply(self, t: f32) -> f32 {
-        match self {
-            Easing::Linear => t,
-            Easing::EaseIn => t * t,
-            Easing::EaseOut => t * (2.0 - t),
-            Easing::EaseInOut => {
-                if t < 0.5 {
-                    2.0 * t * t
-                } else {
-                    -1.0 + (4.0 - 2.0 * t) * t
-                }
-            }
-        }
-    }
-}
-
 /// Internal state for standalone collapsible.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct State {
-    is_expanded: bool,
+    animation: Animation<bool>,
+    progress: f32,  // Cached animation progress for use in layout/draw
     button_is_pressed: bool,
     header_is_hovered: bool,
-    raw_animation_progress: f32,
-    animation_progress: f32,
-    last_update: Option<Instant>,
     header_height: f32,
 }
 
@@ -353,41 +358,11 @@ where
 impl Default for State {
     fn default() -> Self {
         Self {
-            is_expanded: false,
+            animation: Animation::new(false).quick(),
+            progress: 0.0,
             button_is_pressed: false,
             header_is_hovered: false,
-            raw_animation_progress: 0.0,
-            animation_progress: 0.0,
-            last_update: None,
             header_height: DEFAULT_HEADER_HEIGHT,
-        }
-    }
-}
-
-impl State {
-    const ANIMATION_DURATION: f32 = 0.2;
-
-    fn update_animation(&mut self, now: Instant, easing: Easing, target_expanded: bool) -> bool {
-        if let Some(last_update) = self.last_update {
-            let delta = (now - last_update).as_secs_f32();
-            let change = delta / Self::ANIMATION_DURATION;
-
-            if target_expanded {
-                self.raw_animation_progress = (self.raw_animation_progress + change).min(1.0);
-            } else {
-                self.raw_animation_progress = (self.raw_animation_progress - change).max(0.0);
-            }
-
-            self.animation_progress = easing.apply(self.raw_animation_progress);
-            self.last_update = Some(now);
-            
-            (target_expanded && self.raw_animation_progress < 1.0)
-                || (!target_expanded && self.raw_animation_progress > 0.0)
-        } else {
-            self.last_update = Some(now);
-            self.raw_animation_progress = if target_expanded { 1.0 } else { 0.0 };
-            self.animation_progress = easing.apply(self.raw_animation_progress);
-            false
         }
     }
 }
@@ -404,14 +379,23 @@ where
     }
 
     fn state(&self) -> tree::State {
-        let mut animation_state = State::default();
-        animation_state.is_expanded = self.initially_expanded;
-        animation_state.raw_animation_progress = if self.initially_expanded { 1.0 } else { 0.0 };
-        animation_state.animation_progress = if self.initially_expanded { 1.0 } else { 0.0 };
-        animation_state.header_height = self.header_height;
+        let mut animation = Animation::new(self.initially_expanded)
+            .easing(self.easing);
+
+        animation = if let Some(duration) = self.duration {
+            animation.duration(duration)
+        } else {
+            animation.quick()
+        };
         
         tree::State::new(CombinedState {
-            animation: animation_state,
+            animation: State {
+                animation,
+                progress: if self.initially_expanded { 1.0 } else { 0.0 },
+                button_is_pressed: false,
+                header_is_hovered: false,
+                header_height: self.header_height,
+            },
             text: widget::text::State::<Renderer::Paragraph>::default(),
             icon_text: widget::text::State::<Renderer::Paragraph>::default(),
         })
@@ -476,7 +460,7 @@ where
 
         let icon_node = if self.expand_icon.is_none() && self.collapse_icon.is_none() {
             // Use default text icon
-            let arrow = if state.is_expanded { "🠻" } else { "🠺" };
+            let arrow = if state.animation.value() { "🠻" } else { "🠺" };
             
             let icon_limits = layout::Limits::new(
                 Size::ZERO,
@@ -504,7 +488,7 @@ where
             // Layout custom icon Element
             let (expand_index, collapse_index, _, _) = self.child_indices();
             
-            let (icon_element, icon_tree_index) = if state.is_expanded {
+            let (icon_element, icon_tree_index) = if state.animation.value() {
                 // When expanded, show collapse icon if available, otherwise expand icon
                 if let Some(collapse_idx) = collapse_index {
                     (self.collapse_icon.as_mut().unwrap(), collapse_idx)
@@ -661,7 +645,7 @@ where
         ));
         
         let full_content_height = content_node.size().height + self.content_padding.vertical();
-        let animated_height = full_content_height * state.animation_progress;
+        let animated_height = full_content_height * state.progress;
 
         let total_height = self.header_height + animated_height;
 
@@ -712,13 +696,15 @@ where
                     }
                 } else if (self.header_clickable && cursor.is_over(header_bounds)) 
                     || cursor.is_over(icon_bounds) {
-                    state.is_expanded = !state.is_expanded;
-                    state.last_update = Some(Instant::now());
+                    let now = Instant::now();
+                    let new_state = !state.animation.value();
+                    state.animation.go_mut(new_state, now);
+                    state.progress = state.animation.interpolate(0.0, 1.0, now);
                     shell.invalidate_layout();
                     shell.request_redraw();
 
                     if let Some(ref on_toggle) = self.on_toggle {
-                        shell.publish(on_toggle(state.is_expanded));
+                        shell.publish(on_toggle(new_state));
                     }
                 }
             }
@@ -732,7 +718,8 @@ where
                 shell.request_redraw();
             }
             Event::Window(window::Event::RedrawRequested(now)) => {
-                if state.update_animation(*now, self.easing, state.is_expanded) {
+                state.progress = state.animation.interpolate(0.0, 1.0, *now);
+                if state.animation.is_animating(*now) {
                     shell.invalidate_layout();
                     shell.request_redraw();
                 }
@@ -742,7 +729,7 @@ where
 
         // Forward events to content / children when expanded
         let (_, _, _, content_index) = self.child_indices();
-        if state.animation_progress > 0.0 {
+        if state.progress > 0.0 {
             if let Some(content_layout) = content_layout {
                 self.content.as_widget_mut().update(
                     &mut tree.children[content_index],
@@ -810,10 +797,10 @@ where
         let action_layout = layout_children.next().unwrap();
         let content_layout_opt = layout_children.next();
 
-        let content_bounds = if state.animation_progress > 0.0 {
+        let content_bounds = if state.progress > 0.0 {
             content_layout_opt.map(|l| {
                 let full_bounds = l.bounds();
-                let animated_height = full_bounds.height * state.animation_progress;
+                let animated_height = full_bounds.height * state.progress;
                 Rectangle {
                     x: bounds.x,
                     y: bounds.y + state.header_height,
@@ -825,7 +812,7 @@ where
             None
         };
 
-        let header_border = if state.animation_progress > 0.0 {
+        let header_border = if state.progress > 0.0 {
             Border {
                 radius: border::Radius {
                     top_left: style.border.radius.top_left,
@@ -855,7 +842,7 @@ where
         }
 
         // Draw header shadow
-        if state.animation_progress > 0.0 && style.header_shadow.color.a > 0.0 {
+        if state.progress > 0.0 && style.header_shadow.color.a > 0.0 {
             let shadow_bounds = Rectangle {
                 x: header_bounds.x,
                 y: header_bounds.y + header_bounds.height,
@@ -918,7 +905,7 @@ where
             );
         } else {
             // Draw custom icon Element
-            let (icon_element, icon_tree_index) = if state.is_expanded {
+            let (icon_element, icon_tree_index) = if state.animation.value() {
                 (self.collapse_icon.as_ref().unwrap(), collapse_child.unwrap())
             } else {
                 (self.expand_icon.as_ref().unwrap(), expand_child.unwrap())
@@ -963,10 +950,10 @@ where
         }
 
         // Draw content
-        if state.animation_progress > 0.0 {
+        if state.progress > 0.0 {
             if let Some(content_layout) = content_layout_opt {
                 let full_content_height = content_layout.bounds().height;
-                let animated_height = full_content_height * state.animation_progress;
+                let animated_height = full_content_height * state.progress;
                 
                 let clip_bounds = Rectangle {
                     x: bounds.x,
@@ -1042,7 +1029,7 @@ where
 
         if is_over_clickable && self.on_toggle.is_some() {
             mouse::Interaction::Pointer
-        } else if state.animation_progress != 0.0 {
+        } else if state.progress != 0.0 {
             let (_, _, _, content_index) = self.child_indices();
             if let Some(content_layout) = content_layout {
                 self.content.as_widget().mouse_interaction(
@@ -1070,7 +1057,7 @@ where
         let combined_state = tree.state.downcast_ref::<CombinedState<Renderer::Paragraph>>();
         let state = &combined_state.animation;
         
-        if state.animation_progress > 0.0 {
+        if state.progress > 0.0 {
             let (_, _, _, content_index) = self.child_indices();
             let mut children = layout.children();
             let _icon_layout = children.next().unwrap();
@@ -1100,7 +1087,7 @@ where
         let combined_state = tree.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
         let state = &mut combined_state.animation;
 
-        if state.animation_progress > 0.0 {
+        if state.progress > 0.0 {
             let (_, _, _, content_index) = self.child_indices();
             let mut children = layout.children();
             let _icon_layout = children.next().unwrap();
@@ -1246,10 +1233,10 @@ where
             let should_be_expanded = group_state.expanded_index == Some(index);
             
             // If state changed, trigger animation - always reset timer for simultaneous animations
-            if child_state.is_expanded != should_be_expanded {
-                child_state.is_expanded = should_be_expanded;
-                // Always reset the animation timer so both opening and closing animate together
-                child_state.last_update = Some(Instant::now());
+            if child_state.animation.value() != should_be_expanded {
+                let now = Instant::now();
+                child_state.animation.go_mut(should_be_expanded, now);
+                child_state.progress = child_state.animation.interpolate(0.0, 1.0, now);
             }
             header_heights.push(child_state.header_height);
 
