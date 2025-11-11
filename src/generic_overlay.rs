@@ -7,7 +7,7 @@ use iced::{
         text,
         widget::{self, tree::Tree},
         Clipboard, Layout, Overlay as _, Renderer as _, Shell, Widget,
-    }, alignment::Vertical, border::Radius, event, keyboard, mouse, touch, widget::button, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow, Size, Theme, Vector, Background
+    }, alignment::Vertical, border::Radius, event, keyboard, mouse, touch, widget::button, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow, Size, Theme, Vector, Background, Alignment
 };
 
 // Constants matching color_picker.rs for consistency
@@ -32,6 +32,20 @@ where
     OverlayButton::new(label, title, content)
 }
 
+/// Helper function to create an interactive tooltip ( hover button to open overlay )
+pub fn interactive_tooltip<'a, Message, Theme, Renderer>(
+    label: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+) -> OverlayButton<'a, Message, Theme, Renderer> 
+where 
+    Renderer: iced::advanced::Renderer + text::Renderer,
+    Theme: Catalog + button::Catalog,
+{
+    OverlayButton::new(label, "", content)
+        .hide_header()
+        .on_hover(Position::Right)
+}
+
 /// A button that opens a draggable overlay with custom content
 #[allow(missing_debug_implementations)]
 pub struct OverlayButton<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> 
@@ -53,6 +67,8 @@ where
     overlay_width: Option<f32>,
     /// Optional height for the overlay (defaults to content height)
     overlay_height: Option<f32>,
+    /// Optional padding for the overlay (defaults to CONTENT_PADDING)
+    overlay_padding: f32,
     /// Button width
     width: Length,
     /// Button height
@@ -65,6 +81,8 @@ where
     on_open: Option<Box<dyn Fn() -> Message + 'a>>,
     /// Callback when the overlay is closed
     on_close: Option<Box<dyn Fn() -> Message + 'a>>,
+    /// Set on_hover() options
+    hover_mode: Option<HoverMode>,
     /// Class of the Overlay
     class: <Theme as Catalog>::Class<'a>,
     /// Get full window size for overlay bounds
@@ -107,12 +125,14 @@ where
             content: content.into(),
             overlay_width: None,
             overlay_height: None,
+            overlay_padding: CONTENT_PADDING,
             width: size.width.fluid(),
             height: size.height.fluid(),
             padding: DEFAULT_PADDING,
             clip: false,
             on_open: None,
             on_close: None,
+            hover_mode: None,
             class: <Theme as Catalog>::default(),
             window_size: None,
             status: None,
@@ -134,6 +154,12 @@ where
     /// Sets the overlay height
     pub fn overlay_height(mut self, height: f32) -> Self {
         self.overlay_height = Some(height);
+        self
+    }
+
+    /// Sets the overlay padding
+    pub fn overlay_padding(mut self, padding: f32) -> Self {
+        self.overlay_padding = padding;
         self
     }
 
@@ -164,6 +190,41 @@ where
     /// Sets a callback for when the overlay is closed
     pub fn on_close(mut self, callback: impl Fn() -> Message + 'a) -> Self {
         self.on_close = Some(Box::new(callback));
+        self
+    }
+
+    /// Enable hover-to-open mode with the specified position
+    pub fn on_hover(mut self, position: Position) -> Self {
+        self.hover_mode = Some(HoverMode {
+            position,
+            gap: 5.0,
+            snap_within_viewport: true,
+            alignment: Alignment::Center
+        });
+        self
+    }
+
+    /// Sets gap between button and overlay (only used in hover mode)
+    pub fn gap(mut self, gap: f32) -> Self {
+        if let Some(ref mut hover) = self.hover_mode {
+            hover.gap = gap;
+        }
+        self
+    }
+
+    /// Sets whether to snap overlay within viewport (only used in hover mode)
+    pub fn snap_within_viewport(mut self, snap: bool) -> Self {
+        if let Some(ref mut hover) = self.hover_mode {
+            hover.snap_within_viewport = snap;
+        }
+        self
+    }
+
+    /// Sets the alignment of the overlay relative to the button (only used in hover mode)
+    pub fn alignment(mut self, alignment: iced::Alignment) -> Self {
+        if let Some(ref mut hover) = self.hover_mode {
+            hover.alignment = alignment;
+        }
         self
     }
 
@@ -227,9 +288,9 @@ where
     /// If true, hides the header (no title bar or close button)
     /// Automatically enables close_on_click_outside.
     #[must_use]
-    pub fn hide_header(mut self, hide: bool) -> Self {
+    pub fn hide_header(mut self) -> Self {
         self.close_on_click_outside = true;
-        self.hide_header = hide;
+        self.hide_header = true;
         self
     }
 
@@ -239,6 +300,41 @@ where
         self.resizable = mode;
         self
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Position {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+impl Position {
+    pub const ALL: &'static [Self] = &[
+        Self::Top,
+        Self::Right,
+        Self::Bottom,   
+        Self::Left  
+    ];
+}
+
+impl std::fmt::Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Position::Top => write!(f, "Top"),
+            Position::Right => write!(f, "Right"),
+            Position::Bottom => write!(f, "Bottom"),
+            Position::Left => write!(f, "Left"),
+        }
+    }
+}
+
+struct HoverMode {
+    position: Position,
+    gap: f32,
+    snap_within_viewport: bool,
+    alignment: Alignment,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -313,6 +409,8 @@ where
     window_size: Size,
     ctrl_pressed: bool,
     is_resizing: bool,
+    cursor_over_button: bool,
+    cursor_over_overlay: bool,
     resize_edge: ResizeEdge,
     resize_start_size: Size,
     resize_start_position: Point,
@@ -344,6 +442,8 @@ where
                 window_size: Size::new(0.0, 0.0),
                 ctrl_pressed: false,
                 is_resizing: false,
+                cursor_over_button: false,
+                cursor_over_overlay: false,
                 resize_edge: ResizeEdge::None,
                 resize_start_size: Size::ZERO,
                 resize_start_position: Point::ORIGIN,
@@ -402,11 +502,8 @@ where
     where 
         Theme: Catalog + button::Catalog,
     {
-        let state = tree.state.downcast_ref::<State<Renderer::Paragraph>>();
-
         let bounds = layout.bounds();
         let button_content_layout = layout.children().next().unwrap();
-//        let is_hovered = cursor.is_over(bounds);
         let style = <Theme as button::Catalog>::style(theme, &self.button_class, self.status.unwrap_or(button::Status::Active));
 
         if style.background.is_some()
@@ -457,7 +554,7 @@ where
         _viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
-        let bounds = layout.bounds().expand(self.padding);
+        let bounds = layout.bounds();
 
         match event {
             Event::Window(iced::window::Event::Opened { size, .. })
@@ -489,38 +586,36 @@ where
             return;
         }
 
-        match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
-            | Event::Touch(touch::Event::FingerPressed { .. }) => {
-                if cursor.is_over(bounds) {
-                    self.status = Some(button::Status::Pressed);
-                    self.is_pressed = true;
-                    state.is_open = true;
-                    shell.invalidate_layout();
+        if let Some(ref _hover_mode) = self.hover_mode {
+            let cursor_over_button = cursor.is_over(bounds);
+            state.cursor_over_button = cursor_over_button;
+            
+            // Open on hover
+            if cursor_over_button && !state.is_open {
+                state.is_open = true;
+                shell.invalidate_layout();
+                shell.request_redraw();
+            }
+            
+            // Close when cursor exits both button and overlay
+            if !state.cursor_over_button && !state.cursor_over_overlay && state.is_open {
+                state.is_open = false;
+                shell.invalidate_layout();
+                shell.request_redraw();
+            }
+        } else {
+            match event { // If not opening on hover, do normal generic overlay things
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                | Event::Touch(touch::Event::FingerPressed { .. }) => {
+                    if cursor.is_over(bounds) {
+                        self.status = Some(button::Status::Pressed);
+                        self.is_pressed = true;
+                        state.is_open = true;
+                        shell.invalidate_layout();
+                    }
                 }
+                _ => {}
             }
-
-            Event::Window(iced::window::Event::Opened { position: _, size }) => {
-                let window_size = Rectangle {
-                    x: 0.0,
-                    y: 0.0,
-                    width: size.width,
-                    height: size.height,
-                };
-
-                self.window_size = Some(window_size);
-            }
-            Event::Window(iced::window::Event::Resized(size)) => {
-                let window_size = Rectangle {
-                    x: 0.0,
-                    y: 0.0,
-                    width: size.width,
-                    height: size.height,
-                };
-
-                self.window_size = Some(window_size);
-            }
-            _ => {}
         }
     }
 
@@ -562,7 +657,7 @@ where
         }
 
         let header_height = if self.hide_header { 0.0 } else { HEADER_HEIGHT };
-        let padding = CONTENT_PADDING * 2.0;
+        let padding = self.overlay_padding * 2.0;
 
         // Get fallback window if uninitialized
         let window_size = if state.window_size.width > 0.0 && state.window_size.height > 0.0 {
@@ -646,6 +741,8 @@ where
         let total_w = state.current_width;
         let total_h = state.current_height;
 
+        let button_bounds = layout.bounds();
+
         Some(overlay::Element::new(Box::new(Overlay {
             state,
             title: &self.title,
@@ -654,8 +751,11 @@ where
             tree: content_tree,
             width: total_w,
             height: total_h,
+            padding: self.overlay_padding,
             viewport: fullscreen,
             on_close: self.on_close.as_deref(),
+            button_bounds,
+            hover_mode: &self.hover_mode,
             content_layout: content_node,
             opaque: self.opaque,
             close_on_click_outside: self.close_on_click_outside,
@@ -685,8 +785,11 @@ where
     tree: &'a mut Tree,
     width: f32,
     height: f32,
+    padding: f32,
     viewport: Rectangle,
     on_close: Option<&'a dyn Fn() -> Message>,
+    button_bounds: Rectangle,
+    hover_mode: &'a Option<HoverMode>,
     content_layout: Node,
     opaque: bool,
     close_on_click_outside: bool,
@@ -705,7 +808,80 @@ where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>
 {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
+        let viewport = Rectangle::with_size(bounds);
         let size = Size::new(self.width, self.height);
+
+        if let Some(hover_config) = self.hover_mode {
+            let overlay_width = self.state.current_width;
+            let overlay_height = self.state.current_height;
+            
+            // Calculate center positions for alignment
+            let x_center = self.button_bounds.x 
+                + (self.button_bounds.width - overlay_width) / 2.0;
+            let y_center = self.button_bounds.y 
+                + (self.button_bounds.height - overlay_height) / 2.0;
+            
+            // Calculate position based on Position enum
+            let mut calculated_position = match hover_config.position {
+                Position::Top | Position::Bottom => {
+                    // For Top/Bottom, alignment controls horizontal positioning
+                    let x = match hover_config.alignment {
+                        Alignment::Start => self.button_bounds.x,
+                        Alignment::Center => self.button_bounds.x 
+                            + (self.button_bounds.width - overlay_width) / 2.0,
+                        Alignment::End => self.button_bounds.x 
+                            + self.button_bounds.width - overlay_width,
+                    };
+                    
+                    let y = if hover_config.position == Position::Top {
+                        self.button_bounds.y - overlay_height - hover_config.gap
+                    } else {
+                        self.button_bounds.y + self.button_bounds.height + hover_config.gap
+                    };
+                    
+                    Point::new(x, y)
+                }
+                Position::Left | Position::Right => {
+                    // For Left/Right, alignment controls vertical positioning
+                    let y = match hover_config.alignment {
+                        Alignment::Start => self.button_bounds.y,
+                        Alignment::Center => self.button_bounds.y 
+                            + (self.button_bounds.height - overlay_height) / 2.0,
+                        Alignment::End => self.button_bounds.y 
+                            + self.button_bounds.height - overlay_height,
+                    };
+                    
+                    let x = if hover_config.position == Position::Left {
+                        self.button_bounds.x - overlay_width - hover_config.gap
+                    } else {
+                        self.button_bounds.x + self.button_bounds.width + hover_config.gap
+                    };
+                    
+                    Point::new(x, y)
+                }
+            };
+            
+            // Snap within viewport if enabled
+            if hover_config.snap_within_viewport {
+                // Horizontal bounds checking
+                if calculated_position.x < viewport.x {
+                    calculated_position.x = viewport.x;
+                } else if calculated_position.x + overlay_width > viewport.x + viewport.width {
+                    calculated_position.x = viewport.x + viewport.width - overlay_width;
+                }
+                
+                // Vertical bounds checking
+                if calculated_position.y < viewport.y {
+                    calculated_position.y = viewport.y;
+                } else if calculated_position.y + overlay_height > viewport.y + viewport.height {
+                    calculated_position.y = viewport.y + viewport.height - overlay_height;
+                }
+            }
+            
+            // Override the state position with calculated position
+            self.state.position = calculated_position;
+        }
+
         Node::new(size).move_to(self.state.position)
     }
 
@@ -841,10 +1017,10 @@ where
             // Draw content
             let header_height = if self.hide_header { 0.0 } else { HEADER_HEIGHT };
             let content_bounds = Rectangle {
-                x: bounds.x + CONTENT_PADDING,
-                y: bounds.y + header_height + CONTENT_PADDING,
-                width: bounds.width - CONTENT_PADDING * 2.0,
-                height: bounds.height - header_height - CONTENT_PADDING * 2.0,
+                x: bounds.x + self.padding,
+                y: bounds.y + header_height + self.padding,
+                width: bounds.width - self.padding * 2.0,
+                height: bounds.height - header_height - self.padding * 2.0,
             };
 
             renderer.with_translation(
@@ -1015,9 +1191,23 @@ where
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                // handle hover first
+                if self.hover_mode.is_some() {
+                    self.state.cursor_over_overlay = cursor.is_over(layout.bounds());
+                    self.state.cursor_over_button = cursor.is_over(self.button_bounds.expand(self.hover_mode.as_ref().unwrap().gap));
+                    
+                    // Close if cursor over neither button nor overlay
+                    if !self.state.cursor_over_button && !self.state.cursor_over_overlay {
+                        self.state.is_open = false;
+                        shell.invalidate_layout();
+                        shell.request_redraw();
+                    }
+                }
+                let can_drag = self.hover_mode.is_none();
+
                 if let Some(position) = cursor.position() {
                     // Handle resizing
-                    if self.state.is_resizing {
+                    if self.state.is_resizing && can_drag {
                         let delta_x = position.x - self.state.resize_start_cursor.x;
                         let delta_y = position.y - self.state.resize_start_cursor.y;
 
@@ -1072,7 +1262,7 @@ where
                     }
 
                     // Handle dragging
-                    if self.state.is_dragging {
+                    if self.state.is_dragging && can_drag {
                         let new_x = position.x - self.state.drag_offset.x;
                         let new_y = position.y - self.state.drag_offset.y;
 
@@ -1121,10 +1311,10 @@ where
         // Forward events to content
         let header_height = if self.hide_header { 0.0 } else { HEADER_HEIGHT };
         let content_bounds = Rectangle {
-            x: bounds.x + CONTENT_PADDING,
-            y: bounds.y + header_height + CONTENT_PADDING,
-            width: bounds.width - CONTENT_PADDING * 2.0,
-            height: bounds.height - header_height - CONTENT_PADDING * 2.0,
+            x: bounds.x + self.padding,
+            y: bounds.y + header_height + self.padding,
+            width: bounds.width - self.padding * 2.0,
+            height: bounds.height - header_height - self.padding * 2.0,
         };
 
         // Only forward events to content if not dragging and if cursor is in content area
@@ -1164,93 +1354,103 @@ where
     ) -> mouse::Interaction {
         let bounds = layout.bounds();
 
-        // Determine if we should be resizable
-        let can_resize = match self.resizable {
-            ResizeMode::None => false,
-            ResizeMode::Always => true,
-            ResizeMode::WithCtrl => self.state.ctrl_pressed,
-        };
+        if cursor.is_over(bounds) {
+            // Determine if we should be resizable
+            let can_resize = match self.resizable {
+                ResizeMode::None => false,
+                ResizeMode::Always => true,
+                ResizeMode::WithCtrl => self.state.ctrl_pressed,
+            };
 
-        // Show resize cursors if resizable
-        if can_resize {
-            if let Some(position) = cursor.position() {
-                if cursor.is_over(bounds) {
+            // Show resize cursors if resizable
+            if can_resize {
+                if let Some(position) = cursor.position() {
                     let resize_edge = ResizeEdge::from_position(position, bounds);
                     if resize_edge != ResizeEdge::None {
                         return resize_edge.cursor_icon();
                     }
                 }
             }
-        }
 
-        // Show pointer when over close button (if header is visible)
-        if !self.hide_header {
-            let close_bounds = Rectangle {
-                x: bounds.x + bounds.width - CLOSE_BUTTON_SIZE - CLOSE_BUTTON_OFFSET * 2.0,
-                y: bounds.y + (HEADER_HEIGHT - CLOSE_BUTTON_SIZE) / 2.0,
-                width: CLOSE_BUTTON_SIZE,
-                height: CLOSE_BUTTON_SIZE,
-            };
+            // Show pointer when over close button (if header is visible)
+            if !self.hide_header {
+                let close_bounds = Rectangle {
+                    x: bounds.x + bounds.width - CLOSE_BUTTON_SIZE - CLOSE_BUTTON_OFFSET * 2.0,
+                    y: bounds.y + (HEADER_HEIGHT - CLOSE_BUTTON_SIZE) / 2.0,
+                    width: CLOSE_BUTTON_SIZE,
+                    height: CLOSE_BUTTON_SIZE,
+                };
 
-            if cursor.is_over(close_bounds) {
-                return mouse::Interaction::Pointer;
+                if cursor.is_over(close_bounds) {
+                    return mouse::Interaction::Pointer;
+                }
+
+                // Show grab cursor when over header
+                let header_bounds = Rectangle {
+                    x: bounds.x,
+                    y: bounds.y,
+                    width: bounds.width,
+                    height: HEADER_HEIGHT,
+                };
+
+                if cursor.is_over(header_bounds) {
+                    return if self.state.is_dragging {
+                        mouse::Interaction::Grabbing
+                    } else {
+                        mouse::Interaction::Grab
+                    };
+                }
             }
 
-            // Show grab cursor when over header
-            let header_bounds = Rectangle {
-                x: bounds.x,
-                y: bounds.y,
-                width: bounds.width,
-                height: HEADER_HEIGHT,
-            };
-
-            if cursor.is_over(header_bounds) {
+            // Show grab/grabbing when Ctrl is pressed
+            if self.state.ctrl_pressed {
                 return if self.state.is_dragging {
                     mouse::Interaction::Grabbing
                 } else {
                     mouse::Interaction::Grab
                 };
             }
-        }
 
-        // Show grab/grabbing when Ctrl is pressed and over the overlay
-        if self.state.ctrl_pressed && cursor.is_over(bounds) {
-            return if self.state.is_dragging {
-                mouse::Interaction::Grabbing
-            } else {
-                mouse::Interaction::Grab
+            // Forward to content with adjusted cursor
+            let header_height = if self.hide_header { 0.0 } else { HEADER_HEIGHT };
+            let content_bounds = Rectangle {
+                x: bounds.x + self.padding,
+                y: bounds.y + header_height + self.padding,
+                width: bounds.width - self.padding * 2.0,
+                height: bounds.height - header_height - self.padding * 2.0,
             };
-        }
 
-        // Forward to content
-        let header_height = if self.hide_header { 0.0 } else { HEADER_HEIGHT };
-        let content_bounds = Rectangle {
-            x: bounds.x + CONTENT_PADDING,
-            y: bounds.y + header_height + CONTENT_PADDING,
-            width: bounds.width - CONTENT_PADDING * 2.0,
-            height: bounds.height - header_height - CONTENT_PADDING * 2.0,
-        };
-
-        let adjusted_cursor = if let Some(position) = cursor.position() {
-            if content_bounds.contains(position) {
-                mouse::Cursor::Available(Point::new(
-                    position.x - content_bounds.x,
-                    position.y - content_bounds.y,
-                ))
+            let adjusted_cursor = if let Some(position) = cursor.position() {
+                if content_bounds.contains(position) {
+                    mouse::Cursor::Available(Point::new(
+                        position.x - content_bounds.x,
+                        position.y - content_bounds.y,
+                    ))
+                } else {
+                    mouse::Cursor::Unavailable
+                }
             } else {
                 mouse::Cursor::Unavailable
-            }
-        } else {
-            mouse::Cursor::Unavailable
-        };
+            };
 
-        self.content.as_widget().mouse_interaction(
-            self.tree,
-            Layout::new(&self.content_layout),
-            adjusted_cursor,
-            &Rectangle::new(Point::ORIGIN, content_bounds.size()),
-            renderer,
-        )
+            let content_interaction = self.content.as_widget().mouse_interaction(
+                self.tree,
+                Layout::new(&self.content_layout),
+                adjusted_cursor,
+                &Rectangle::new(Point::ORIGIN, content_bounds.size()),
+                renderer,
+            );
+            
+            // If content doesn't want a specific interaction, return default to still block passthrough
+            if content_interaction == mouse::Interaction::default() {
+                return mouse::Interaction::Idle;  // ADD THIS - blocks passthrough
+            }
+            
+            content_interaction
+        } else {
+            // Cursor not over overlay, don't block
+            mouse::Interaction::default()
+        }
     }
 
     fn overlay<'a>(
@@ -1264,10 +1464,10 @@ where
         let header_height = if self.hide_header { 0.0 } else { HEADER_HEIGHT };
         
         let content_bounds = Rectangle {
-            x: bounds.x + CONTENT_PADDING,
-            y: bounds.y + header_height + CONTENT_PADDING,
-            width: bounds.width - CONTENT_PADDING * 2.0,
-            height: bounds.height - header_height - CONTENT_PADDING * 2.0,
+            x: bounds.x + self.padding,
+            y: bounds.y + header_height + self.padding,
+            width: bounds.width - self.padding * 2.0,
+            height: bounds.height - header_height - self.padding * 2.0,
         };
         
         // Use the stored content layout
