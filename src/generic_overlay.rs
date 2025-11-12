@@ -10,40 +10,80 @@ use iced::{
     }, alignment::Vertical, border::Radius, event, keyboard, mouse, touch, widget::button, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow, Size, Theme, Vector, Background, Alignment
 };
 
-// Constants matching color_picker.rs for consistency
+
 const HEADER_HEIGHT: f32 = 32.0;
 const CLOSE_BUTTON_SIZE: f32 = 30.0;
 const CLOSE_BUTTON_OFFSET: f32 = 1.0;
-const CONTENT_PADDING: f32 = 20.0;
+const CONTENT_PADDING: f32 = 15.0;
 const RESIZE_HANDLE_SIZE: f32 = 8.0;  // Size of resize hit areas
 const MIN_OVERLAY_SIZE: f32 = 100.0;   // Minimum overlay dimensions
 
 
 /// Helper function to create an overlay button
 pub fn overlay_button<'a, Message, Theme, Renderer>(
-    label: impl Into<Element<'a, Message, Theme, Renderer>>,
-    title: impl Into<String>,
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    button_label: impl Into<Element<'a, Message, Theme, Renderer>>,
+    header_title: impl Into<String>,
+    overlay_content: impl Into<Element<'a, Message, Theme, Renderer>>,
 ) -> OverlayButton<'a, Message, Theme, Renderer> 
 where 
     Renderer: iced::advanced::Renderer + text::Renderer,
     Theme: Catalog + button::Catalog,
 {
-    OverlayButton::new(label, title, content)
+    OverlayButton::new(button_label, header_title, overlay_content)
 }
 
 /// Helper function to create an interactive tooltip ( hover button to open overlay )
 pub fn interactive_tooltip<'a, Message, Theme, Renderer>(
-    label: impl Into<Element<'a, Message, Theme, Renderer>>,
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    button_label: impl Into<Element<'a, Message, Theme, Renderer>>,
+    overlay_content: impl Into<Element<'a, Message, Theme, Renderer>>,
 ) -> OverlayButton<'a, Message, Theme, Renderer> 
 where 
     Renderer: iced::advanced::Renderer + text::Renderer,
     Theme: Catalog + button::Catalog,
 {
-    OverlayButton::new(label, "", content)
+    OverlayButton::new(button_label, "", overlay_content)
         .hide_header()
-        .on_hover(Position::Right)
+        .on_hover()
+}
+
+/// Helper function to create a dropdown menu overlay
+pub fn dropdown_menu<'a, Message, Theme, Renderer>(
+    button_label: impl Into<Element<'a, Message, Theme, Renderer>>,
+    overlay_content: impl Into<Element<'a, Message, Theme, Renderer>>,
+) -> OverlayButton<'a, Message, Theme, Renderer> 
+where 
+    Renderer: iced::advanced::Renderer + text::Renderer,
+    Theme: Catalog + button::Catalog,
+{
+    OverlayButton::new(button_label, "", overlay_content)
+        .hide_header()
+        .overlay_width(150.0)
+        .overlay_padding(1.0)
+        .overlay_radius(0.0)
+        .on_hover()
+        .hover_gap(0.0)
+        .hover_alignment(Alignment::Start)
+        .width(Length::Fill)
+}
+
+/// Helper function to create a dropdown menu overlay
+pub fn dropdown_root<'a, Message, Theme, Renderer>(
+    button_label: impl Into<Element<'a, Message, Theme, Renderer>>,
+    overlay_content: impl Into<Element<'a, Message, Theme, Renderer>>,
+) -> OverlayButton<'a, Message, Theme, Renderer> 
+where 
+    Renderer: iced::advanced::Renderer + text::Renderer,
+    Theme: Catalog + button::Catalog,
+{
+    OverlayButton::new(button_label, "", overlay_content)
+        .hide_header()
+        .overlay_width(150.0)
+        .overlay_padding(1.0)
+        .overlay_radius(0.0)
+        .hover_positions_on_click()
+        .hover_position(Position::Bottom)
+        .hover_gap(0.0)
+        .hover_alignment(Alignment::Start)
 }
 
 /// A button that opens a draggable overlay with custom content
@@ -63,6 +103,8 @@ where
     title_font: Option<Renderer::Font>,
     /// Function to create the overlay content (called each time)
     content: Element<'a, Message, Theme, Renderer>,
+    /// Sets the radius of the overlay
+    overlay_radius: f32,
     /// Optional width for the overlay (defaults to 400px)
     overlay_width: Option<f32>,
     /// Optional height for the overlay (defaults to content height)
@@ -81,8 +123,10 @@ where
     on_open: Option<Box<dyn Fn() -> Message + 'a>>,
     /// Callback when the overlay is closed
     on_close: Option<Box<dyn Fn() -> Message + 'a>>,
-    /// Set on_hover() options
-    hover_mode: Option<HoverMode>,
+    /// Hover Config
+    hover: Hover,
+    /// Use Hover layout with click to open.
+    hover_positions_on_click: bool,
     /// Class of the Overlay
     class: <Theme as Catalog>::Class<'a>,
     /// Get full window size for overlay bounds
@@ -118,25 +162,36 @@ where
         let size = button_content.as_widget().size_hint();
 
         Self {
+            // Overlay Button
             button_content,
-            title: title.into(),
-            title_text_size: None,
-            title_font: None,
-            content: content.into(),
-            overlay_width: None,
-            overlay_height: None,
-            overlay_padding: CONTENT_PADDING,
             width: size.width.fluid(),
             height: size.height.fluid(),
             padding: DEFAULT_PADDING,
-            clip: false,
-            on_open: None,
-            on_close: None,
-            hover_mode: None,
-            class: <Theme as Catalog>::default(),
-            window_size: None,
-            status: None,
             button_class: <Theme as button::Catalog>::default(),
+
+            // Overlay Header
+            title: title.into(),
+            title_text_size: None,
+            title_font: None,
+
+            // Overlay Content
+            content: content.into(),
+            overlay_radius: 12.0,
+            overlay_width: None,
+            overlay_height: None,
+            overlay_padding: CONTENT_PADDING,
+            clip: false,
+            class: <Theme as Catalog>::default(),
+            status: None,
+
+            // Callbacks
+            on_open: None,
+            on_close: None,            
+            window_size: None,
+            
+            // Overlay behavior options
+            hover: Hover::default(),
+            hover_positions_on_click: false,
             is_pressed: false,
             opaque: false,
             close_on_click_outside: false,
@@ -160,6 +215,12 @@ where
     /// Sets the overlay padding
     pub fn overlay_padding(mut self, padding: f32) -> Self {
         self.overlay_padding = padding;
+        self
+    }
+
+    /// Sets the overlay radius
+    pub fn overlay_radius(mut self, radius: f32) -> Self {
+        self.overlay_radius = radius;
         self
     }
 
@@ -193,38 +254,41 @@ where
         self
     }
 
-    /// Enable hover-to-open mode with the specified position
-    pub fn on_hover(mut self, position: Position) -> Self {
-        self.hover_mode = Some(HoverMode {
-            position,
-            gap: 5.0,
-            snap_within_viewport: true,
-            alignment: Alignment::Center
-        });
+    /// Enable hover positions on_click - to use in menus :D
+    #[must_use]
+    pub fn hover_positions_on_click(mut self) -> Self {
+        self.hover_positions_on_click = true;
         self
     }
 
-    /// Sets gap between button and overlay (only used in hover mode)
-    pub fn gap(mut self, gap: f32) -> Self {
-        if let Some(ref mut hover) = self.hover_mode {
-            hover.gap = gap;
-        }
+    /// Enable hover-to-open mode
+    #[must_use]
+    pub fn on_hover(mut self) -> Self {
+        self.hover.enabled = true;
         self
     }
 
-    /// Sets whether to snap overlay within viewport (only used in hover mode)
-    pub fn snap_within_viewport(mut self, snap: bool) -> Self {
-        if let Some(ref mut hover) = self.hover_mode {
-            hover.snap_within_viewport = snap;
-        }
+      #[must_use]
+    pub fn hover_position(mut self, position: Position) -> Self {
+        self.hover.config.position = position;
         self
     }
 
-    /// Sets the alignment of the overlay relative to the button (only used in hover mode)
-    pub fn alignment(mut self, alignment: iced::Alignment) -> Self {
-        if let Some(ref mut hover) = self.hover_mode {
-            hover.alignment = alignment;
-        }
+    #[must_use]
+    pub fn hover_gap(mut self, gap: f32) -> Self {
+        self.hover.config.gap = gap; 
+        self
+    }
+
+    #[must_use]
+    pub fn hover_alignment(mut self, alignment: Alignment) -> Self {
+        self.hover.config.alignment = alignment;
+        self
+    }
+
+    #[must_use]
+    pub fn hover_snap(mut self, snap: bool) -> Self {
+        self.hover.config.snap_within_viewport = snap;
         self
     }
 
@@ -330,11 +394,40 @@ impl std::fmt::Display for Position {
     }
 }
 
-struct HoverMode {
+#[derive(Debug, Clone)]
+pub struct Hover {
+    pub enabled: bool,
+    pub config: HoverConfig,
+}
+
+impl Default for Hover {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            config: HoverConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HoverConfig {
     position: Position,
     gap: f32,
     snap_within_viewport: bool,
     alignment: Alignment,
+    buffer: f32,
+}
+
+impl Default for HoverConfig {
+    fn default() -> Self {
+        Self {
+            position: Position::Right,
+            gap: 5.0,
+            snap_within_viewport: true,
+            alignment: Alignment::Center,
+            buffer: 10.0
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -397,6 +490,23 @@ impl ResizeEdge {
     }
 }
 
+/// Helper function to check if any descendant OverlayButton has an open overlay.
+/// This enables parent overlays to stay open while nested (child) overlays are active.
+fn has_open_descendant_overlays<P>(tree: &Tree) -> bool
+where 
+    P: iced::advanced::text::Paragraph + 'static,
+{
+    let overlay_tag = widget::tree::Tag::of::<State<P>>();
+    if tree.tag == overlay_tag {
+        let state = tree.state.downcast_ref::<State<P>>();
+        if state.is_open {
+            return true;
+        }
+    }
+    // Recurse into children
+    tree.children.iter().any(has_open_descendant_overlays::<P>)
+}
+
 #[derive(Debug, Clone)]
 struct State<P>
 where 
@@ -419,6 +529,7 @@ where
     current_height: f32,
     height_auto: bool,
     title_text: widget::text::State<P>,
+    suppress_hover_reopen: bool,
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> 
@@ -452,6 +563,7 @@ where
                 current_height: 0.0,
                 height_auto: false,
                 title_text: widget::text::State::<Renderer::Paragraph>::default(),
+                suppress_hover_reopen: false,
             }
         )
     }
@@ -576,8 +688,33 @@ where
                     shell.invalidate_layout();
                 } else {
                     self.status = Some(button::Status::Active);
+                    if state.suppress_hover_reopen && self.hover.enabled { state.suppress_hover_reopen = !state.suppress_hover_reopen }
                     shell.invalidate_layout();
                 }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            | Event::Touch(touch::Event::FingerPressed { .. }) => {
+                if cursor.is_over(bounds) && !self.hover.enabled {
+                    self.status = Some(button::Status::Pressed);
+                    if state.is_open {
+                        state.is_open = false;
+                    } else {
+                        state.is_open = true;
+                        return
+                    }
+                    self.is_pressed = !self.is_pressed;
+                    
+                    shell.capture_event();
+                } else if cursor.is_over(bounds) && !state.suppress_hover_reopen {
+                    state.is_open = false;
+                    state.suppress_hover_reopen = true;
+                    shell.capture_event();
+                } else if cursor.is_over(bounds) && state.suppress_hover_reopen {
+                    state.is_open = true;
+                    state.suppress_hover_reopen = false;
+                    shell.capture_event();
+                }
+                shell.invalidate_layout();
             }
             _ => {}
         }
@@ -586,35 +723,22 @@ where
             return;
         }
 
-        if let Some(ref _hover_mode) = self.hover_mode {
+        if self.hover.enabled {
             let cursor_over_button = cursor.is_over(bounds);
             state.cursor_over_button = cursor_over_button;
-            
+
             // Open on hover
-            if cursor_over_button && !state.is_open {
+            if cursor_over_button && !state.is_open && !state.suppress_hover_reopen {
                 state.is_open = true;
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
-            
+
             // Close when cursor exits both button and overlay
             if !state.cursor_over_button && !state.cursor_over_overlay && state.is_open {
                 state.is_open = false;
                 shell.invalidate_layout();
                 shell.request_redraw();
-            }
-        } else {
-            match event { // If not opening on hover, do normal generic overlay things
-                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
-                | Event::Touch(touch::Event::FingerPressed { .. }) => {
-                    if cursor.is_over(bounds) {
-                        self.status = Some(button::Status::Pressed);
-                        self.is_pressed = true;
-                        state.is_open = true;
-                        shell.invalidate_layout();
-                    }
-                }
-                _ => {}
             }
         }
     }
@@ -741,13 +865,16 @@ where
         let total_w = state.current_width;
         let total_h = state.current_height;
 
-        let button_bounds = layout.bounds();
+        let mut button_bounds = layout.bounds();
+        button_bounds.x += offset.x;
+        button_bounds.y += offset.y;
 
         Some(overlay::Element::new(Box::new(Overlay {
             state,
             title: &self.title,
             class: <Theme as Catalog>::default(),
             content: &mut self.content,
+            radius: self.overlay_radius,
             tree: content_tree,
             width: total_w,
             height: total_h,
@@ -755,7 +882,8 @@ where
             viewport: fullscreen,
             on_close: self.on_close.as_deref(),
             button_bounds,
-            hover_mode: &self.hover_mode,
+            hover: &self.hover,
+            hover_positions_on_click: self.hover_positions_on_click,
             content_layout: content_node,
             opaque: self.opaque,
             close_on_click_outside: self.close_on_click_outside,
@@ -786,10 +914,12 @@ where
     width: f32,
     height: f32,
     padding: f32,
+    radius: f32,
     viewport: Rectangle,
     on_close: Option<&'a dyn Fn() -> Message>,
     button_bounds: Rectangle,
-    hover_mode: &'a Option<HoverMode>,
+    hover: &'a Hover,
+    hover_positions_on_click: bool,
     content_layout: Node,
     opaque: bool,
     close_on_click_outside: bool,
@@ -811,7 +941,7 @@ where
         let viewport = Rectangle::with_size(bounds);
         let size = Size::new(self.width, self.height);
 
-        if let Some(hover_config) = self.hover_mode {
+        if self.hover.enabled  || self.hover_positions_on_click {
             let overlay_width = self.state.current_width;
             let overlay_height = self.state.current_height;
             
@@ -822,10 +952,10 @@ where
                 + (self.button_bounds.height - overlay_height) / 2.0;
             
             // Calculate position based on Position enum
-            let mut calculated_position = match hover_config.position {
+            let mut calculated_position = match self.hover.config.position {
                 Position::Top | Position::Bottom => {
                     // For Top/Bottom, alignment controls horizontal positioning
-                    let x = match hover_config.alignment {
+                    let x = match self.hover.config.alignment {
                         Alignment::Start => self.button_bounds.x,
                         Alignment::Center => self.button_bounds.x 
                             + (self.button_bounds.width - overlay_width) / 2.0,
@@ -833,17 +963,17 @@ where
                             + self.button_bounds.width - overlay_width,
                     };
                     
-                    let y = if hover_config.position == Position::Top {
-                        self.button_bounds.y - overlay_height - hover_config.gap
+                    let y = if self.hover.config.position == Position::Top {
+                        self.button_bounds.y - overlay_height - self.hover.config.gap
                     } else {
-                        self.button_bounds.y + self.button_bounds.height + hover_config.gap
+                        self.button_bounds.y + self.button_bounds.height + self.hover.config.gap
                     };
-                    
+
                     Point::new(x, y)
                 }
                 Position::Left | Position::Right => {
                     // For Left/Right, alignment controls vertical positioning
-                    let y = match hover_config.alignment {
+                    let y = match self.hover.config.alignment {
                         Alignment::Start => self.button_bounds.y,
                         Alignment::Center => self.button_bounds.y 
                             + (self.button_bounds.height - overlay_height) / 2.0,
@@ -851,10 +981,10 @@ where
                             + self.button_bounds.height - overlay_height,
                     };
                     
-                    let x = if hover_config.position == Position::Left {
-                        self.button_bounds.x - overlay_width - hover_config.gap
+                    let x = if self.hover.config.position == Position::Left {
+                        self.button_bounds.x - overlay_width - self.hover.config.gap
                     } else {
-                        self.button_bounds.x + self.button_bounds.width + hover_config.gap
+                        self.button_bounds.x + self.button_bounds.width + self.hover.config.gap
                     };
                     
                     Point::new(x, y)
@@ -862,7 +992,7 @@ where
             };
             
             // Snap within viewport if enabled
-            if hover_config.snap_within_viewport {
+            if self.hover.config.snap_within_viewport {
                 // Horizontal bounds checking
                 if calculated_position.x < viewport.x {
                     calculated_position.x = viewport.x;
@@ -918,7 +1048,7 @@ where
                     border: Border {
                         color: draw_style.border_color,
                         width: 1.0,
-                        radius: 12.0.into(),
+                        radius: self.radius.into(),
                     },
                     shadow: draw_style.shadow,
                     snap: true,
@@ -943,8 +1073,8 @@ where
                             color: draw_style.border_color,
                             width: 1.0,
                             radius: Radius {
-                                top_left: 12.0,
-                                top_right: 12.0,
+                                top_left: self.radius,
+                                top_right: self.radius,
                                 bottom_left: 0.0,
                                 bottom_right: 0.0,
                             },
@@ -1087,12 +1217,19 @@ where
             ResizeMode::WithCtrl => self.state.ctrl_pressed,
         };
 
-        // Handle header interactions (if header is visible)
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) 
+            | Event::Touch(touch::Event::FingerPressed { .. }) => { 
                 let cursor_over_overlay = cursor.is_over(bounds);
-                
-                if self.close_on_click_outside && !cursor_over_overlay {
+                if cursor.is_over(self.button_bounds) && self.state.is_open {
+                    self.state.is_open = false;
+                    shell.invalidate_layout();
+                    shell.request_redraw();
+                    shell.capture_event();
+                    return
+                }
+
+                if self.close_on_click_outside && !cursor_over_overlay && self.state.is_open {
                     self.state.is_open = false;
                     if let Some(on_close) = self.on_close {
                         shell.publish(on_close());
@@ -1192,18 +1329,18 @@ where
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 // handle hover first
-                if self.hover_mode.is_some() {
-                    self.state.cursor_over_overlay = cursor.is_over(layout.bounds());
-                    self.state.cursor_over_button = cursor.is_over(self.button_bounds.expand(self.hover_mode.as_ref().unwrap().gap));
+                if self.hover.enabled || self.hover_positions_on_click {
+                    self.state.cursor_over_overlay = cursor.is_over(layout.bounds().expand(self.hover.config.buffer));
+                    self.state.cursor_over_button = cursor.is_over(self.button_bounds.expand(self.hover.config.buffer));
                     
                     // Close if cursor over neither button nor overlay
-                    if !self.state.cursor_over_button && !self.state.cursor_over_overlay {
+                    if !self.state.cursor_over_button && !self.state.cursor_over_overlay && !has_open_descendant_overlays::<Renderer::Paragraph>(self.tree) {
                         self.state.is_open = false;
                         shell.invalidate_layout();
                         shell.request_redraw();
                     }
                 }
-                let can_drag = self.hover_mode.is_none();
+                let can_drag = !self.hover.enabled; // Block drag if on_hover is enabled
 
                 if let Some(position) = cursor.position() {
                     // Handle resizing

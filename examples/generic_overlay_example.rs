@@ -6,7 +6,7 @@ use iced::{
     Element, Length, Task, Theme, Alignment
 };
 
-use widgets::generic_overlay::{overlay_button, ResizeMode, interactive_tooltip, Position};
+use widgets::generic_overlay::{overlay_button, ResizeMode, interactive_tooltip, Position, dropdown_menu, dropdown_root};
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -189,9 +189,7 @@ impl App {
             text("Open Default Overlay"),
             "Default Generic Overlay Example",
             basic_overlay_content,
-        )
-        .on_open(|| Message::OverlayOpened)
-        .on_close(|| Message::OverlayClosed);
+        );
 
         // EXAMPLE 2: Opaque overlay that blocks interaction with content behind it
         let opaque_overlay = overlay_button(
@@ -245,20 +243,29 @@ impl App {
             hover_to_open_overlay_content,
         )
         .hide_header()
-        .on_hover(self.hover_position.unwrap_or(Position::Right).into())
-        .gap(self.hover_gap)
-        .alignment(self.hover_alignment.unwrap_or(AlignmentOption::Center).into())
+        .on_hover()
+        .hover_position(self.hover_position.unwrap_or(Position::Right).into())
+        .hover_gap(self.hover_gap)
+        .hover_alignment(self.hover_alignment.unwrap_or(AlignmentOption::Center).into())
         .on_close(|| Message::OverlayClosed);
 
         // EXAMPLE 8: Same as 7, but with the interactive_tooltip helper
         let interactive_tooltip1 = interactive_tooltip("Hover to Open - Right", interactive_tooltip_overlay_content);
+
+        let menu3 = column![
+            button("Menu3 option 1").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
+            button("Menu3 option 2").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
+            button("Menu3 option 3").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
+            button("Menu3 option 4").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
+
+        ].width(Length::Fill);
 
         let menu2 = column![
             button("Menu2 option 1").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
             button("Menu2 option 2").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
             button("Menu2 option 3").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
             button("Menu2 option 4").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-
+            dropdown_menu("Menu3", menu3).style(button::subtle).width(Length::Fill),
         ].width(Length::Fill);
 
         let menu1 = column![
@@ -266,11 +273,11 @@ impl App {
             button("Menu option 2").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
             button("Menu option 3").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
             button("Menu option 4").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            interactive_tooltip("Menu2", menu2).overlay_width(150.0).style(button::subtle).width(Length::Fill).overlay_padding(1.0).alignment(Alignment::Start),
+            dropdown_menu("Menu2", menu2).style(button::subtle).width(Length::Fill),
         ].width(Length::Fill);
 
         let nav_menu = container(row![
-            interactive_tooltip("File", menu1).overlay_width(150.0).gap(0.0).overlay_padding(1.0),
+            dropdown_root("File", menu1),
         ].width(Length::Fill)).style(container::secondary);
 
         column![
