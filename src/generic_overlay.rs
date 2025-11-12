@@ -940,6 +940,14 @@ where
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
         let viewport = Rectangle::with_size(bounds);
         let size = Size::new(self.width, self.height);
+        self.state.window_size = Size::new(bounds.width, bounds.height);
+
+        if self.state.position == Point::ORIGIN {
+            self.state.position = Point::new(
+                (self.state.window_size.width - size.width) / 2.0,
+                (self.state.window_size.height - size.height) / 2.0,
+            );
+        }
 
         if self.hover.enabled  || self.hover_positions_on_click {
             let overlay_width = self.state.current_width;
