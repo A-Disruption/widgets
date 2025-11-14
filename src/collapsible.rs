@@ -340,6 +340,7 @@ where
 struct State {
     animation: Animation<bool>,
     progress: f32,  // Cached animation progress for use in layout/draw
+    was_animating: bool,
     button_is_pressed: bool,
     header_is_hovered: bool,
     header_height: f32,
@@ -360,6 +361,7 @@ impl Default for State {
         Self {
             animation: Animation::new(false).quick(),
             progress: 0.0,
+            was_animating: false,
             button_is_pressed: false,
             header_is_hovered: false,
             header_height: DEFAULT_HEADER_HEIGHT,
@@ -392,6 +394,7 @@ where
             animation: State {
                 animation,
                 progress: if self.initially_expanded { 1.0 } else { 0.0 },
+                was_animating: false,
                 button_is_pressed: false,
                 header_is_hovered: false,
                 header_height: self.header_height,
@@ -720,8 +723,12 @@ where
             Event::Window(window::Event::RedrawRequested(now)) => {
                 state.progress = state.animation.interpolate(0.0, 1.0, *now);
                 if state.animation.is_animating(*now) {
+                    state.was_animating = true;
                     shell.invalidate_layout();
                     shell.request_redraw();
+                } else if state.was_animating {
+                    state.was_animating = false;
+                    shell.invalidate_layout();                    
                 }
             }
             _ => {}
