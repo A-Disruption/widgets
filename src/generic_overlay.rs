@@ -668,8 +668,6 @@ where
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
         let bounds = layout.bounds();
 
-        println!("OverlayButton::update() - bounds: {:?}, cursor over: {}", bounds, cursor.is_over(bounds));
-
         match event {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. }) => {
@@ -691,33 +689,33 @@ where
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
-                if !cursor.is_over(bounds) {
+                if cursor.is_over(bounds) {
+                    self.status = Some(button::Status::Pressed);
+                    
+                    let should_open = if !self.hover.enabled { // Normal click mode - open, close is handled in overlay
+                        true 
+                    } else if !state.suppress_hover_reopen { // First hover click - close
+                        state.suppress_hover_reopen = true;
+                        false
+                    } else {
+                        state.suppress_hover_reopen = false; // Second hover click - reopen
+                        true
+                    };
+                    
+                    state.is_open = should_open;
+                    
+                    if should_open {
+                        if let Some(on_open) = &self.on_open {
+                            shell.publish(on_open(state.position, Size::new(state.current_width, state.current_height)));
+                        }
+                    }
+                    
+                    self.is_pressed = true;
+                    shell.capture_event();
+                    shell.invalidate_layout();
+                    shell.request_redraw();
                     return;
                 }
-
-                self.status = Some(button::Status::Pressed);
-                shell.capture_event();
-
-                if state.is_open {
-                    if !state.suppress_hover_reopen {
-                        state.suppress_hover_reopen = true;
-                        state.is_open = false;
-                    }
-                    else {
-                        state.suppress_hover_reopen = false;
-                        state.is_open = true;
-                    }
-                } else {
-                    state.is_open = true;
-                    if let Some(on_open) = &self.on_open {
-                        shell.publish(on_open(state.position, Size::new(state.current_width, state.current_height)));
-                    }
-                }
-
-                self.is_pressed = true;
-                shell.invalidate_layout();
-                shell.request_redraw();
-                return
             }
             _ => {}
         }
