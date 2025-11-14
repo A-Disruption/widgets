@@ -619,25 +619,22 @@ where
                 },
                 icon_text: widget::text::State::<Renderer::Paragraph>::default(),
             }
-)
+        )
     }
 
     fn children(&self) -> Vec<Tree> {
         let mut children = vec![];
         
-        // Add trees for branch content
-        for content in &self.branch_content {
-            children.push(Tree::new(content));
+        if let Some(ref expand_icon) = self.expand_icon {
+            children.push(Tree::new(expand_icon));
         }
         
-        // Add trees for expand/collapse icons (one pair per branch with children)
-        let branches_with_children = self.branches.iter().filter(|b| b.has_children).count();
+        if let Some(ref collapse_icon) = self.collapse_icon {
+            children.push(Tree::new(collapse_icon));
+        }
         
-        if self.expand_icon.is_some() && self.collapse_icon.is_some() {
-            for _ in 0..branches_with_children {
-                children.push(Tree::new(self.expand_icon.as_ref().unwrap()));
-                children.push(Tree::new(self.collapse_icon.as_ref().unwrap()));
-            }
+        for content in &self.branch_content {
+            children.push(Tree::new(content));
         }
         
         children
@@ -955,6 +952,7 @@ where
     ) {
         let combined_state = tree.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
         let ordered_indices = self.get_ordered_indices(&combined_state.tree_state);
+        let child_layout_index = self.get_child_content_index();
         
         // Update all visible children
         for &i in &ordered_indices {
@@ -971,7 +969,7 @@ where
             }
             
             let branch = &mut self.branch_content[i];
-            let child_state = &mut tree.children[i];
+            let child_state = &mut tree.children[i + child_layout_index];
             let child_layout = layout.children().nth(i).unwrap();
             
             branch.as_widget_mut().update(
@@ -1349,11 +1347,12 @@ where
             _ => {}
         }
 
+        let content_children_start = self.get_child_content_index();
         for ((child, state), layout) in self
             .branch_content
             .iter_mut()
-            .zip(&mut tree.children)
-            .zip(layout.children())
+            .zip(&mut tree.children[content_children_start..])
+            .zip(layout.children().skip(content_children_start))
         {
             child.as_widget_mut().update(
                 state, event, layout, cursor, renderer, clipboard, shell,
@@ -1589,12 +1588,13 @@ where
                             .filter(|b| b.has_children)
                             .count();
                         
-                        let icon_tree_base = self.branch_content.len() + (expandable_branch_index * 2);
-                        
                         let (icon_element, icon_tree_index) = if state.expanded.contains(&id) {
-                            (self.collapse_icon.as_ref().unwrap(), icon_tree_base + 1)
+                            // collapse_icon is at index 1 (if both icons exist) or 0 (if only collapse exists)
+                            let idx = if self.expand_icon.is_some() { 1 } else { 0 };
+                            (self.collapse_icon.as_ref().unwrap(), idx)
                         } else {
-                            (self.expand_icon.as_ref().unwrap(), icon_tree_base)
+                            // expand_icon is always at index 0
+                            (self.expand_icon.as_ref().unwrap(), 0)
                         };
                         
                         // Create a simple layout for the icon
@@ -1642,14 +1642,14 @@ where
                 if let Some(ref drag) = state.drag_active {
                     if !drag.dragged_nodes.contains(&id) {
                         let child_state = &tree.children[i + child_layout_index];
-                        let child_layout = layout.children().nth(i).unwrap();
+                        let child_layout = layout.children().nth(i + self.get_child_content_index()).unwrap();
                         self.branch_content[i].as_widget().draw(
                             child_state, renderer, theme, style, child_layout, cursor, viewport,
                         );
                     }
                 } else {
                     let child_state = &tree.children[i + child_layout_index];
-                    let child_layout = layout.children().nth(i).unwrap();
+                    let child_layout = layout.children().nth(i + self.get_child_content_index()).unwrap();
                     self.branch_content[i].as_widget().draw(
                         child_state, renderer, theme, style, child_layout, cursor, viewport,
                     );
@@ -1725,13 +1725,15 @@ where
         let combined_state = tree.state.downcast_ref::<CombinedState<Renderer::Paragraph>>();
         let state = &combined_state.tree_state;
         
-        // First check children interactions - prioritize them
+        let child_layout_index = self.get_child_content_index();
         let child_interaction = self.branch_content
             .iter()
-            .zip(&tree.children)
-            .zip(layout.children())
+            .zip(&tree.children[child_layout_index..])
+            .zip(layout.children().skip(child_layout_index))
             .enumerate()
-            .filter(|(i, _)| state.visible_branches.get(*i).copied().unwrap_or(false))
+            .filter(|(i, _)| {
+                state.visible_branches.get(*i).copied().unwrap_or(false)
+            })
             .map(|(_, ((branch, child_state), child_layout))| {
                 branch.as_widget().mouse_interaction(
                     child_state, child_layout, cursor, viewport, renderer,
@@ -1795,10 +1797,12 @@ where
                 .map(|(i, _)| i)
                 .collect();
 
+            let child_layout_index = self.get_child_content_index();
+
             for (i, ((branch, child_state), child_layout)) in self
                 .branch_content
                 .iter_mut()
-                .zip(&mut tree.children)
+                .zip(&mut tree.children[child_layout_index..])
                 .zip(layout.children())
                 .enumerate()
             {
@@ -1815,16 +1819,26 @@ where
                 }
             }
         } else {
-            return iced::advanced::overlay::from_children(
-                &mut self.branch_content,
-                tree,
-                layout,
-                renderer,
-                viewport,
-                translation,
-            );
-        }
+            let child_layout_index = self.get_child_content_index();
 
+            for (i, ((branch, child_tree), child_layout)) in self
+                .branch_content
+                .iter_mut()
+                .zip(&mut tree.children[child_layout_index..])
+                .zip(layout.children().skip(child_layout_index))
+                .enumerate()
+            {
+                if let Some(overlay) = branch.as_widget_mut().overlay(
+                    child_tree,
+                    child_layout,
+                    renderer,
+                    viewport,
+                    translation,
+                ) {
+                    return Some(overlay);
+                }
+            }
+        }
         None
     }
 }
@@ -2100,6 +2114,7 @@ where
         cursor: mouse::Cursor,
     ) {
         let combined_state = self.state.state.downcast_ref::<CombinedState<Renderer::Paragraph>>();
+        let child_layout_index = self.tree_handle.get_child_content_index();
         let drag_bounds = layout.bounds();
         let tree_style = theme.style(&self.tree_handle.class);
         
@@ -2186,9 +2201,10 @@ where
 
             renderer.with_translation(translation, |renderer| {
                 if let Some(branch_content) = self.tree_handle.branch_content.get(primary_index) {
-                    let branch_tree = &self.state.children[primary_index];
+                    let content_tree_index = primary_index + child_layout_index;
+                    let branch_tree = &self.state.children[content_tree_index];
 
-                    if let Some(child_layout) = self.tree_layout.children().nth(primary_index) {
+                    if let Some(child_layout) = self.tree_layout.children().nth(content_tree_index) {
                         branch_content.as_widget().draw(
                             branch_tree,
                             renderer,

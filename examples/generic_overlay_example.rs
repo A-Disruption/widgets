@@ -2,7 +2,7 @@
 // This shows all the new features added to generic_overlay.rs
 
 use iced::{
-    widget::{button, checkbox, column, container, text, text_input, row, pick_list},
+    widget::{button, checkbox, column, container, text, text_input, row, pick_list, scrollable, space},
     Element, Length, Task, Theme, Alignment
 };
 
@@ -13,7 +13,7 @@ enum Message {
     OverlayCheckboxToggled(bool),
     TextInputChanged(String),
     ButtonPressed,
-    OverlayOpened,
+    OverlayOpened(iced::Point, iced::Size),
     OverlayClosed,
     UpdatePosition(Position),
     UpdateAlignment(AlignmentOption),
@@ -55,7 +55,7 @@ impl App {
             Message::OverlayCheckboxToggled(bool) => {self.overlay_checkbox = bool;},
             Message::TextInputChanged(str) => {self.text_input_value = str},
             Message::ButtonPressed => {println!("Button was pressed")},
-            Message::OverlayOpened => {println!("Overlay was opened")},
+            Message::OverlayOpened(overlay_position, overlay_size) => {println!("Overlay was opened. \n\tPosition: {}, \n\tSize: {:?}", overlay_position, overlay_size)},
             Message::OverlayClosed => {println!("Overlay was closed")},
             Message::UpdateAlignment(alignment) => self.hover_alignment = Some(alignment),
             Message::UpdatePosition(position) => self.hover_position = Some(position),
@@ -198,6 +198,7 @@ impl App {
             opaque_overlay_content,
         )
         .opaque(true)
+        .on_open(|overlay_position, overlay_size| Message::OverlayOpened(overlay_position, overlay_size))
         .on_close(|| Message::OverlayClosed);
 
         // EXAMPLE 3: Click-outside-to-close overlay
@@ -287,8 +288,20 @@ impl App {
                 text("Generic Overlay Examples").size(24),
                 basic_overlay,
                 opaque_overlay,
-                click_outside_overlay,
-                headerless_overlay,
+                scrollable(
+                    column![
+                        space::vertical().height(25.0),
+                        click_outside_overlay,
+                        space::vertical().height(25.0),
+                        scrollable(
+                            column![
+                                space::vertical().height(25.0),
+                                headerless_overlay,
+                                space::vertical().height(25.0),
+                            ],
+                        ).height(50.0),
+                    ],
+                ).height(50.0),
                 always_resizeable_overlay,
                 ctrl_click_resizeable_overlay,
                 container(
@@ -311,7 +324,13 @@ impl App {
                                 ).width(100),
                             ].spacing(5),
                         ].spacing(10),
-                        on_hover_overlay
+                        scrollable(
+                            column![
+                                space::vertical().height(25.0),
+                                on_hover_overlay,
+                                space::vertical().height(25.0)
+                            ]
+                        ).height(50.0)
                     ].spacing(10)
                 ).center_x(Length::Fill),
                 interactive_tooltip1,

@@ -120,7 +120,7 @@ where
     /// Should button clip content
     clip: bool,
     /// Callback when the overlay is opened
-    on_open: Option<Box<dyn Fn() -> Message + 'a>>,
+    on_open: Option<Box<dyn Fn(Point, Size) -> Message + 'a>>,
     /// Callback when the overlay is closed
     on_close: Option<Box<dyn Fn() -> Message + 'a>>,
     /// Hover Config
@@ -129,8 +129,6 @@ where
     hover_positions_on_click: bool,
     /// Class of the Overlay
     class: <Theme as Catalog>::Class<'a>,
-    /// Get full window size for overlay bounds
-    window_size: Option<Rectangle>,
     /// Status from button widget to match style
     status: Option<button::Status>,
     /// Button class
@@ -187,7 +185,6 @@ where
             // Callbacks
             on_open: None,
             on_close: None,            
-            window_size: None,
             
             // Overlay behavior options
             hover: Hover::default(),
@@ -243,7 +240,10 @@ where
     }
 
     /// Sets a callback for when the overlay is opened
-    pub fn on_open(mut self, callback: impl Fn() -> Message + 'a) -> Self {
+    pub fn on_open(
+        mut self, 
+        callback: impl Fn(Point, Size) -> Message + 'a)
+    -> Self {
         self.on_open = Some(Box::new(callback));
         self
     }
@@ -516,7 +516,7 @@ where
     position: Point,
     is_dragging: bool,
     drag_offset: Vector,
-    window_size: Size,
+    window_bounds: Rectangle,
     ctrl_pressed: bool,
     is_resizing: bool,
     cursor_over_button: bool,
@@ -550,7 +550,7 @@ where
                 position: Point::new(0.0, 0.0),
                 is_dragging: false,
                 drag_offset: Vector::new(0.0, 0.0),
-                window_size: Size::new(0.0, 0.0),
+                window_bounds: Rectangle::with_size(Size::ZERO),
                 ctrl_pressed: false,
                 is_resizing: false,
                 cursor_over_button: false,
@@ -668,12 +668,9 @@ where
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
         let bounds = layout.bounds();
 
-        match event {
-            Event::Window(iced::window::Event::Opened { size, .. })
-            | Event::Window(iced::window::Event::Resized(size)) => {
-                state.window_size = Size::new(size.width, size.height);
-            }
+        println!("OverlayButton::update() - bounds: {:?}, cursor over: {}", bounds, cursor.is_over(bounds));
 
+        match event {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. }) => {
                 if self.is_pressed {
@@ -694,27 +691,33 @@ where
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
-                if cursor.is_over(bounds) && !self.hover.enabled {
-                    self.status = Some(button::Status::Pressed);
-                    if state.is_open {
-                        state.is_open = false;
-                    } else {
-                        state.is_open = true;
-                        return
-                    }
-                    self.is_pressed = !self.is_pressed;
-                    
-                    shell.capture_event();
-                } else if cursor.is_over(bounds) && !state.suppress_hover_reopen {
-                    state.is_open = false;
-                    state.suppress_hover_reopen = true;
-                    shell.capture_event();
-                } else if cursor.is_over(bounds) && state.suppress_hover_reopen {
-                    state.is_open = true;
-                    state.suppress_hover_reopen = false;
-                    shell.capture_event();
+                if !cursor.is_over(bounds) {
+                    return;
                 }
+
+                self.status = Some(button::Status::Pressed);
+                shell.capture_event();
+
+                if state.is_open {
+                    if !state.suppress_hover_reopen {
+                        state.suppress_hover_reopen = true;
+                        state.is_open = false;
+                    }
+                    else {
+                        state.suppress_hover_reopen = false;
+                        state.is_open = true;
+                    }
+                } else {
+                    state.is_open = true;
+                    if let Some(on_open) = &self.on_open {
+                        shell.publish(on_open(state.position, Size::new(state.current_width, state.current_height)));
+                    }
+                }
+
+                self.is_pressed = true;
                 shell.invalidate_layout();
+                shell.request_redraw();
+                return
             }
             _ => {}
         }
@@ -730,6 +733,9 @@ where
             // Open on hover
             if cursor_over_button && !state.is_open && !state.suppress_hover_reopen {
                 state.is_open = true;
+                if let Some(on_open) = &self.on_open {
+                    shell.publish(on_open(state.position, Size::new(state.current_width, state.current_height)));
+                }
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
@@ -782,14 +788,6 @@ where
 
         let header_height = if self.hide_header { 0.0 } else { HEADER_HEIGHT };
         let padding = self.overlay_padding * 2.0;
-
-        // Get fallback window if uninitialized
-        let window_size = if state.window_size.width > 0.0 && state.window_size.height > 0.0 {
-            state.window_size
-        } else {
-            Size::new(800.0, 600.0)  // Fallback
-        };
-        let fullscreen = Rectangle::new(Point::ORIGIN, window_size);
 
         let content_tree = &mut tree.children[0];
 
@@ -852,16 +850,6 @@ where
             computed_content_h = content_node.size().height;
         }
 
-        // Initial position if ORIGIN (use computed sizes)
-        if state.position == Point::ORIGIN {
-            let ow = state.current_width;
-            let oh = state.current_height;
-            state.position = Point::new(
-                (window_size.width - ow) / 2.0,
-                (window_size.height - oh) / 2.0,
-            );
-        }
-
         let total_w = state.current_width;
         let total_h = state.current_height;
 
@@ -879,7 +867,6 @@ where
             width: total_w,
             height: total_h,
             padding: self.overlay_padding,
-            viewport: fullscreen,
             on_close: self.on_close.as_deref(),
             button_bounds,
             hover: &self.hover,
@@ -915,7 +902,6 @@ where
     height: f32,
     padding: f32,
     radius: f32,
-    viewport: Rectangle,
     on_close: Option<&'a dyn Fn() -> Message>,
     button_bounds: Rectangle,
     hover: &'a Hover,
@@ -938,26 +924,19 @@ where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>
 {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
-        let viewport = Rectangle::with_size(bounds);
+        self.state.window_bounds = Rectangle::with_size(bounds);
         let size = Size::new(self.width, self.height);
-        self.state.window_size = Size::new(bounds.width, bounds.height);
 
         if self.state.position == Point::ORIGIN {
             self.state.position = Point::new(
-                (self.state.window_size.width - size.width) / 2.0,
-                (self.state.window_size.height - size.height) / 2.0,
+                (bounds.width - size.width) / 2.0,
+                (bounds.height - size.height) / 2.0,
             );
         }
 
         if self.hover.enabled  || self.hover_positions_on_click {
             let overlay_width = self.state.current_width;
             let overlay_height = self.state.current_height;
-            
-            // Calculate center positions for alignment
-            let x_center = self.button_bounds.x 
-                + (self.button_bounds.width - overlay_width) / 2.0;
-            let y_center = self.button_bounds.y 
-                + (self.button_bounds.height - overlay_height) / 2.0;
             
             // Calculate position based on Position enum
             let mut calculated_position = match self.hover.config.position {
@@ -1002,17 +981,17 @@ where
             // Snap within viewport if enabled
             if self.hover.config.snap_within_viewport {
                 // Horizontal bounds checking
-                if calculated_position.x < viewport.x {
-                    calculated_position.x = viewport.x;
-                } else if calculated_position.x + overlay_width > viewport.x + viewport.width {
-                    calculated_position.x = viewport.x + viewport.width - overlay_width;
+                if calculated_position.x < self.state.window_bounds.x {
+                    calculated_position.x = self.state.window_bounds.x;
+                } else if calculated_position.x + overlay_width > self.state.window_bounds.x + self.state.window_bounds.width {
+                    calculated_position.x = self.state.window_bounds.x + self.state.window_bounds.width - overlay_width;
                 }
                 
                 // Vertical bounds checking
-                if calculated_position.y < viewport.y {
-                    calculated_position.y = viewport.y;
-                } else if calculated_position.y + overlay_height > viewport.y + viewport.height {
-                    calculated_position.y = viewport.y + viewport.height - overlay_height;
+                if calculated_position.y < self.state.window_bounds.y {
+                    calculated_position.y = self.state.window_bounds.y;
+                } else if calculated_position.y + overlay_height > self.state.window_bounds.y + self.state.window_bounds.height {
+                    calculated_position.y = self.state.window_bounds.y + self.state.window_bounds.height - overlay_height;
                 }
             }
             
@@ -1035,12 +1014,12 @@ where
         let draw_style = <Theme as Catalog>::style(&theme, &self.class);
 
         // Use layer rendering for proper overlay isolation
-        renderer.with_layer(self.viewport, |renderer| {
+        renderer.with_layer(self.state.window_bounds, |renderer| {
             // Draw opaque backdrop if requested
             if self.opaque {
                 renderer.fill_quad(
                     renderer::Quad {
-                        bounds: self.viewport,
+                        bounds: self.state.window_bounds,
                         border: Border::default(),
                         shadow: Shadow::default(),
                         snap: false,
@@ -1397,8 +1376,8 @@ where
                         }
 
                         // Clamp position to viewport
-                        new_x = new_x.max(0.0).min(self.viewport.width - new_width);
-                        new_y = new_y.max(0.0).min(self.viewport.height - new_height);
+                        new_x = new_x.max(0.0).min(self.state.window_bounds.width - new_width);
+                        new_y = new_y.max(0.0).min(self.state.window_bounds.height - new_height);
                         self.state.position = Point::new(new_x, new_y);
                         
                         shell.invalidate_layout();
@@ -1413,10 +1392,10 @@ where
 
                         self.state.position.x = new_x
                             .max(0.0)
-                            .min(self.viewport.width - self.state.current_width);
+                            .min(self.state.window_bounds.width - self.state.current_width);
                         self.state.position.y = new_y
                             .max(0.0)
-                            .min(self.viewport.height - self.state.current_height);
+                            .min(self.state.window_bounds.height - self.state.current_height);
 
                         shell.invalidate_layout();
                         shell.request_redraw();
