@@ -631,8 +631,8 @@ where
             .width(self.width)
             .height(Length::Shrink)
             .shrink(Size::new(
-                self.content_padding.horizontal(),
-                self.content_padding.vertical(),
+                self.content_padding.x(),
+                self.content_padding.y(),
             ));
 
         let (_, _, _, content_index) = self.child_indices();
@@ -647,7 +647,7 @@ where
             self.header_height + self.content_padding.top,
         ));
         
-        let full_content_height = content_node.size().height + self.content_padding.vertical();
+        let full_content_height = content_node.size().height + self.content_padding.y();
         let animated_height = full_content_height * state.progress;
 
         let total_height = self.header_height + animated_height;
@@ -697,8 +697,25 @@ where
                     if let Some(ref on_action) = self.on_action {
                         shell.publish(on_action());
                     }
-                } else if (self.header_clickable && cursor.is_over(header_bounds)) 
-                    || cursor.is_over(icon_bounds) {
+                } else if self.on_action.is_none()  && cursor.is_over(action_bounds) {
+                    let (_, _, action_index, _) = self.child_indices();
+                    if let Some(ref mut action_icon) = self.action_icon {
+                        if let Some(action_idx) = action_index {
+                            return action_icon.as_widget_mut().update(
+                                &mut tree.children[action_idx],
+                                event,
+                                action_layout,
+                                cursor,
+                                renderer,
+                                clipboard,
+                                shell,
+                                viewport,
+                            );
+                        }
+                    }                
+                } else if ((self.header_clickable && cursor.is_over(header_bounds)) 
+                    || cursor.is_over(icon_bounds))
+                    && !cursor.is_over(action_bounds) {
                     let now = Instant::now();
                     let new_state = !state.animation.value();
                     state.animation.go_mut(new_state, now);
@@ -1093,29 +1110,46 @@ where
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         let combined_state = tree.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
         let state = &mut combined_state.animation;
+        let (_, _, action_index, content_index) = self.child_indices();
 
+        let mut children = layout.children();
+        let _icon_layout = children.next().unwrap();
+        let _title_layout = children.next();  
+        let action_layout = children.next().unwrap();
+        let content_layout = children.next();
+
+        // Split tree.children to get non-overlapping mutable slices
+        let (left_tree, right_tree) = tree.children.split_at_mut(content_index);
+        
+        // Check action_icon for overlay first (if present)
+        if let Some(ref mut action_icon) = self.action_icon {
+            if let Some(action_idx) = action_index {
+                if let Some(overlay) = action_icon.as_widget_mut().overlay(
+                    &mut left_tree[action_idx],
+                    action_layout,
+                    renderer,
+                    viewport,
+                    translation,
+                ) {
+                    return Some(overlay);
+                }
+            }
+        }
+
+        // Return child overlays if expanded
         if state.progress > 0.0 {
-            let (_, _, _, content_index) = self.child_indices();
-            let mut children = layout.children();
-            let _icon_layout = children.next().unwrap();
-            let _title_layout = children.next();  
-            let _action_layout = children.next().unwrap();
-            let content_layout = children.next();
-            
             if let Some(content_layout) = content_layout {
-                self.content.as_widget_mut().overlay(
-                    &mut tree.children[content_index],
+                return self.content.as_widget_mut().overlay(
+                    &mut right_tree[0],
                     content_layout,
                     renderer,
                     viewport,
                     translation,
-                )
-            } else {
-                None
+                );
             }
-        } else {
-            None
         }
+
+        None
     }
 }
 
@@ -1297,16 +1331,29 @@ where
                         
                         // Check if in header area
                         if relative_y < child_header_height {
-                            // Toggle: if already expanded, collapse. Otherwise expand this one.
-                            if group_state.expanded_index == Some(index) {
-                                group_state.expanded_index = None;
-                            } else {
-                                group_state.expanded_index = Some(index);
-                            }
+                            let mut child_children = child_layout.children();
+                            let _icon = child_children.next(); 
+                            let _title = child_children.next();
+                            let action_layout = child_children.next();
                             
-                            // Trigger smooth simultaneous animation for all items
-                            shell.invalidate_layout();
-                            shell.request_redraw();
+                            let is_over_action = if let Some(action_layout) = action_layout {
+                                cursor.is_over(action_layout.bounds())
+                            } else {
+                                false
+                            };
+                            
+                            // Only toggle if not clicking action icon
+                            if !is_over_action {
+                                if group_state.expanded_index == Some(index) {
+                                    group_state.expanded_index = None;
+                                } else {
+                                    group_state.expanded_index = Some(index);
+                                }
+                                
+                                // Trigger smooth simultaneous animation for all items
+                                shell.invalidate_layout();
+                                shell.request_redraw();
+                            }
                         }
                     }
                 }
