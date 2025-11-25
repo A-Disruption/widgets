@@ -2,11 +2,10 @@
 // This shows all the new features added to generic_overlay.rs
 
 use iced::{
-    widget::{button, checkbox, column, container, text, text_input, row, pick_list, scrollable, space},
-    Element, Length, Task, Theme, Alignment
+    Alignment, Element, Length, Task, Theme, widget::{button, checkbox, column, container, pick_list, row, scrollable, space, text, text_editor, text_input}
 };
 
-use widgets::generic_overlay::{overlay_button, ResizeMode, interactive_tooltip, Position, dropdown_menu, dropdown_root};
+use widgets::generic_overlay::{overlay_button, ResizeMode, interactive_tooltip, Position, dropdown_menu, dropdown_root, PositionMode};
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -27,6 +26,7 @@ struct App {
     hover_alignment: Option<AlignmentOption>,
     hover_gap: f32,
     gap_text: String,
+    editor_content: text_editor::Content
 }
 
 impl Default for App {
@@ -38,6 +38,7 @@ impl Default for App {
             hover_alignment: Some(AlignmentOption::Start),
             hover_gap: 5.0,
             gap_text: "5.0".to_string(),
+            editor_content: text_editor::Content::new(),
         }
     }
 }
@@ -281,6 +282,27 @@ impl App {
             dropdown_root("File", menu1),
         ].width(Length::Fill)).style(container::secondary);
 
+        let on_hover_internal = container(
+            
+                overlay_button(
+                        text_editor(&self.editor_content).width(500.0).height(400.0),
+                    "Hidden",
+                    button("C").width(Length::Shrink).height(Length::Shrink).on_press(Message::ButtonPressed).style(button::subtle),
+                )
+                .style(button::text)
+                .hide_header()
+                .on_hover()
+                .overlay_padding(0.0)
+                .overlay_padding(0.0)
+                .hover_gap(self.hover_gap)
+                .overlay_height(Length::Shrink)
+                .overlay_width(Length::Shrink)
+                .hover_position(self.hover_position.unwrap_or(Position::Right).into())
+                .hover_mode(PositionMode::Inside)
+                .hover_alignment(self.hover_alignment.unwrap_or(AlignmentOption::Start).into()),
+            
+        );
+
         column![
             nav_menu,
             column![
@@ -288,20 +310,8 @@ impl App {
                 text("Generic Overlay Examples").size(24),
                 basic_overlay,
                 opaque_overlay,
-                scrollable(
-                    column![
-                        space::vertical().height(25.0),
-                        click_outside_overlay,
-                        space::vertical().height(25.0),
-                        scrollable(
-                            column![
-                                space::vertical().height(25.0),
-                                headerless_overlay,
-                                space::vertical().height(25.0),
-                            ],
-                        ).height(50.0),
-                    ],
-                ).height(50.0),
+                click_outside_overlay,
+                headerless_overlay,
                 always_resizeable_overlay,
                 ctrl_click_resizeable_overlay,
                 container(
@@ -324,16 +334,11 @@ impl App {
                                 ).width(100),
                             ].spacing(5),
                         ].spacing(10),
-                        scrollable(
-                            column![
-                                space::vertical().height(25.0),
-                                on_hover_overlay,
-                                space::vertical().height(25.0)
-                            ]
-                        ).height(50.0)
+                        on_hover_overlay,
                     ].spacing(10)
                 ).center_x(Length::Fill),
                 interactive_tooltip1,
+                on_hover_internal
             ]
             .spacing(20)
             .padding(40)

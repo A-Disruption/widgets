@@ -57,7 +57,7 @@ where
 {
     OverlayButton::new(button_label, "", overlay_content)
         .hide_header()
-        .overlay_width(150.0)
+        .overlay_width(Length::Fixed(150.0))
         .overlay_padding(1.0)
         .overlay_radius(0.0)
         .on_hover()
@@ -77,7 +77,7 @@ where
 {
     OverlayButton::new(button_label, "", overlay_content)
         .hide_header()
-        .overlay_width(150.0)
+        .overlay_width(Length::Fixed(150.0))
         .overlay_padding(1.0)
         .overlay_radius(0.0)
         .hover_positions_on_click()
@@ -106,9 +106,9 @@ where
     /// Sets the radius of the overlay
     overlay_radius: f32,
     /// Optional width for the overlay (defaults to 400px)
-    overlay_width: Option<f32>,
+    overlay_width: Option<Length>,
     /// Optional height for the overlay (defaults to content height)
-    overlay_height: Option<f32>,
+    overlay_height: Option<Length>,
     /// Optional padding for the overlay (defaults to CONTENT_PADDING)
     overlay_padding: f32,
     /// Button width
@@ -198,16 +198,17 @@ where
     }
 
     /// Sets the overlay width
-    pub fn overlay_width(mut self, width: f32) -> Self {
-        self.overlay_width = Some(width);
+    pub fn overlay_width(mut self, width: impl Into<Length>) -> Self {
+        self.overlay_width = Some(width.into());
         self
     }
 
     /// Sets the overlay height
-    pub fn overlay_height(mut self, height: f32) -> Self {
-        self.overlay_height = Some(height);
+    pub fn overlay_height(mut self, height: impl Into<Length>) -> Self {
+        self.overlay_height = Some(height.into());
         self
     }
+
 
     /// Sets the overlay padding
     pub fn overlay_padding(mut self, padding: f32) -> Self {
@@ -283,6 +284,12 @@ where
     #[must_use]
     pub fn hover_alignment(mut self, alignment: Alignment) -> Self {
         self.hover.config.alignment = alignment;
+        self
+    }
+
+    #[must_use]
+    pub fn hover_mode(mut self, mode: PositionMode) -> Self {
+        self.hover.config.mode = mode;
         self
     }
 
@@ -416,6 +423,7 @@ pub struct HoverConfig {
     snap_within_viewport: bool,
     alignment: Alignment,
     buffer: f32,
+    mode: PositionMode,
 }
 
 impl Default for HoverConfig {
@@ -425,8 +433,23 @@ impl Default for HoverConfig {
             gap: 5.0,
             snap_within_viewport: true,
             alignment: Alignment::Center,
-            buffer: 10.0
+            buffer: 10.0,
+            mode: PositionMode::Outside,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PositionMode {
+    /// Overlay appears outside/adjacent to the button (default)
+    Outside,
+    /// Overlay appears inside/overlapping the button bounds
+    Inside,
+}
+
+impl Default for PositionMode {
+    fn default() -> Self {
+        Self::Outside
     }
 }
 
@@ -794,11 +817,26 @@ where
 
         // Initialize sizes if needed
         if state.current_width == 0.0 {
-            state.current_width = self.overlay_width.unwrap_or(400.0);
-            let init_auto = self.overlay_height.is_none();
+            let width_limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+            let resolved_width = match self.overlay_width {
+                Some(Length::Fixed(w)) => w,
+                Some(Length::Fill) => viewport.width,
+                Some(Length::FillPortion(_)) => viewport.width,
+                Some(Length::Shrink) => {
+                    let measure_limits = Limits::new(Size::ZERO, Size::new(viewport.width, f32::INFINITY));
+                    let temp_node = self.content
+                        .as_widget_mut()
+                        .layout(content_tree, renderer, &measure_limits);
+                    temp_node.size().width + padding
+                },
+                None => 400.0, // Default
+            };
+            
+            state.current_width = resolved_width;
+            let init_auto = self.overlay_height.is_none() || matches!(self.overlay_height, Some(Length::Shrink));
             state.height_auto = init_auto;
 
-            // First layout with infinite height to measure natural content height
+            // First layout with resolved width to measure natural content height
             let init_limits = Limits::new(
                 Size::ZERO,
                 Size::new(state.current_width - padding, f32::INFINITY),
@@ -811,9 +849,16 @@ where
             if init_auto {
                 state.current_height = header_height + computed_content_h + padding;
             } else {
-                state.current_height = self.overlay_height.unwrap_or(300.0);
+                let resolved_height = match self.overlay_height {
+                    Some(Length::Fixed(h)) => h,
+                    Some(Length::Fill) => width_limits.max().height,
+                    Some(Length::FillPortion(_)) => width_limits.max().height,
+                    Some(Length::Shrink) => header_height + computed_content_h + padding,
+                    None => 300.0, // Default
+                };
+                
+                state.current_height = resolved_height;
 
-                // Relayout with constrained height for non-auto init
                 let constrained_h = state.current_height - header_height - padding;
                 let constrained_limits = Limits::new(
                     Size::ZERO,
@@ -822,10 +867,9 @@ where
                 content_node = self.content
                     .as_widget_mut()
                     .layout(content_tree, renderer, &constrained_limits);
-                computed_content_h = content_node.size().height;  // Updated, but not used for height
+                computed_content_h = content_node.size().height;
             }
         } else if state.height_auto {
-            // For auto-height runtime: layout infinite, update height
             let auto_limits = Limits::new(
                 Size::ZERO,
                 Size::new(state.current_width - padding, f32::INFINITY),
@@ -836,7 +880,6 @@ where
             computed_content_h = content_node.size().height;
             state.current_height = header_height + computed_content_h + padding;
         } else {
-            // For fixed-height runtime: layout constrained
             let fixed_h = state.current_height - header_height - padding;
             let fixed_limits = Limits::new(
                 Size::ZERO,
@@ -867,6 +910,7 @@ where
             padding: self.overlay_padding,
             on_close: self.on_close.as_deref(),
             button_bounds,
+            button_padding: self.padding,
             hover: &self.hover,
             hover_positions_on_click: self.hover_positions_on_click,
             content_layout: content_node,
@@ -902,6 +946,7 @@ where
     radius: f32,
     on_close: Option<&'a dyn Fn() -> Message>,
     button_bounds: Rectangle,
+    button_padding: Padding,
     hover: &'a Hover,
     hover_positions_on_click: bool,
     content_layout: Node,
@@ -936,43 +981,96 @@ where
             let overlay_width = self.state.current_width;
             let overlay_height = self.state.current_height;
             
-            // Calculate position based on Position enum
-            let mut calculated_position = match self.hover.config.position {
-                Position::Top | Position::Bottom => {
-                    // For Top/Bottom, alignment controls horizontal positioning
-                    let x = match self.hover.config.alignment {
-                        Alignment::Start => self.button_bounds.x,
-                        Alignment::Center => self.button_bounds.x 
-                            + (self.button_bounds.width - overlay_width) / 2.0,
-                        Alignment::End => self.button_bounds.x 
-                            + self.button_bounds.width - overlay_width,
-                    };
-                    
-                    let y = if self.hover.config.position == Position::Top {
-                        self.button_bounds.y - overlay_height - self.hover.config.gap
-                    } else {
-                        self.button_bounds.y + self.button_bounds.height + self.hover.config.gap
+            // Calculate position based on Position enum and mode
+            let mut calculated_position = match self.hover.config.mode {
+                PositionMode::Outside => {
+                    // Current behavior - overlay adjacent to button
+                    match self.hover.config.position {
+                        Position::Top | Position::Bottom => {
+                            let x = match self.hover.config.alignment {
+                                Alignment::Start => self.button_bounds.x,
+                                Alignment::Center => self.button_bounds.x 
+                                    + (self.button_bounds.width - overlay_width) / 2.0,
+                                Alignment::End => self.button_bounds.x 
+                                    + self.button_bounds.width - overlay_width,
+                            };
+                            
+                            let y = if self.hover.config.position == Position::Top {
+                                self.button_bounds.y - overlay_height - self.hover.config.gap
+                            } else {
+                                self.button_bounds.y + self.button_bounds.height + self.hover.config.gap
+                            };
+
+                            Point::new(x, y)
+                        }
+                        Position::Left | Position::Right => {
+                            let y = match self.hover.config.alignment {
+                                Alignment::Start => self.button_bounds.y,
+                                Alignment::Center => self.button_bounds.y 
+                                    + (self.button_bounds.height - overlay_height) / 2.0,
+                                Alignment::End => self.button_bounds.y 
+                                    + self.button_bounds.height - overlay_height,
+                            };
+                            
+                            let x = if self.hover.config.position == Position::Left {
+                                self.button_bounds.x - overlay_width - self.hover.config.gap
+                            } else {
+                                self.button_bounds.x + self.button_bounds.width + self.hover.config.gap
+                            };
+                            
+                            Point::new(x, y)
+                        }
+                    }
+                }
+                PositionMode::Inside => {
+                    let content_bounds = Rectangle {
+                        x: self.button_bounds.x + self.button_padding.left,
+                        y: self.button_bounds.y + self.button_padding.top,
+                        width: self.button_bounds.width - self.button_padding.left - self.button_padding.right,
+                        height: self.button_bounds.height - self.button_padding.top - self.button_padding.bottom,
                     };
 
-                    Point::new(x, y)
-                }
-                Position::Left | Position::Right => {
-                    // For Left/Right, alignment controls vertical positioning
-                    let y = match self.hover.config.alignment {
-                        Alignment::Start => self.button_bounds.y,
-                        Alignment::Center => self.button_bounds.y 
-                            + (self.button_bounds.height - overlay_height) / 2.0,
-                        Alignment::End => self.button_bounds.y 
-                            + self.button_bounds.height - overlay_height,
-                    };
-                    
-                    let x = if self.hover.config.position == Position::Left {
-                        self.button_bounds.x - overlay_width - self.hover.config.gap
-                    } else {
-                        self.button_bounds.x + self.button_bounds.width + self.hover.config.gap
-                    };
-                    
-                    Point::new(x, y)
+                    // New behavior - overlay anchored inside button bounds
+                    match self.hover.config.position {
+                        Position::Top | Position::Bottom => {
+                            // Horizontal positioning from content edges
+                            let x = match self.hover.config.alignment {
+                                Alignment::Start => content_bounds.x + self.hover.config.gap,
+                                Alignment::Center => content_bounds.x 
+                                    + (content_bounds.width - overlay_width) / 2.0,
+                                Alignment::End => content_bounds.x 
+                                    + content_bounds.width - overlay_width - self.hover.config.gap,
+                            };
+                            
+                            // Vertical positioning from content edges (inward)
+                            let y = if self.hover.config.position == Position::Top {
+                                content_bounds.y + self.hover.config.gap
+                            } else {
+                                content_bounds.y + content_bounds.height - overlay_height - self.hover.config.gap
+                            };
+
+                            Point::new(x, y)
+                        }
+                        Position::Left | Position::Right => {
+                            // Vertical positioning from content edges
+                            let y = match self.hover.config.alignment {
+                                Alignment::Start => content_bounds.y + self.hover.config.gap,
+                                Alignment::Center => content_bounds.y 
+                                    + (content_bounds.height - overlay_height) / 2.0,
+                                Alignment::End => content_bounds.y 
+                                    + content_bounds.height - overlay_height - self.hover.config.gap,
+                            };
+                            
+                            // Horizontal positioning from content edges (inward)
+                            let x = if self.hover.config.position == Position::Left {
+                                content_bounds.x + self.hover.config.gap
+                            } else {
+                                content_bounds.x + content_bounds.width - overlay_width - self.hover.config.gap
+                            };
+                            
+                            Point::new(x, y)
+                        }
+                    }
                 }
             };
             
