@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14.0-dev", features = [
+iced = { version = "0.14.0", features = [
     "tokio",
     "lazy",
     "advanced",
@@ -12,9 +12,6 @@ iced = { version = "0.14.0-dev", features = [
     "canvas",
 ] }
 uuid = { version = "1.6", features = ["v4", "serde"] }
-
-[patch.crates-io]
-iced = { git = "https://github.com/iced-rs/iced", branch = "master" }
 
 [[example]]
 name = "tree_example"
@@ -29,8 +26,8 @@ name = "color_picker_example"
 path = "examples\\color_picker_example.rs"
 
 [[example]]
-name = "collasible_example"
-path = "examples\\collasible_example.rs"
+name = "collapsible_example"
+path = "examples\\collapsible_example.rs"
 
 [[example]]
 name = "generic_overlay_example"

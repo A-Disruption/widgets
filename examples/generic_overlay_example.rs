@@ -77,7 +77,8 @@ impl App {
             text("Basic Overlay - No Options").size(20),
             text("This displays your Element, you can move the overlay by dragging the header."),
             text("you can also hold ctrl to drag from anywhere."),
-            checkbox("Enable Feature", self.overlay_checkbox)
+            checkbox(self.overlay_checkbox)
+                .label("Enable Feature")
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
@@ -91,7 +92,8 @@ impl App {
         let opaque_overlay_content: Element<Message> = column![
             text("Overlay Dialog - .opaque()").size(20),
             text("Using .opaque() creates a darkened background, closes on clicking outside the overlay."),
-            checkbox("Enable Feature", self.overlay_checkbox)
+            checkbox(self.overlay_checkbox)
+                .label("Enable Feature")
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
@@ -105,7 +107,8 @@ impl App {
         let close_on_outside_click_overlay_content: Element<Message> = column![
             text("Overlay Dialog - .close_on_click_outside()").size(20),
             text("You can also just not darken the background if you want."),
-            checkbox("Enable Feature", self.overlay_checkbox)
+            checkbox(self.overlay_checkbox)
+                .label("Enable Feature")
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
@@ -119,7 +122,8 @@ impl App {
         let headless_overlay_content: Element<Message> = column![
             text("Overlay Dialog - .hide_header()").size(20),
             text("You can also remove the header, this automatically closes on clicking outside the overlay as well."),
-            checkbox("Enable Feature", self.overlay_checkbox)
+            checkbox(self.overlay_checkbox)
+                .label("Enable Feature")
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
@@ -133,7 +137,8 @@ impl App {
         let always_resizeable_overlay_content: Element<Message> = column![
             text("Overlay Dialog - .resizable(ResizeMode::Always)").size(20),
             text("You have two options to enable resizing, Always"),
-            checkbox("Enable Feature", self.overlay_checkbox)
+            checkbox(self.overlay_checkbox)
+                .label("Enable Feature")
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
@@ -147,7 +152,8 @@ impl App {
         let ctrl_click_resizeable_overlay_content: Element<Message> = column![
             text("Overlay Dialog - .resizable(ResizeMode::WithCtrl)").size(20),
             text("Or resizing when holding ctrl"),
-            checkbox("Enable Feature", self.overlay_checkbox)
+            checkbox(self.overlay_checkbox)
+                .label("Enable Feature")
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
@@ -174,7 +180,8 @@ impl App {
         let interactive_tooltip_overlay_content: Element<Message> = column![
             text("Overlay Dialog - Hover to Open").size(20),
             text("Positions mirror Tooltip"),
-            checkbox("Enable Feature", self.overlay_checkbox)
+            checkbox(self.overlay_checkbox)
+                .label("Enable Feature")
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
