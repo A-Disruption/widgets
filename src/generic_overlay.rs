@@ -1559,29 +1559,24 @@ where
             height: bounds.height - header_height - self.padding * 2.0,
         };
 
+        let content_layout_node = self.content_layout.clone()
+            .move_to(Point::new(content_bounds.x, content_bounds.y));
+        let content_layout = Layout::new(&content_layout_node);
+
         // Only forward events to content if not dragging and if cursor is in content area
         if !self.state.is_dragging && !self.state.is_resizing {
-            let adjusted_cursor = if let Some(position) = cursor.position() {
-                mouse::Cursor::Available(Point::new(
-                    position.x - content_bounds.x,
-                    position.y - content_bounds.y,
-                ))
-            } else {
-                mouse::Cursor::Unavailable
-            };
-
-            // Use pre-computed content layout for proper event handling
             self.content.as_widget_mut().update(
                 self.tree,
                 event,
-                Layout::new(&self.content_layout),
-                adjusted_cursor,
+                content_layout,
+                cursor,
                 renderer,
                 clipboard,
                 shell,
-                &Rectangle::new(Point::ORIGIN, content_bounds.size()),
+                &layout.bounds(),
             );
         }
+
     }
 
     fn mouse_interaction(
