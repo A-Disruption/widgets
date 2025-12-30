@@ -17,7 +17,7 @@ enum Message {
     UpdatePosition(Position),
     UpdateAlignment(AlignmentOption),
     UpdateGap(String),
-    CloseOverlay,
+    CloseOverlay(iced::advanced::widget::Id),
 }
 
 struct App {
@@ -68,9 +68,9 @@ impl App {
                     Err(_) => {}
                 }
             }
-            Message::CloseOverlay => {
+            Message::CloseOverlay(id) => {
                 return iced::advanced::widget::operate(widgets::generic_overlay::close::<Message>(
-                    iced::widget::Id::new("basic-overlay")));
+                    id));
             }
         }
         Task::none()
@@ -90,7 +90,7 @@ impl App {
             button("Do Something")
                 .on_press(Message::ButtonPressed),
             button("Close Overlay from internal content")
-                .on_press(Message::CloseOverlay)
+                .on_press(Message::CloseOverlay("basic_overlay".into()))
                 .style(button::danger),
         ]
         .spacing(15)
@@ -200,12 +200,21 @@ impl App {
         .padding(10)
         .into();
 
+        let dynamic_size_overlay_content: Element<Message> = column![
+            button("Close Overlay from internal content")
+                .on_press(Message::CloseOverlay("dynamic_overlay".into()))
+                .style(button::danger),
+        ]
+        .spacing(15)
+        .padding(10)
+        .into();
+
         // EXAMPLE 1: Basic overlay with header (matching color_picker header size)
         let basic_overlay = overlay_button(
             text("Open Default Overlay"),
             "Default Generic Overlay Example",
             basic_overlay_content,
-        ).id(iced::widget::Id::new("basic-overlay"));
+        ).id("basic-overlay");
 
         // EXAMPLE 2: Opaque overlay that blocks interaction with content behind it
         let opaque_overlay = overlay_button(
@@ -318,6 +327,17 @@ impl App {
             
         );
 
+        // EXAMPLE 10: Dynamically sized based on parent viewport
+        let dynamic_size = overlay_button(
+            text("Open Dynamic Overlay"),
+            "Dynamic Size Overlay Example",
+            dynamic_size_overlay_content,
+        )
+        .overlay_width_dynamic(|window_width| Length::Fixed(window_width * 0.8))
+        .overlay_height_dynamic(|window_height| Length::Fixed(window_height * 0.8))
+        .reset_on_close()
+        .id("dynamic_overlay");
+
         column![
             nav_menu,
             column![
@@ -353,7 +373,8 @@ impl App {
                     ].spacing(10)
                 ).center_x(Length::Fill),
                 interactive_tooltip1,
-                on_hover_internal
+//                on_hover_internal,
+                dynamic_size,
             ]
             .spacing(20)
             .padding(40)

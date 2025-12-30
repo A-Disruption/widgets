@@ -109,9 +109,9 @@ where
     /// Sets the radius of the overlay
     overlay_radius: f32,
     /// Optional width for the overlay (defaults to 400px)
-    overlay_width: Option<Length>,
+    overlay_width: Option<SizeStrategy<'a>>,
     /// Optional height for the overlay (defaults to content height)
-    overlay_height: Option<Length>,
+    overlay_height: Option<SizeStrategy<'a>>,
     /// Optional padding for the overlay (defaults to CONTENT_PADDING)
     overlay_padding: f32,
     /// Button width
@@ -146,6 +146,8 @@ where
     hide_header: bool,
     /// Resize mode for the overlay
     resizable: ResizeMode,
+    /// reset size and position on overlay closure
+    reset_on_close: bool,
 }
 
 impl<'a, Message, Theme, Renderer> OverlayButton<'a, Message, Theme, Renderer> 
@@ -198,6 +200,7 @@ where
             close_on_click_outside: false,
             hide_header: false,
             resizable: ResizeMode::None,
+            reset_on_close: false,
         }
     }
 
@@ -208,14 +211,28 @@ where
     }
 
     /// Sets the overlay width
-    pub fn overlay_width(mut self, width: impl Into<Length>) -> Self {
+    pub fn overlay_width(mut self, width: impl Into<SizeStrategy<'a>>) -> Self {
         self.overlay_width = Some(width.into());
         self
     }
 
     /// Sets the overlay height
-    pub fn overlay_height(mut self, height: impl Into<Length>) -> Self {
+    pub fn overlay_height(mut self, height: impl Into<SizeStrategy<'a>>) -> Self {
         self.overlay_height = Some(height.into());
+        self
+    }
+
+    // "Rule Style" convenience method for dynamic width
+    // Usage: .overlay_width_dynamic(|available| Length::Fixed(available * 0.8))
+    pub fn overlay_width_dynamic(mut self, calc: impl Fn(f32) -> Length + 'a) -> Self {
+        self.overlay_width = Some(SizeStrategy::Dynamic(Box::new(calc)));
+        self
+    }
+
+    // "Rule Style" convenience method for dynamic height
+    // Usage: .overlay_height_dynamic(|available| Length::Fixed(available * 0.8))
+    pub fn overlay_height_dynamic(mut self, calc: impl Fn(f32) -> Length + 'a) -> Self {
+        self.overlay_height = Some(SizeStrategy::Dynamic(Box::new(calc)));
         self
     }
 
@@ -379,6 +396,12 @@ where
     #[must_use]
     pub fn resizable(mut self, mode: ResizeMode) -> Self {
         self.resizable = mode;
+        self
+    }
+
+    /// Reset the position and size of the [`Generic Overlay`] each time it's closed.
+    pub fn reset_on_close(mut self) -> Self {
+        self.reset_on_close = true;
         self
     }
 }
@@ -563,6 +586,29 @@ where
     height_auto: bool,
     title_text: widget::text::State<P>,
     suppress_hover_reopen: bool,
+    reset_on_close: bool,
+}
+
+impl<P: iced::advanced::text::Paragraph> State<P> {
+    /// Resets the state to default values, effectively closing the overlay
+    /// and forcing a recalculation of size/position on the next open.
+    fn reset(&mut self) {
+        self.is_open = false;
+        
+        if self.reset_on_close {
+            // Resetting position to ORIGIN triggers the centering logic in `overlay::layout`
+            self.position = Point::ORIGIN; 
+            
+            // Resetting dimensions to 0.0 triggers the size calculation logic in `overlay()`
+            self.current_width = 0.0;
+            self.current_height = 0.0;
+            
+            // Clear interaction states
+            self.is_dragging = false;
+            self.is_resizing = false;
+            self.resize_edge = ResizeEdge::None;
+        }
+    }
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> 
@@ -597,6 +643,7 @@ where
                 height_auto: false,
                 title_text: widget::text::State::<Renderer::Paragraph>::default(),
                 suppress_hover_reopen: false,
+                reset_on_close: self.reset_on_close,
             }
         )
     }
@@ -773,7 +820,7 @@ where
 
             // Close when cursor exits both button and overlay
             if !state.cursor_over_button && !state.cursor_over_overlay && state.is_open {
-                state.is_open = false;
+                state.reset();
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
@@ -819,31 +866,46 @@ where
 
         let header_height = if self.hide_header { 0.0 } else { HEADER_HEIGHT };
         let padding = self.overlay_padding * 2.0;
-
         let content_tree = &mut tree.children[0];
 
         let mut content_node: Node;
         let mut computed_content_h: f32;
 
+        // Helper to resolve the strategy into a concrete Length
+        let resolve_strategy = |strategy: &Option<SizeStrategy<'a>>, available_space: f32| -> Length {
+            match strategy {
+                Some(SizeStrategy::Static(l)) => *l,
+                Some(SizeStrategy::Dynamic(f)) => f(available_space),
+                None => Length::Fixed(if strategy.is_none() && available_space == viewport.width { 
+                    400.0 // Default width
+                } else {
+                    300.0 // Default height
+                }), 
+            }
+        };
+    
+        // Resolve width and height using the viewport size
+        let width_strategy = resolve_strategy(&self.overlay_width, viewport.width);
+        let height_strategy = resolve_strategy(&self.overlay_height, viewport.height);
+
         // Initialize sizes if needed
         if state.current_width == 0.0 {
             let width_limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-            let resolved_width = match self.overlay_width {
-                Some(Length::Fixed(w)) => w,
-                Some(Length::Fill) => viewport.width,
-                Some(Length::FillPortion(_)) => viewport.width,
-                Some(Length::Shrink) => {
+            let resolved_width = match width_strategy {
+                Length::Fixed(w) => w,
+                Length::Fill => viewport.width,
+                Length::FillPortion(_) => viewport.width,
+                Length::Shrink => {
                     let measure_limits = Limits::new(Size::ZERO, Size::new(viewport.width, f32::INFINITY));
                     let temp_node = self.content
                         .as_widget_mut()
                         .layout(content_tree, renderer, &measure_limits);
                     temp_node.size().width + padding
-                },
-                None => 400.0, // Default
+                }
             };
             
             state.current_width = resolved_width;
-            let init_auto = self.overlay_height.is_none() || matches!(self.overlay_height, Some(Length::Shrink));
+            let init_auto = self.overlay_height.is_none() || matches!(height_strategy, Length::Shrink);
             state.height_auto = init_auto;
 
             // First layout with resolved width to measure natural content height
@@ -859,12 +921,11 @@ where
             if init_auto {
                 state.current_height = header_height + computed_content_h + padding;
             } else {
-                let resolved_height = match self.overlay_height {
-                    Some(Length::Fixed(h)) => h,
-                    Some(Length::Fill) => width_limits.max().height,
-                    Some(Length::FillPortion(_)) => width_limits.max().height,
-                    Some(Length::Shrink) => header_height + computed_content_h + padding,
-                    None => 300.0, // Default
+                let resolved_height = match height_strategy {
+                    Length::Fixed(h) => h,
+                    Length::Fill => width_limits.max().height,
+                    Length::FillPortion(_) => width_limits.max().height,
+                    Length::Shrink => header_height + computed_content_h + padding,
                 };
                 
                 state.current_height = resolved_height;
@@ -1327,7 +1388,7 @@ where
             | Event::Touch(touch::Event::FingerPressed { .. }) => { 
                 let cursor_over_overlay = cursor.is_over(bounds);
                 if cursor.is_over(self.button_bounds) && self.state.is_open {
-                    self.state.is_open = false;
+                    self.state.reset();
                     shell.invalidate_layout();
                     shell.request_redraw();
                     shell.capture_event();
@@ -1335,7 +1396,7 @@ where
                 }
 
                 if self.close_on_click_outside && !cursor_over_overlay && self.state.is_open {
-                    self.state.is_open = false;
+                    self.state.reset();
                     if let Some(on_close) = self.on_close {
                         shell.publish(on_close());
                     }
@@ -1378,7 +1439,7 @@ where
                         };
 
                         if cursor.is_over(close_bounds) {
-                            self.state.is_open = false;
+                            self.state.reset();
                             if let Some(on_close) = self.on_close {
                                 shell.publish(on_close());
                             }
@@ -1440,7 +1501,7 @@ where
                     
                     // Close if cursor over neither button nor overlay
                     if !self.state.cursor_over_button && !self.state.cursor_over_overlay && !has_open_descendant_overlays::<Renderer::Paragraph>(self.tree) {
-                        self.state.is_open = false;
+                        self.state.reset();
                         shell.invalidate_layout();
                         shell.request_redraw();
                     }
@@ -1529,7 +1590,7 @@ where
                 key: keyboard::Key::Named(keyboard::key::Named::Escape),
                 ..
             }) => {
-                self.state.is_open = false;
+                self.state.reset();
                 if let Some(on_close) = self.on_close {
                     shell.publish(on_close());
                 }
@@ -1759,13 +1820,36 @@ pub fn close<T>(id: widget::Id) -> impl Operation<T> {
                 type DefaultParagraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph;
                 
                 if let Some(state) = state.downcast_mut::<State<DefaultParagraph>>() {
-                    state.is_open = false;
+                    state.reset();
                 }
             }
         }
     }
     
     Close { id }
+}
+
+/// Strategy for sizing the overlay
+pub enum SizeStrategy<'a> {
+    /// A static (normal Iced) length (Fixed, Fill, Shrink, etc.)
+    Static(Length),
+    /// A dynamic calculation based on available space (viewport size)
+    /// Returns a Length, so you can still return Fixed(v * 0.8) or Shrink
+    Dynamic(Box<dyn Fn(f32) -> Length + 'a>),
+}
+
+// From length impl to allow passing a raw Length directly
+impl<'a> From<Length> for SizeStrategy<'a> {
+    fn from(length: Length) -> Self {
+        Self::Static(length)
+    }
+}
+
+// from f32 impl to allow passing a float directly as Fixed pixels
+impl<'a> From<f32> for SizeStrategy<'a> {
+    fn from(pixels: f32) -> Self {
+        Self::Static(Length::Fixed(pixels))
+    }
 }
 
 /// The theme catalog of a draggable overlay
