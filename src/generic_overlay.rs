@@ -44,6 +44,7 @@ where
 {
     OverlayButton::new(button_label, "", overlay_content)
         .hide_header()
+        .close_on_click_outside()
         .on_hover()
 }
 
@@ -58,6 +59,7 @@ where
 {
     OverlayButton::new(button_label, "", overlay_content)
         .hide_header()
+        .close_on_click_outside()
         .overlay_width(Length::Fixed(150.0))
         .overlay_padding(1.0)
         .overlay_radius(0.0)
@@ -78,6 +80,7 @@ where
 {
     OverlayButton::new(button_label, "", overlay_content)
         .hide_header()
+        .close_on_click_outside()
         .overlay_width(Length::Fixed(150.0))
         .overlay_padding(1.0)
         .overlay_radius(0.0)
@@ -375,19 +378,15 @@ where
     }
 
     /// Makes the overlay opaque, blocking interaction with content behind it
-    /// Automatically enables close_on_click_outside.
     #[must_use]
     pub fn opaque(mut self, opaque: bool) -> Self {
-        self.close_on_click_outside = true;
         self.opaque = opaque;
         self
     }
 
     /// If true, hides the header (no title bar or close button)
-    /// Automatically enables close_on_click_outside.
     #[must_use]
     pub fn hide_header(mut self) -> Self {
-        self.close_on_click_outside = true;
         self.hide_header = true;
         self
     }
