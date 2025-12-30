@@ -6,6 +6,7 @@ use iced::{
         text::Renderer as _,
         text,
         widget::{self, tree::Tree},
+        widget::operation::{self, Operation, Outcome},
         Clipboard, Layout, Overlay as _, Renderer as _, Shell, Widget,
     }, alignment::Vertical, border::Radius, event, keyboard, mouse, touch, widget::button, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow, Size, Theme, Vector, Background, Alignment
 };
@@ -93,6 +94,8 @@ where
     Theme: Catalog + button::Catalog,
     Renderer: text::Renderer,
 {
+    /// Widget Id for Operations
+    id: Option<widget::Id>,
     /// The button label
     button_content: Element<'a, Message, Theme, Renderer>,
     /// The overlay title
@@ -161,6 +164,7 @@ where
 
         Self {
             // Overlay Button
+            id: None,
             button_content,
             width: size.width.fluid(),
             height: size.height.fluid(),
@@ -195,6 +199,12 @@ where
             hide_header: false,
             resizable: ResizeMode::None,
         }
+    }
+
+    /// Sets the [`widget::Id`] of the [`Generic Overlay`].
+    pub fn id(mut self, id: impl Into<widget::Id>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     /// Sets the overlay width
@@ -920,6 +930,18 @@ where
             resizable: self.resizable,
         })))
     }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        _renderer: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
+        
+        operation.custom(self.id.as_ref(), layout.bounds(), state);
+    }
 }
 
 /// The default [`Padding`] of a [`Button`]. Using for Overlay Button to match iced::widget::button
@@ -1540,14 +1562,10 @@ where
         // Only forward events to content if not dragging and if cursor is in content area
         if !self.state.is_dragging && !self.state.is_resizing {
             let adjusted_cursor = if let Some(position) = cursor.position() {
-                if content_bounds.contains(position) {
-                    mouse::Cursor::Available(Point::new(
-                        position.x - content_bounds.x,
-                        position.y - content_bounds.y,
-                    ))
-                } else {
-                    mouse::Cursor::Unavailable
-                }
+                mouse::Cursor::Available(Point::new(
+                    position.x - content_bounds.x,
+                    position.y - content_bounds.y,
+                ))
             } else {
                 mouse::Cursor::Unavailable
             };
@@ -1699,6 +1717,17 @@ where
             Vector::new(content_bounds.x, content_bounds.y),
         )
     }
+
+    fn operate(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn widget::Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(self.tree, layout, renderer, operation);       
+    }
 }
 
 impl<'a, Message, Theme, Renderer> From<OverlayButton<'a, Message, Theme, Renderer>>
@@ -1711,6 +1740,37 @@ where
     fn from(button: OverlayButton<'a, Message, Theme, Renderer>) -> Self {
         Self::new(button)
     }
+}
+
+/// Closes an overlay button with the given Id
+pub fn close<T>(id: widget::Id) -> impl Operation<T> {
+    struct Close {
+        id: widget::Id,
+    }
+    
+    impl<T> Operation<T> for Close {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>)) {
+            // Continue traversing the tree
+            operate(self);
+        }
+        
+        fn custom(
+            &mut self,
+            widget_id: Option<&widget::Id>,
+            _bounds: Rectangle,
+            state: &mut dyn std::any::Any,
+        ) {
+            if widget_id == Some(&self.id) {
+                type DefaultParagraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph;
+                
+                if let Some(state) = state.downcast_mut::<State<DefaultParagraph>>() {
+                    state.is_open = false;
+                }
+            }
+        }
+    }
+    
+    Close { id }
 }
 
 /// The theme catalog of a draggable overlay

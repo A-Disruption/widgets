@@ -17,6 +17,7 @@ enum Message {
     UpdatePosition(Position),
     UpdateAlignment(AlignmentOption),
     UpdateGap(String),
+    CloseOverlay,
 }
 
 struct App {
@@ -67,6 +68,10 @@ impl App {
                     Err(_) => {}
                 }
             }
+            Message::CloseOverlay => {
+                return iced::advanced::widget::operate(widgets::generic_overlay::close::<Message>(
+                    iced::widget::Id::new("basic-overlay")));
+            }
         }
         Task::none()
     }
@@ -84,6 +89,9 @@ impl App {
                 .on_input(Message::TextInputChanged),
             button("Do Something")
                 .on_press(Message::ButtonPressed),
+            button("Close Overlay from internal content")
+                .on_press(Message::CloseOverlay)
+                .style(button::danger),
         ]
         .spacing(15)
         .padding(10)
@@ -197,7 +205,7 @@ impl App {
             text("Open Default Overlay"),
             "Default Generic Overlay Example",
             basic_overlay_content,
-        );
+        ).id(iced::widget::Id::new("basic-overlay"));
 
         // EXAMPLE 2: Opaque overlay that blocks interaction with content behind it
         let opaque_overlay = overlay_button(
