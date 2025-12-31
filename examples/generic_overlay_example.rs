@@ -70,8 +70,9 @@ impl App {
             }
             Message::CloseOverlay(id) => {
                 println!("Called on id: {:?}", id);
-                return iced::advanced::widget::operate(widgets::generic_overlay::close::<Message>(
-                    id));
+                return iced::advanced::widget::operate(
+                    widgets::generic_overlay::close::<Message>(id)
+                );
             }
         }
         Task::none()

@@ -4,31 +4,37 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14.0", features = [
-    "tokio",
-    "lazy",
-    "advanced",
-    "debug",
-    "canvas",
-] }
-uuid = { version = "1.6", features = ["v4", "serde"] }
+iced = { version = "0.14.0", features = ["tokio", "advanced"] }
+
+[features]
+default = []
+tree = []
+color_picker = []
+collapsible = []
+generic_overlay = []
+all = ["tree", "color_picker", "collapsible", "generic_overlay"]
 
 [[example]]
 name = "tree_example"
-path = "examples\\tree_example.rs"
+path = "examples/tree_example.rs"
+required-features = ["tree"]
 
 [[example]]
 name = "tree_in_collapsible"
-path = "examples\\tree_in_collapsible_example.rs"
+path = "examples/tree_in_collapsible_example.rs"
+required-features = ["tree", "collapsible"]
 
 [[example]]
 name = "color_picker_example"
-path = "examples\\color_picker_example.rs"
+path = "examples/color_picker_example.rs"
+required-features = ["color_picker"]
 
 [[example]]
 name = "collapsible_example"
-path = "examples\\collapsible_example.rs"
+path = "examples/collapsible_example.rs"
+required-features = ["collapsible"]
 
 [[example]]
 name = "generic_overlay_example"
-path = "examples\\generic_overlay_example.rs"
+path = "examples/generic_overlay_example.rs"
+required-features = ["generic_overlay"]
