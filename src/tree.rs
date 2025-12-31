@@ -406,11 +406,10 @@ where
     fn get_branch_info(&self, index: usize, state: &TreeState) -> (usize, Option<usize>, u16) {
         let branch = &self.branches[index];
         
-        if let Some(ref branch_order) = state.branch_order {
-            if let Some(bs) = branch_order.iter().find(|bs| bs.id == branch.id) {
+        if let Some(ref branch_order) = state.branch_order
+            && let Some(bs) = branch_order.iter().find(|bs| bs.id == branch.id) {
                 return (branch.id, bs.parent_id, bs.depth);
             }
-        }
         
         (branch.id, branch.parent_id, branch.depth)
     }
@@ -457,12 +456,11 @@ where
         }
         
         // Check if parent is expanded
-        if let Some(parent_id) = parent_id {
-            if let Some(parent_index) = self.branches.iter().position(|b| b.id == parent_id) {
+        if let Some(parent_id) = parent_id
+            && let Some(parent_index) = self.branches.iter().position(|b| b.id == parent_id) {
                 return self.is_branch_visible(parent_index, state) 
                     && state.expanded.contains(&parent_id);
             }
-        }
         
         false
     }
@@ -487,12 +485,10 @@ where
             DropPosition::After
         } else if can_drop_into {
             DropPosition::Into
+        } else if relative_y < branch_bounds.height / 2.0 {
+            DropPosition::Before
         } else {
-            if relative_y < branch_bounds.height / 2.0 {
-                DropPosition::Before
-            } else {
-                DropPosition::After
-            }
+            DropPosition::After
         }
     }
 
@@ -524,11 +520,10 @@ where
                     
                     // Check if this branch didn't have children before
                     if let Some((_, prev_has_children)) = previous_state.iter()
-                        .find(|(id, _)| *id == branch.id) {
-                        if !prev_has_children {
+                        .find(|(id, _)| *id == branch.id)
+                        && !prev_has_children {
                             newly_has_children.push(branch.id);
                         }
-                    }
                 }
             }
         } else {
@@ -544,11 +539,10 @@ where
                     
                     // Check if this branch didn't have children before
                     if let Some((_, prev_has_children)) = previous_state.iter()
-                        .find(|(id, _)| *id == branch.id) {
-                        if !prev_has_children {
+                        .find(|(id, _)| *id == branch.id)
+                        && !prev_has_children {
                             newly_has_children.push(branch.id);
                         }
-                    }
                 }
             }
         }
@@ -565,9 +559,9 @@ where
     /// returns the actual starting index of the branch layouts.
     fn get_child_content_index(&self) -> usize {
         match (&self.expand_icon, &self.collapse_icon) {
-            (Some(_), Some(_)) => return 2,
-            (Some(_), None) | (None, Some(_)) => return 1,
-            (None, None) => return 0,
+            (Some(_), Some(_)) => 2,
+            (Some(_), None) | (None, Some(_)) => 1,
+            (None, None) => 0,
         }
     }
 
@@ -596,7 +590,7 @@ where
         
         for branch in &self.branches {
             if branch.has_children {
-                expanded.insert(branch.id.clone());
+                expanded.insert(branch.id);
             }
         }
         
@@ -914,11 +908,10 @@ where
             y += combined_state.tree_state.branch_heights[i] + self.spacing;
 
             if let Some(ref drag) = combined_state.tree_state.drag_active {
-                if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::Into {
-                    if combined_state.tree_state.expanded.contains(&branch.id) {
+                if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::Into
+                    && combined_state.tree_state.expanded.contains(&branch.id) {
                         y += drop_indicator_space;
                     }
-                }
 
                 if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::After {
                     y += drop_indicator_space;
@@ -962,11 +955,10 @@ where
                 continue;
             }
             
-            if let Some(ref drag) = combined_state.tree_state.drag_active {
-                if drag.dragged_nodes.contains(&self.branches[i].id) {
+            if let Some(ref drag) = combined_state.tree_state.drag_active
+                && drag.dragged_nodes.contains(&self.branches[i].id) {
                     continue;
                 }
-            }
             
             let branch = &mut self.branch_content[i];
             let child_state = &mut tree.children[i + child_layout_index];
@@ -1009,11 +1001,10 @@ where
                         let branch = &self.branches[i];
                         let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
                         
-                        if let Some(ref drag) = combined_state.tree_state.drag_active {
-                            if drag.dragged_nodes.contains(&branch.id) {
+                        if let Some(ref drag) = combined_state.tree_state.drag_active
+                            && drag.dragged_nodes.contains(&branch.id) {
                                 continue;
                             }
-                        }
                         
                         let indent_x = bounds.x + self.padding_x + (effective_depth as f32 * self.indent);
                         let branch_height = combined_state.tree_state.branch_heights[i];
@@ -1281,40 +1272,36 @@ where
 
                     match key {
                         keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
-                            if let Some(current_pos) = visible_ordered.iter().position(|&id| id == focused) {
-                                if current_pos > 0 {
+                            if let Some(current_pos) = visible_ordered.iter().position(|&id| id == focused)
+                                && current_pos > 0 {
                                     combined_state.tree_state.focused = Some(visible_ordered[current_pos - 1]);
                                     shell.invalidate_widgets();
                                     shell.request_redraw();
                                 }
-                            }
                         }
                         keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
-                            if let Some(current_pos) = visible_ordered.iter().position(|&id| id == focused) {
-                                if current_pos < visible_ordered.len() - 1 {
+                            if let Some(current_pos) = visible_ordered.iter().position(|&id| id == focused)
+                                && current_pos < visible_ordered.len() - 1 {
                                     combined_state.tree_state.focused = Some(visible_ordered[current_pos + 1]);
                                     shell.invalidate_widgets();
                                     shell.request_redraw();
                                 }
-                            }
                         }
                         keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
-                            if let Some(branch) = self.branches.iter().find(|b| b.id == focused) {
-                                if branch.has_children && combined_state.tree_state.expanded.contains(&focused) {
+                            if let Some(branch) = self.branches.iter().find(|b| b.id == focused)
+                                && branch.has_children && combined_state.tree_state.expanded.contains(&focused) {
                                     combined_state.tree_state.expanded.remove(&focused);
                                     shell.invalidate_layout();
                                     shell.request_redraw();
                                 }
-                            }
                         }
                         keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
-                            if let Some(branch) = self.branches.iter().find(|b| b.id == focused) {
-                                if branch.has_children && !combined_state.tree_state.expanded.contains(&focused) {
+                            if let Some(branch) = self.branches.iter().find(|b| b.id == focused)
+                                && branch.has_children && !combined_state.tree_state.expanded.contains(&focused) {
                                     combined_state.tree_state.expanded.insert(focused);
                                     shell.invalidate_layout();
                                     shell.request_redraw();
                                 }
-                            }
                         }
                         keyboard::Key::Named(keyboard::key::Named::Space) => {
                             if modifiers.control() || modifiers.command() {
@@ -1455,8 +1442,8 @@ where
                 let branch_height = state.branch_heights[i];
                 let branch_y = y;
 
-                if let Some(ref drag) = state.drag_active {
-                    if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
+                if let Some(ref drag) = state.drag_active
+                    && drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
                         if state.expanded.contains(&id) {
                             pending_into_adjustment = true;
                         } else {
@@ -1495,7 +1482,6 @@ where
                             );
                         }
                     }
-                }
 
                 // Draw selection background
                 if state.selected.contains(&id) {
@@ -1515,8 +1501,8 @@ where
                 }
 
                 // Draw drop-into indicator border
-                if let Some(ref drag) = state.drag_active {
-                    if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
+                if let Some(ref drag) = state.drag_active
+                    && drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
                         renderer.fill_quad(
                             renderer::Quad {
                                 bounds: Rectangle {
@@ -1535,7 +1521,6 @@ where
                             tree_style.accept_drop_indicator_color.scale_alpha(0.1),
                         );
                     }
-                }
                 
                 // Draw hover/focus border
                 if state.focused == Some(id) || state.hovered == Some(id) {
@@ -1657,18 +1642,17 @@ where
                 
                 y += branch_height + self.spacing;
 
-                if let Some(ref drag) = state.drag_active {
-                    if drag.drop_target == Some(id) && 
+                if let Some(ref drag) = state.drag_active
+                    && drag.drop_target == Some(id) && 
                     drag.drop_position == DropPosition::Into && 
                     state.expanded.contains(&id) {
                         let child_preview_y = branch_y + branch_height + self.spacing;
                         let child_depth = effective_depth + 1;
                         draw_drop_preview(renderer, child_preview_y, child_depth, bounds.width);
                     }
-                }
 
-                if let Some(ref drag) = state.drag_active {
-                    if drag.drop_target == Some(id) && drag.drop_position == DropPosition::After {
+                if let Some(ref drag) = state.drag_active
+                    && drag.drop_target == Some(id) && drag.drop_position == DropPosition::After {
                         let is_last_visible_item = !ordered_indices.iter()
                             .skip_while(|&&j| j != i)
                             .skip(1)
@@ -1683,7 +1667,6 @@ where
                         draw_drop_preview(renderer, y, preview_depth, bounds.width);
                         y += LINE_HEIGHT + self.spacing;
                     }
-                }
 
                 // Draw selection rectangle if active
                 if let Some(ref selection_rect) = state.selection_rect {
@@ -2077,8 +2060,8 @@ where
                     self.reorder_branches(&dragged_nodes, target_id, &drop_position);
                     
                     // Use external IDs for the callback
-                    if let Some(ref on_drop) = self.tree_handle.on_drop {
-                        if let Some(target_ext) = target_external {
+                    if let Some(ref on_drop) = self.tree_handle.on_drop
+                        && let Some(target_ext) = target_external {
                             let drop_info = DropInfo {
                                 dragged_ids: dragged_external,
                                 target_id: Some(target_ext),
@@ -2086,7 +2069,6 @@ where
                             };
                             shell.publish(on_drop(drop_info));
                         }
-                    }
                 }
 
                 let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
@@ -2273,7 +2255,7 @@ where
         
         let target_state = state_map.get(&target_id)
             .cloned()
-            .unwrap_or_else(|| BranchState {
+            .unwrap_or(BranchState {
                 id: target_id,
                 parent_id: None,
                 depth: 0,

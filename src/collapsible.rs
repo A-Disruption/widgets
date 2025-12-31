@@ -15,12 +15,10 @@ use iced::advanced::overlay;
 use iced::advanced::renderer;
 use iced::advanced::Shell;
 use iced::advanced::text;
-use iced::advanced::text::Renderer as _;
 use iced::time::{Duration, Instant};
 use iced::advanced::widget;
 use iced::advanced::Widget;
 use iced::advanced::widget::tree::{self, Tree};
-use iced::advanced::Text;
 use iced::{
     Background, Color, Element, Event, Length, Padding,
     Pixels, Rectangle, Shadow, Size, Vector, Point, window
@@ -592,7 +590,7 @@ where
         ));
 
         // Always create action icon node (zero-sized if not present)
-        let positioned_action = if let Some((mut node, _)) = action_node_opt {
+        let positioned_action = if let Some((node, _)) = action_node_opt {
             let action_x = limits.max().width - self.padding.right - node.size().width;
             let action_size = node.size();
             let action_y = if action_size.height > title_size.height {
@@ -699,8 +697,8 @@ where
                     }
                 } else if self.on_action.is_none()  && cursor.is_over(action_bounds) {
                     let (_, _, action_index, _) = self.child_indices();
-                    if let Some(ref mut action_icon) = self.action_icon {
-                        if let Some(action_idx) = action_index {
+                    if let Some(ref mut action_icon) = self.action_icon
+                        && let Some(action_idx) = action_index {
                             return action_icon.as_widget_mut().update(
                                 &mut tree.children[action_idx],
                                 event,
@@ -711,8 +709,7 @@ where
                                 shell,
                                 viewport,
                             );
-                        }
-                    }                
+                        }                
                 } else if ((self.header_clickable && cursor.is_over(header_bounds)) 
                     || cursor.is_over(icon_bounds))
                     && !cursor.is_over(action_bounds) {
@@ -753,8 +750,8 @@ where
 
         // Forward events to content / children when expanded
         let (_, _, _, content_index) = self.child_indices();
-        if state.progress > 0.0 {
-            if let Some(content_layout) = content_layout {
+        if state.progress > 0.0
+            && let Some(content_layout) = content_layout {
                 self.content.as_widget_mut().update(
                     &mut tree.children[content_index],
                     event,
@@ -766,7 +763,6 @@ where
                     viewport,
                 );
             }
-        }
     }
 
     fn draw(
@@ -974,8 +970,8 @@ where
         }
 
         // Draw content
-        if state.progress > 0.0 {
-            if let Some(content_layout) = content_layout_opt {
+        if state.progress > 0.0
+            && let Some(content_layout) = content_layout_opt {
                 let full_content_height = content_layout.bounds().height;
                 let animated_height = full_content_height * state.progress;
                 
@@ -1009,7 +1005,6 @@ where
                     );
                 });
             }
-        }
     }
 
     fn mouse_interaction(
@@ -1122,9 +1117,9 @@ where
         let (left_tree, right_tree) = tree.children.split_at_mut(content_index);
         
         // Check action_icon for overlay first (if present)
-        if let Some(ref mut action_icon) = self.action_icon {
-            if let Some(action_idx) = action_index {
-                if let Some(overlay) = action_icon.as_widget_mut().overlay(
+        if let Some(ref mut action_icon) = self.action_icon
+            && let Some(action_idx) = action_index
+                && let Some(overlay) = action_icon.as_widget_mut().overlay(
                     &mut left_tree[action_idx],
                     action_layout,
                     renderer,
@@ -1133,12 +1128,10 @@ where
                 ) {
                     return Some(overlay);
                 }
-            }
-        }
 
         // Return child overlays if expanded
-        if state.progress > 0.0 {
-            if let Some(content_layout) = content_layout {
+        if state.progress > 0.0
+            && let Some(content_layout) = content_layout {
                 return self.content.as_widget_mut().overlay(
                     &mut right_tree[0],
                     content_layout,
@@ -1147,7 +1140,6 @@ where
                     translation,
                 );
             }
-        }
 
         None
     }
@@ -1208,17 +1200,11 @@ where
 
 /// State for the collapsible group - tracks which item is expanded.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 struct GroupState {
     expanded_index: Option<usize>,
 }
 
-impl Default for GroupState {
-    fn default() -> Self {
-        Self {
-            expanded_index: None,
-        }
-    }
-}
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for CollapsibleGroup<'a, Message, Theme, Renderer>
@@ -1325,8 +1311,8 @@ where
                 let child_header_height = child_combined.animation.header_height;
                 
                 // Check if click is in this child's header area
-                if cursor.is_over(child_bounds) {
-                    if let Some(pos) = cursor.position() {
+                if cursor.is_over(child_bounds)
+                    && let Some(pos) = cursor.position() {
                         let relative_y = pos.y - child_bounds.y;
                         
                         // Check if in header area
@@ -1356,7 +1342,6 @@ where
                             }
                         }
                     }
-                }
             }
 
             // Forward all events to children
@@ -1500,6 +1485,7 @@ pub enum Status {
 
 /// The appearance of a [`Collapsible`].
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub struct Style {
     pub title_text_color: Option<Color>,
     pub header_background: Option<Background>,
@@ -1510,19 +1496,6 @@ pub struct Style {
     pub header_shadow: Shadow,
 }
 
-impl Default for Style {
-    fn default() -> Self {
-        Self {
-            title_text_color: None,
-            header_background: None,
-            content_text_color: None,
-            content_background: None,
-            border: Border::default(),
-            shadow: Shadow::default(),
-            header_shadow: Shadow::default(),
-        }
-    }
-}
 
 /// The theme catalog of a [`Collapsible`].
 pub trait Catalog {

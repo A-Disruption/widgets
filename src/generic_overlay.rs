@@ -1,14 +1,14 @@
 use iced::{
     advanced::{
-        layout::{self, padded, Limits, Node},
+        layout::{self, Limits, Node},
         overlay,
         renderer,
         text::Renderer as _,
         text,
         widget::{self, tree::Tree},
-        widget::operation::{self, Operation, Outcome},
+        widget::operation::Operation,
         Clipboard, Layout, Overlay as _, Renderer as _, Shell, Widget,
-    }, alignment::Vertical, border::Radius, event, keyboard, mouse, touch, widget::button, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow, Size, Theme, Vector, Background, Alignment
+    }, alignment::Vertical, border::Radius, keyboard, mouse, touch, widget::button, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow, Size, Vector, Background, Alignment
 };
 
 
@@ -434,19 +434,12 @@ impl std::fmt::Display for Position {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct Hover {
     pub enabled: bool,
     pub config: HoverConfig,
 }
 
-impl Default for Hover {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            config: HoverConfig::default(),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct HoverConfig {
@@ -783,11 +776,10 @@ where
                     
                     state.is_open = should_open;
                     
-                    if should_open {
-                        if let Some(on_open) = &self.on_open {
+                    if should_open
+                        && let Some(on_open) = &self.on_open {
                             shell.publish(on_open(state.position, Size::new(state.current_width, state.current_height)));
                         }
-                    }
                     
                     self.is_pressed = true;
                     shell.capture_event();
@@ -1189,7 +1181,7 @@ where
         cursor: mouse::Cursor,
     ) {
         let bounds = layout.bounds();
-        let draw_style = <Theme as Catalog>::style(&theme, &self.class);
+        let draw_style = <Theme as Catalog>::style(theme, &self.class);
 
         // Use layer rendering for proper overlay isolation
         renderer.with_layer(self.state.window_bounds, |renderer| {
@@ -1657,14 +1649,13 @@ where
             };
 
             // Show resize cursors if resizable
-            if can_resize {
-                if let Some(position) = cursor.position() {
+            if can_resize
+                && let Some(position) = cursor.position() {
                     let resize_edge = ResizeEdge::from_position(position, bounds);
                     if resize_edge != ResizeEdge::None {
                         return resize_edge.cursor_icon();
                     }
                 }
-            }
 
             // Show pointer when over close button (if header is visible)
             if !self.hide_header {

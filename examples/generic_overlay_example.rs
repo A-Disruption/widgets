@@ -2,7 +2,7 @@
 // This shows all the new features added to generic_overlay.rs
 
 use iced::{
-    Alignment, Element, Length, Task, Theme, widget::{button, checkbox, column, container, pick_list, row, scrollable, space, text, text_editor, text_input}
+    Alignment, Element, Length, Task, Theme, widget::{button, checkbox, column, container, pick_list, row, text, text_editor, text_input}
 };
 
 use widgets::generic_overlay::{overlay_button, ResizeMode, interactive_tooltip, Position, dropdown_menu, dropdown_root, PositionMode, OverlayButton};
@@ -63,10 +63,7 @@ impl App {
             Message::UpdatePosition(position) => self.hover_position = Some(position),
             Message::UpdateGap(gap_text) => {
                 self.gap_text = gap_text;
-                match self.gap_text.as_str().trim().parse::<f32>() {
-                    Ok(gap) => self.hover_gap = gap,
-                    Err(_) => {}
-                }
+                if let Ok(gap) = self.gap_text.as_str().trim().parse::<f32>() { self.hover_gap = gap }
             }
             Message::CloseOverlay(id) => {
                 println!("Called on id: {:?}", id);
@@ -235,7 +232,7 @@ impl App {
         )
         .opaque(true)
         .close_on_click_outside()
-        .on_open(|overlay_position, overlay_size| Message::OverlayOpened(overlay_position, overlay_size))
+        .on_open(Message::OverlayOpened)
         .on_close(|| Message::OverlayClosed);
 
         // EXAMPLE 3: Click-outside-to-close overlay
@@ -283,7 +280,7 @@ impl App {
         )
         .hide_header()
         .on_hover()
-        .hover_position(self.hover_position.unwrap_or(Position::Right).into())
+        .hover_position(self.hover_position.unwrap_or(Position::Right))
         .hover_gap(self.hover_gap)
         .hover_alignment(self.hover_alignment.unwrap_or(AlignmentOption::Center).into())
         .on_close(|| Message::OverlayClosed);
@@ -333,7 +330,7 @@ impl App {
                 .hover_gap(self.hover_gap)
                 .overlay_height(Length::Shrink)
                 .overlay_width(Length::Shrink)
-                .hover_position(self.hover_position.unwrap_or(Position::Right).into())
+                .hover_position(self.hover_position.unwrap_or(Position::Right))
                 .hover_mode(PositionMode::Inside)
                 .hover_alignment(self.hover_alignment.unwrap_or(AlignmentOption::Start).into()),
         );
@@ -374,7 +371,7 @@ impl App {
                                 pick_list(
                                     Position::ALL,
                                     self.hover_position,
-                                    |position| Message::UpdatePosition(position)
+                                    Message::UpdatePosition
                                 ).width(100),
                             ].spacing(5),
                             column![
@@ -382,7 +379,7 @@ impl App {
                                 pick_list(
                                     AlignmentOption::ALL,
                                     self.hover_alignment,
-                                    |alignment| Message::UpdateAlignment(alignment)
+                                    Message::UpdateAlignment
                                 ).width(100),
                             ].spacing(5),
                         ].spacing(10),

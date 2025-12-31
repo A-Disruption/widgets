@@ -1,6 +1,6 @@
 use iced::widget::{button, column, container, space, row, scrollable, text};
 use iced::{Alignment, Element, Task, Theme};
-use widgets::collapsible::{self, collapsible};
+use widgets::collapsible::collapsible;
 use widgets::collapsible_group;
 use widgets::tree::{branch, tree_handle, DropInfo, DropPosition};
 use std::collections::HashSet;

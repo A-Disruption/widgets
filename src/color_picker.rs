@@ -327,12 +327,11 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
         if widget_state.is_open {
 
             unsafe {   // Doesn't seem like a good idea?
-                if let Some(active) = ACTIVE_COLOR_PICKER {
-                    if active != &mut widget_state.is_open as *mut bool {
+                if let Some(active) = ACTIVE_COLOR_PICKER
+                    && !std::ptr::eq(active, &mut widget_state.is_open) {
                         // Close the other picker
                         *active = false;
                     }
-                }
                 
                 widget_state.is_open = true;
                 ACTIVE_COLOR_PICKER = Some(&mut widget_state.is_open as *mut bool);
@@ -364,7 +363,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
                     color,
                     on_change,
                     on_change_with_source,
-                    position: position,
+                    position,
                     title: widget_state.title.clone(),
                     viewport_size: widget_state.window_size.unwrap_or(viewport.size()),
                 }
@@ -608,8 +607,8 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
     fn layout(&mut self, _renderer: &Renderer, _bounds: Size) -> Node {
         let size = Size::new(320.0, 440.0);
         let node = Node::new(size);
-        let node = node.move_to(*self.position);
-        node
+        
+        node.move_to(*self.position)
     }
 
     fn draw(
@@ -892,11 +891,10 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
         let content_bounds = content_rect(bounds);
 
         // Clear "Copied" flag
-        if let Some(t) = self.overlay_state.copied_at {
-            if t.elapsed() > Duration::from_millis(1200) {
+        if let Some(t) = self.overlay_state.copied_at
+            && t.elapsed() > Duration::from_millis(1200) {
                 self.overlay_state.copied_at = None;
             }
-        }
 
         // Palette tab specific clicks
         let palette_bounds = Rectangle {
@@ -909,11 +907,11 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
 
-                if cursor.is_over(header_bounds) && !cursor.is_over(close_bounds) && !self.overlay_state.is_dragging {
-                    if !self.overlay_state.spectrum_dragging && 
+                if cursor.is_over(header_bounds) && !cursor.is_over(close_bounds) && !self.overlay_state.is_dragging
+                    && !self.overlay_state.spectrum_dragging && 
                         !self.overlay_state.hue_dragging && 
-                        self.overlay_state.dragging_slider.is_none() {
-                            if let Some(position) = cursor.position() {
+                        self.overlay_state.dragging_slider.is_none()
+                            && let Some(position) = cursor.position() {
                                 self.overlay_state.is_dragging = true;
                                 self.overlay_state.drag_offset = Vector::new(
                                     position.x - bounds.x,
@@ -921,8 +919,6 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                                 );
                                 return;
                             }
-                        }
-                }
 
                 if cursor.is_over(close_bounds) {
                     *self.is_open = false;
@@ -1604,7 +1600,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         // theme change guard
         let needs_update = {
             let cache = self.overlay_state.palette_cache.borrow();
-            if let Some(first) = cache.get(0) {
+            if let Some(first) = cache.first() {
                 first.tones[0].1.color != theme.extended_palette().background.base.color
             } else {
                 false
@@ -1692,7 +1688,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
 
         // Color sections (Primary, Secondary, Success, Warning, Danger)
         let names = ["Primary", "Secondary", "Success", "Warning", "Danger"];
-        for (_, name) in names.iter().enumerate() {
+        for name in names.iter() {
     
             // Title
             draw_title(renderer, y, name);
@@ -1895,7 +1891,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             let y = bounds.y + i as f32 * spacing;
             let track_bounds = Rectangle {
                 x: bounds.x + label_width,
-                y: y,
+                y,
                 width: slider_width,
                 height: slider_height,
             };
@@ -1937,7 +1933,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             let y = bounds.y + slider_index as f32 * spacing;
             let track_bounds = Rectangle {
                 x: bounds.x + label_width,
-                y: y,
+                y,
                 width: slider_width,
                 height: slider_height,
             };
@@ -2045,7 +2041,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
 
                 // Color sections
                 let names = ["Primary", "Secondary", "Success", "Warning", "Danger"];
-                for (_, name) in names.iter().enumerate() {
+                for name in names.iter() {
 
                     
                     // Title row

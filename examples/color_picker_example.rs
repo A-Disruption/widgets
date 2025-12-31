@@ -89,9 +89,7 @@ impl CustomPalette {
     }
 
     pub fn theme_to_rust_code(&self) -> String {
-        format!(
-            "\nlet custom_theme = iced::Theme::custom( \"Custom\".to_string() , custom_palette );"
-        )
+        "\nlet custom_theme = iced::Theme::custom( \"Custom\".to_string() , custom_palette );".to_string()
     }
 
     pub fn copy_complete_code_to_clipboard(&self) -> Task<Message> {
@@ -603,7 +601,7 @@ fn create_background_color(color_str: &str) -> button::Style {
 
     button::Style {
         background: Some(background),
-        border: border,
+        border,
         text_color: Color::TRANSPARENT,
         ..Default::default()
     }
@@ -618,13 +616,13 @@ fn button_background_color(color: Color) -> button::Style {
     };
 
     let text = theme::palette::Pair{
-        color: color,
+        color,
         text: Color::BLACK
     };
 
     button::Style {
         background: Some(background),
-        border: border,
+        border,
         text_color: text.text,
         ..Default::default()
     }
