@@ -5,7 +5,7 @@ use iced::{
     Alignment, Element, Length, Task, Theme, widget::{button, checkbox, column, container, pick_list, row, scrollable, space, text, text_editor, text_input}
 };
 
-use widgets::generic_overlay::{overlay_button, ResizeMode, interactive_tooltip, Position, dropdown_menu, dropdown_root, PositionMode};
+use widgets::generic_overlay::{overlay_button, ResizeMode, interactive_tooltip, Position, dropdown_menu, dropdown_root, PositionMode, OverlayButton};
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -69,6 +69,7 @@ impl App {
                 }
             }
             Message::CloseOverlay(id) => {
+                println!("Called on id: {:?}", id);
                 return iced::advanced::widget::operate(widgets::generic_overlay::close::<Message>(
                     id));
             }
@@ -90,7 +91,7 @@ impl App {
             button("Do Something")
                 .on_press(Message::ButtonPressed),
             button("Close Overlay from internal content")
-                .on_press(Message::CloseOverlay("basic_overlay".into()))
+                .on_press(Message::CloseOverlay("basic-overlay".into()))
                 .style(button::danger),
         ]
         .spacing(15)
@@ -209,6 +210,15 @@ impl App {
         .padding(10)
         .into();
 
+        let custom_helper_overlay_content: Element<Message> = column![
+            button("Close Overlay from internal content")
+                .on_press(Message::CloseOverlay("custom_helper_overlay".into()))
+                .style(button::danger),
+        ]
+        .spacing(15)
+        .padding(10)
+        .into();
+
         // EXAMPLE 1: Basic overlay with header (matching color_picker header size)
         let basic_overlay = overlay_button(
             text("Open Default Overlay"),
@@ -223,6 +233,7 @@ impl App {
             opaque_overlay_content,
         )
         .opaque(true)
+        .close_on_click_outside()
         .on_open(|overlay_position, overlay_size| Message::OverlayOpened(overlay_position, overlay_size))
         .on_close(|| Message::OverlayClosed);
 
@@ -242,6 +253,7 @@ impl App {
             headless_overlay_content,
         )
         .hide_header()
+        .close_on_click_outside()
         .on_close(|| Message::OverlayClosed);
 
         // EXAMPLE 5: Always Resizeable overlay
@@ -307,7 +319,6 @@ impl App {
         ].width(Length::Fill)).style(container::secondary);
 
         let on_hover_internal = container(
-            
                 overlay_button(
                         text_editor(&self.editor_content).width(500.0).height(400.0),
                     "Hidden",
@@ -324,7 +335,6 @@ impl App {
                 .hover_position(self.hover_position.unwrap_or(Position::Right).into())
                 .hover_mode(PositionMode::Inside)
                 .hover_alignment(self.hover_alignment.unwrap_or(AlignmentOption::Start).into()),
-            
         );
 
         // EXAMPLE 10: Dynamically sized based on parent viewport
@@ -337,6 +347,12 @@ impl App {
         .overlay_height_dynamic(|window_height| Length::Fixed(window_height * 0.8))
         .reset_on_close()
         .id("dynamic_overlay");
+
+        // EXAMPLE 11: Using a custom helper for making generic overlay easier to use in your application.
+        let custom_overlay = my_custom_headerless_overlay(
+            "custom helper", 
+            custom_helper_overlay_content
+        ).id("custom_helper_overlay"); 
 
         column![
             nav_menu,
@@ -373,8 +389,9 @@ impl App {
                     ].spacing(10)
                 ).center_x(Length::Fill),
                 interactive_tooltip1,
-//                on_hover_internal,
                 dynamic_size,
+                custom_overlay,
+                on_hover_internal,
             ]
             .spacing(20)
             .padding(40)
@@ -434,4 +451,27 @@ impl From<Alignment> for AlignmentOption {
             Alignment::End => Self::End,
         }
     }
+}
+
+
+/// Creating your own helper function for overlays.
+pub fn my_custom_headerless_overlay<'a, Message, Theme, Renderer>(
+    button_label: impl Into<Element<'a, Message, Theme, Renderer>>,
+    overlay_content: impl Into<Element<'a, Message, Theme, Renderer>>,
+) -> OverlayButton<'a, Message, Theme, Renderer> 
+where 
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
+    Theme: widgets::generic_overlay::Catalog + button::Catalog,
+{
+    OverlayButton::new(button_label, "", overlay_content)
+        .hide_header()
+        .close_on_click_outside()
+        .hover_positions_on_click()
+        .reset_on_close()
+        .opaque(true)
+        .hover_gap(10.0)
+        .overlay_height_dynamic(|h| iced::Length::Fixed(h * 0.6))
+        .overlay_width_dynamic(|w| iced::Length::Fixed(w * 0.75))
+        .overlay_padding(7.5)
+        .overlay_radius(5.0)
 }

@@ -1481,6 +1481,7 @@ where
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let cursor_over_overlay = cursor.is_over(bounds);
                 self.state.is_dragging = false;
                 self.state.is_resizing = false;
                 self.state.resize_edge = ResizeEdge::None;
@@ -1488,7 +1489,7 @@ where
                 shell.request_redraw();
                 
                 // If opaque, consume the event
-                if self.opaque {
+                if self.opaque && !cursor_over_overlay {
                     return;
                 }
             }
