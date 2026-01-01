@@ -2,10 +2,10 @@
 // This shows all the new features added to generic_overlay.rs
 
 use iced::{
-    Alignment, Element, Length, Task, Theme, widget::{button, checkbox, column, container, pick_list, row, text, text_editor, text_input}
+    Alignment, Element, Length, Task, Theme, widget::{button, checkbox, column, container, pick_list, row, text, text_editor, text_input, space}
 };
 
-use widgets::generic_overlay::{overlay_button, ResizeMode, interactive_tooltip, Position, dropdown_menu, dropdown_root, PositionMode, OverlayButton};
+use widgets::generic_overlay::{self, overlay_button, ResizeMode, interactive_tooltip, Position, dropdown_menu, dropdown_root, PositionMode, OverlayButton};
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -18,6 +18,7 @@ enum Message {
     UpdateAlignment(AlignmentOption),
     UpdateGap(String),
     CloseOverlay(iced::advanced::widget::Id),
+    ToggleOverlay(bool),
 }
 
 struct App {
@@ -27,7 +28,8 @@ struct App {
     hover_alignment: Option<AlignmentOption>,
     hover_gap: f32,
     gap_text: String,
-    editor_content: text_editor::Content
+    editor_content: text_editor::Content,
+    overlay_status: bool,
 }
 
 impl Default for App {
@@ -40,6 +42,7 @@ impl Default for App {
             hover_gap: 5.0,
             gap_text: "5.0".to_string(),
             editor_content: text_editor::Content::new(),
+            overlay_status: true,
         }
     }
 }
@@ -70,6 +73,9 @@ impl App {
                 return iced::advanced::widget::operate(
                     widgets::generic_overlay::close::<Message>(id)
                 );
+            }
+            Message::ToggleOverlay(toggle) => {
+                self.overlay_status = toggle
             }
         }
         Task::none()
@@ -350,7 +356,19 @@ impl App {
         let custom_overlay = my_custom_headerless_overlay(
             "custom helper", 
             custom_helper_overlay_content
-        ).id("custom_helper_overlay"); 
+        ).id("custom_helper_overlay");
+
+        // Example 12: Controlling open state via app state
+        let app_state_controlled = overlay_button(
+            Option::<Element<'_, _>>::None,
+            "Warning!",
+            column![text("Do the thing!"), button("close").on_press(Message::ToggleOverlay(!self.overlay_status))].spacing(10.0)
+        )
+        .style(button::text)
+        .hide_close_button() // remove the X in the header, keep the header
+        .is_open(self.overlay_status)  // bool held in state
+        .on_toggle(Message::ToggleOverlay) // change app state with internal open/close calls
+        .overlay_style(generic_overlay::danger);
 
         column![
             nav_menu,
@@ -389,6 +407,8 @@ impl App {
                 interactive_tooltip1,
                 dynamic_size,
                 custom_overlay,
+                app_state_controlled,
+                button("Some External Toggle for an overlay").on_press(Message::ToggleOverlay(!self.overlay_status)),
                 on_hover_internal,
             ]
             .spacing(20)

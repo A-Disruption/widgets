@@ -129,6 +129,8 @@ where
     on_open: Option<Box<dyn Fn(Point, Size) -> Message + 'a>>,
     /// Callback when the overlay is closed
     on_close: Option<Box<dyn Fn() -> Message + 'a>>,
+    /// Callback when the overlay is opened/closed
+    on_toggle: Option<Box<dyn Fn(bool) -> Message + 'a>>,
     /// Hover Config
     hover: Hover,
     /// Use Hover layout with click to open.
@@ -147,10 +149,14 @@ where
     close_on_click_outside: bool,
     /// If true, hides the header completely (no title bar or close button)
     hide_header: bool,
+    /// If true, removes the X button from header
+    hide_close_button: bool,
     /// Resize mode for the overlay
     resizable: ResizeMode,
     /// reset size and position on overlay closure
     reset_on_close: bool,
+    /// Externally controlled open state
+    external_is_open: Option<bool>,
 }
 
 impl<'a, Message, Theme, Renderer> OverlayButton<'a, Message, Theme, Renderer> 
@@ -193,7 +199,8 @@ where
 
             // Callbacks
             on_open: None,
-            on_close: None,            
+            on_close: None,
+            on_toggle: None,            
             
             // Overlay behavior options
             hover: Hover::default(),
@@ -202,14 +209,25 @@ where
             opaque: false,
             close_on_click_outside: false,
             hide_header: false,
+            hide_close_button: false,
             resizable: ResizeMode::None,
             reset_on_close: false,
+            external_is_open: None,
         }
     }
 
     /// Sets the [`widget::Id`] of the [`Generic Overlay`].
     pub fn id(mut self, id: impl Into<widget::Id>) -> Self {
         self.id = Some(id.into());
+        self
+    }
+
+    /// Manually control whether the overlay is open or closed.
+    /// 
+    /// If this is set, the widget will sync its internal state to this value.
+    /// You should use this in conjunction with `on_toggle` to update your application state with existing internal open/close messages.
+    pub fn is_open(mut self, is_open: bool) -> Self {
+        self.external_is_open = Some(is_open);
         self
     }
 
@@ -282,6 +300,12 @@ where
     /// Sets a callback for when the overlay is closed
     pub fn on_close(mut self, callback: impl Fn() -> Message + 'a) -> Self {
         self.on_close = Some(Box::new(callback));
+        self
+    }
+
+    /// Sets a callback for when the overlay is opened/closed
+    pub fn on_toggle(mut self, toggled: impl Fn(bool) -> Message + 'a) -> Self {
+        self.on_toggle = Some(Box::new(toggled));
         self
     }
 
@@ -388,6 +412,13 @@ where
     #[must_use]
     pub fn hide_header(mut self) -> Self {
         self.hide_header = true;
+        self
+    }
+
+    /// If true, hides the close button in header
+    #[must_use]
+    pub fn hide_close_button(mut self) -> Self {
+        self.hide_close_button = true;
         self
     }
 
@@ -645,6 +676,18 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
+        // Sync external is_open state with internal state
+        if let Some(external_open) = self.external_is_open {
+            let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
+            if state.is_open != external_open {
+                if !external_open {
+                    state.reset();
+                } else {
+                    state.is_open = true;
+                }
+            }
+        }
+
         tree.diff_children(&[&self.content, &self.button_content]);
     }
 
@@ -776,10 +819,14 @@ where
                     
                     state.is_open = should_open;
                     
-                    if should_open
-                        && let Some(on_open) = &self.on_open {
+                    if should_open {
+                        if let Some(on_open) = &self.on_open {
                             shell.publish(on_open(state.position, Size::new(state.current_width, state.current_height)));
                         }
+                        if let Some(on_toggle) = &self.on_toggle {
+                            shell.publish(on_toggle(true))
+                        }
+                    }
                     
                     self.is_pressed = true;
                     shell.capture_event();
@@ -804,6 +851,9 @@ where
                 state.is_open = true;
                 if let Some(on_open) = &self.on_open {
                     shell.publish(on_open(state.position, Size::new(state.current_width, state.current_height)));
+                }
+                if let Some(on_toggle) = &self.on_toggle {
+                    shell.publish(on_toggle(true))
                 }
                 shell.invalidate_layout();
                 shell.request_redraw();
@@ -963,7 +1013,7 @@ where
         Some(overlay::Element::new(Box::new(Overlay {
             state,
             title: &self.title,
-            class: <Theme as Catalog>::default(),
+            class: &self.class,
             content: &mut self.content,
             radius: self.overlay_radius,
             tree: content_tree,
@@ -971,6 +1021,7 @@ where
             height: total_h,
             padding: self.overlay_padding,
             on_close: self.on_close.as_deref(),
+            on_toggle: self.on_toggle.as_deref(),
             button_bounds,
             button_padding: self.padding,
             hover: &self.hover,
@@ -979,6 +1030,7 @@ where
             opaque: self.opaque,
             close_on_click_outside: self.close_on_click_outside,
             hide_header: self.hide_header,
+            hide_close_button: self.hide_close_button,
             resizable: self.resizable,
         })))
     }
@@ -1010,7 +1062,7 @@ where
     Theme: Catalog,
 {
     state: &'a mut State<Renderer::Paragraph>,
-    class: Theme::Class<'a>,
+    class: &'a Theme::Class<'b>,
     title: &'a str,
     content: &'a mut Element<'b, Message, Theme, Renderer>,
     tree: &'a mut Tree,
@@ -1019,6 +1071,7 @@ where
     padding: f32,
     radius: f32,
     on_close: Option<&'a dyn Fn() -> Message>,
+    on_toggle: Option<&'a dyn Fn(bool) -> Message>,
     button_bounds: Rectangle,
     button_padding: Padding,
     hover: &'a Hover,
@@ -1027,6 +1080,7 @@ where
     opaque: bool,
     close_on_click_outside: bool,
     hide_header: bool,
+    hide_close_button: bool,
     resizable: ResizeMode,
 }
 
@@ -1181,7 +1235,7 @@ where
         cursor: mouse::Cursor,
     ) {
         let bounds = layout.bounds();
-        let draw_style = <Theme as Catalog>::style(theme, &self.class);
+        let draw_style = <Theme as Catalog>::style(theme, self.class);
 
         // Use layer rendering for proper overlay isolation
         renderer.with_layer(self.state.window_bounds, |renderer| {
@@ -1260,45 +1314,47 @@ where
                     header_bounds,
                 );
 
-                // Draw close button - centered vertically in header
-                let close_bounds = Rectangle {
-                    x: bounds.x + bounds.width - CLOSE_BUTTON_SIZE - CLOSE_BUTTON_OFFSET * 2.0,
-                    y: bounds.y + (HEADER_HEIGHT - CLOSE_BUTTON_SIZE) / 2.0,
-                    width: CLOSE_BUTTON_SIZE,
-                    height: CLOSE_BUTTON_SIZE,
-                };
+                if !self.hide_close_button {
+                    // Draw close button - centered vertically in header
+                    let close_bounds = Rectangle {
+                        x: bounds.x + bounds.width - CLOSE_BUTTON_SIZE - CLOSE_BUTTON_OFFSET * 2.0,
+                        y: bounds.y + (HEADER_HEIGHT - CLOSE_BUTTON_SIZE) / 2.0,
+                        width: CLOSE_BUTTON_SIZE,
+                        height: CLOSE_BUTTON_SIZE,
+                    };
 
-                if cursor.is_over(close_bounds) {
-                    renderer.fill_quad(
-                        renderer::Quad {
-                            bounds: close_bounds,
-                            border: Border {
-                                radius: (CLOSE_BUTTON_SIZE / 2.0).into(),
-                                ..Default::default()
+                    if cursor.is_over(close_bounds) {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: close_bounds,
+                                border: Border {
+                                    radius: (CLOSE_BUTTON_SIZE / 2.0).into(),
+                                    ..Default::default()
+                                },
+                                shadow: Shadow::default(),
+                                snap: true,
                             },
-                            shadow: Shadow::default(),
-                            snap: true,
+                            Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                        );
+                    }
+
+                    renderer.fill_text(
+                        iced::advanced::Text {
+                            content: "×".to_string(),
+                            bounds: Size::new(close_bounds.width, close_bounds.height),
+                            size: iced::Pixels(24.0),
+                            font: iced::Font::default(),
+                            align_x: iced::advanced::text::Alignment::Center,
+                            align_y: Vertical::Center,
+                            line_height: iced::advanced::text::LineHeight::default(),
+                            shaping: iced::advanced::text::Shaping::Basic,
+                            wrapping: iced::advanced::text::Wrapping::default(),
                         },
-                        Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                        Point::new(close_bounds.center_x(), close_bounds.center_y()),
+                        draw_style.text_color,
+                        close_bounds,
                     );
                 }
-
-                renderer.fill_text(
-                    iced::advanced::Text {
-                        content: "×".to_string(),
-                        bounds: Size::new(close_bounds.width, close_bounds.height),
-                        size: iced::Pixels(24.0),
-                        font: iced::Font::default(),
-                        align_x: iced::advanced::text::Alignment::Center,
-                        align_y: Vertical::Center,
-                        line_height: iced::advanced::text::LineHeight::default(),
-                        shaping: iced::advanced::text::Shaping::Basic,
-                        wrapping: iced::advanced::text::Wrapping::default(),
-                    },
-                    Point::new(close_bounds.center_x(), close_bounds.center_y()),
-                    draw_style.text_color,
-                    close_bounds,
-                );
             }
 
             // Draw content
@@ -1325,7 +1381,9 @@ where
                         self.tree,
                         renderer,
                         theme,
-                        style,
+                        &renderer::Style {
+                            text_color: draw_style.text_color,
+                        },
                         Layout::new(&self.content_layout),
                         adjusted_cursor,
                         &Rectangle::new(Point::ORIGIN, content_bounds.size()),
@@ -1391,6 +1449,9 @@ where
                     if let Some(on_close) = self.on_close {
                         shell.publish(on_close());
                     }
+                    if let Some(on_toggle) = &self.on_toggle {
+                        shell.publish(on_toggle(false))
+                    }
                     shell.invalidate_layout();
                     shell.request_redraw();
                     return;
@@ -1422,21 +1483,26 @@ where
 
                     // Handle close button
                     if !self.hide_header {
-                        let close_bounds = Rectangle {
-                            x: bounds.x + bounds.width - CLOSE_BUTTON_SIZE - CLOSE_BUTTON_OFFSET * 2.0,
-                            y: bounds.y + (HEADER_HEIGHT - CLOSE_BUTTON_SIZE) / 2.0,
-                            width: CLOSE_BUTTON_SIZE,
-                            height: CLOSE_BUTTON_SIZE,
-                        };
+                        if !self.hide_close_button {
+                            let close_bounds = Rectangle {
+                                x: bounds.x + bounds.width - CLOSE_BUTTON_SIZE - CLOSE_BUTTON_OFFSET * 2.0,
+                                y: bounds.y + (HEADER_HEIGHT - CLOSE_BUTTON_SIZE) / 2.0,
+                                width: CLOSE_BUTTON_SIZE,
+                                height: CLOSE_BUTTON_SIZE,
+                            };
 
-                        if cursor.is_over(close_bounds) {
-                            self.state.reset();
-                            if let Some(on_close) = self.on_close {
-                                shell.publish(on_close());
+                            if cursor.is_over(close_bounds) {
+                                self.state.reset();
+                                if let Some(on_close) = self.on_close {
+                                    shell.publish(on_close());
+                                }
+                                if let Some(on_toggle) = &self.on_toggle {
+                                    shell.publish(on_toggle(false))
+                                }
+                                shell.invalidate_layout();
+                                shell.request_redraw();
+                                return;
                             }
-                            shell.invalidate_layout();
-                            shell.request_redraw();
-                            return;
                         }
 
                         // Handle header dragging
@@ -1586,6 +1652,9 @@ where
                 if let Some(on_close) = self.on_close {
                     shell.publish(on_close());
                 }
+                if let Some(on_toggle) = &self.on_toggle {
+                    shell.publish(on_toggle(false))
+                }
                 return;
             }
             _ => {}
@@ -1659,15 +1728,17 @@ where
 
             // Show pointer when over close button (if header is visible)
             if !self.hide_header {
-                let close_bounds = Rectangle {
-                    x: bounds.x + bounds.width - CLOSE_BUTTON_SIZE - CLOSE_BUTTON_OFFSET * 2.0,
-                    y: bounds.y + (HEADER_HEIGHT - CLOSE_BUTTON_SIZE) / 2.0,
-                    width: CLOSE_BUTTON_SIZE,
-                    height: CLOSE_BUTTON_SIZE,
-                };
+                if !self.hide_close_button {
+                    let close_bounds = Rectangle {
+                        x: bounds.x + bounds.width - CLOSE_BUTTON_SIZE - CLOSE_BUTTON_OFFSET * 2.0,
+                        y: bounds.y + (HEADER_HEIGHT - CLOSE_BUTTON_SIZE) / 2.0,
+                        width: CLOSE_BUTTON_SIZE,
+                        height: CLOSE_BUTTON_SIZE,
+                    };
 
-                if cursor.is_over(close_bounds) {
-                    return mouse::Interaction::Pointer;
+                    if cursor.is_over(close_bounds) {
+                        return mouse::Interaction::Pointer;
+                    }
                 }
 
                 // Show grab cursor when over header
@@ -1726,9 +1797,9 @@ where
                 renderer,
             );
             
-            // If content doesn't want a specific interaction, return default to still block passthrough
+            // If content doesn't want a specific interaction, return default to block passthrough
             if content_interaction == mouse::Interaction::default() {
-                return mouse::Interaction::Idle;  // ADD THIS - blocks passthrough
+                return mouse::Interaction::Idle;
             }
             
             content_interaction
@@ -1743,7 +1814,6 @@ where
         layout: Layout<'_>,
         renderer: &Renderer,
     ) -> Option<overlay::Element<'a, Message, Theme, Renderer>> {
-        // Get the actual bounds of the overlay window
         let bounds = layout.bounds();
         
         let header_height = if self.hide_header { 0.0 } else { HEADER_HEIGHT };
@@ -1755,7 +1825,6 @@ where
             height: bounds.height - header_height - self.padding * 2.0,
         };
         
-        // Use the stored content layout
         self.content.as_widget_mut().overlay(
             self.tree,
             Layout::new(&self.content_layout),
@@ -1911,5 +1980,69 @@ impl Catalog for iced::Theme {
     
     fn style(&self, class: &Self::Class<'_>) -> Style {
         class(self)
+    }
+}
+
+pub fn primary(theme: &iced::Theme) -> Style {
+    let palette = theme.extended_palette();
+
+    Style {
+        background: palette.primary.base.color,
+        header_background: palette.primary.weak.color,
+        border_color: palette.primary.strong.color,
+        text_color: palette.primary.base.text,
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 16.0,
+        },
+    }
+}
+
+pub fn success(theme: &iced::Theme) -> Style {
+    let palette = theme.extended_palette();
+
+    Style {
+        background: palette.success.base.color,
+        header_background: palette.success.weak.color,
+        border_color: palette.success.strong.color,
+        text_color: palette.success.base.text,
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 16.0,
+        },
+    }
+}
+
+pub fn danger(theme: &iced::Theme) -> Style {
+    let palette = theme.extended_palette();
+
+    Style {
+        background: palette.danger.base.color,
+        header_background: palette.danger.weak.color,
+        border_color: palette.danger.strong.color,
+        text_color: palette.danger.base.text,
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 16.0,
+        },
+    }
+}
+
+pub fn warning(theme: &iced::Theme) -> Style {
+    let palette = theme.extended_palette();
+
+    Style {
+        background: palette.warning.base.color,
+        header_background: palette.warning.weak.color,
+        border_color: palette.warning.strong.color,
+        text_color: palette.warning.base.text,
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 16.0,
+        },
     }
 }
