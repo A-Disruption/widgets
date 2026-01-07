@@ -19,6 +19,7 @@ enum Message {
     UpdateGap(String),
     CloseOverlay(iced::advanced::widget::Id),
     ToggleOverlay(bool),
+    ActionPerformed(text_editor::Action),
 }
 
 struct App {
@@ -76,6 +77,9 @@ impl App {
             }
             Message::ToggleOverlay(toggle) => {
                 self.overlay_status = toggle
+            }
+            Message::ActionPerformed(action) => {
+                self.editor_content.perform(action);
             }
         }
         Task::none()
@@ -322,25 +326,6 @@ impl App {
             dropdown_root("File", menu1),
         ].width(Length::Fill)).style(container::secondary);
 
-        let on_hover_internal = container(
-                overlay_button(
-                        text_editor(&self.editor_content).width(500.0).height(400.0),
-                    "Hidden",
-                    button("C").width(Length::Shrink).height(Length::Shrink).on_press(Message::ButtonPressed).style(button::subtle),
-                )
-                .style(button::text)
-                .hide_header()
-                .on_hover()
-                .overlay_padding(0.0)
-                .overlay_padding(0.0)
-                .hover_gap(self.hover_gap)
-                .overlay_height(Length::Shrink)
-                .overlay_width(Length::Shrink)
-                .hover_position(self.hover_position.unwrap_or(Position::Right))
-                .hover_mode(PositionMode::Inside)
-                .hover_alignment(self.hover_alignment.unwrap_or(AlignmentOption::Start).into()),
-        );
-
         // EXAMPLE 10: Dynamically sized based on parent viewport
         let dynamic_size = overlay_button(
             text("Open Dynamic Overlay"),
@@ -369,6 +354,29 @@ impl App {
         .is_open(self.overlay_status)  // bool held in state
         .on_toggle(Message::ToggleOverlay) // change app state with internal open/close calls
         .overlay_style(generic_overlay::danger);
+
+        let on_hover_internal = container(
+                overlay_button(
+                    text_editor(&self.editor_content)
+                        .width(500.0)
+                        .height(400.0)
+                        .on_action(Message::ActionPerformed),
+                    "Hidden",
+                    button("C").width(Length::Shrink).height(Length::Shrink).on_press(Message::ButtonPressed).style(button::subtle),
+                )
+                .style(button::text)
+                .hide_header()
+                .on_hover()
+                .overlay_padding(0.0)
+                .overlay_padding(0.0)
+                .hover_gap(self.hover_gap)
+                .overlay_height(Length::Shrink)
+                .overlay_width(Length::Shrink)
+                .hover_position(self.hover_position.unwrap_or(Position::Right))
+                .hover_mode(PositionMode::Inside)
+                .hover_alignment(self.hover_alignment.unwrap_or(AlignmentOption::Start).into())
+                .on_close(|| Message::OverlayClosed),
+        );
 
         column![
             nav_menu,

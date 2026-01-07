@@ -11,7 +11,6 @@ use iced::{
     }, alignment::Vertical, border::Radius, keyboard, mouse, touch, widget::button, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow, Size, Vector, Background, Alignment
 };
 
-
 const HEADER_HEIGHT: f32 = 32.0;
 const CLOSE_BUTTON_SIZE: f32 = 30.0;
 const CLOSE_BUTTON_OFFSET: f32 = 1.0;
@@ -775,10 +774,10 @@ where
         event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
         let bounds = layout.bounds();
@@ -809,7 +808,7 @@ where
                     
                     let should_open = if !self.hover.enabled { // Normal click mode - open, close is handled in overlay
                         true 
-                    } else if !state.suppress_hover_reopen { // First hover click - close
+                    } else if !state.suppress_hover_reopen && !(self.hover.config.mode == PositionMode::Inside) { // First hover click - close
                         state.suppress_hover_reopen = true;
                         false
                     } else {
@@ -828,14 +827,29 @@ where
                         }
                     }
                     
-                    self.is_pressed = true;
-                    shell.capture_event();
-                    shell.invalidate_layout();
-                    shell.request_redraw();
-                    return;
+                    if !(self.hover.config.mode == PositionMode::Inside) {
+                        self.is_pressed = true;
+                        shell.capture_event();
+                        shell.invalidate_layout();
+                        shell.request_redraw();
+                        return;
+                    }
                 }
             }
             _ => {}
+        }
+
+        if self.hover.config.mode == PositionMode::Inside {
+            self.button_content.as_widget_mut().update(
+                &mut tree.children[1],
+                event,
+                layout.children().next().unwrap(),
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
         }
 
         if state.is_open {
@@ -873,22 +887,16 @@ where
         tree: &Tree,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _viewport: &Rectangle,
-        _renderer: &Renderer,
+        viewport: &Rectangle,
+        renderer: &Renderer,
     ) -> mouse::Interaction {
-        let state = tree.state.downcast_ref::<State<Renderer::Paragraph>>();
-        let bounds = layout.bounds().expand(self.padding);
-        
-        // Only show interaction when overlay is closed
-        if state.is_open {
-            return mouse::Interaction::None;
-        }
-
-        if cursor.is_over(bounds) {
-            mouse::Interaction::Pointer
-        } else {
-            mouse::Interaction::default()
-        }
+        self.button_content.as_widget().mouse_interaction(
+            &tree.children[1],
+            layout.children().next().unwrap(),
+            cursor,
+            viewport,
+            renderer,
+        )
     }
 
     fn overlay<'b>(
@@ -1039,12 +1047,20 @@ where
         &mut self,
         tree: &mut Tree,
         layout: Layout<'_>,
-        _renderer: &Renderer,
+        renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
-        
         operation.custom(self.id.as_ref(), layout.bounds(), state);
+        operation.container(None, layout.bounds());
+        operation.traverse(&mut |operation| {
+            self.button_content.as_widget_mut().operate(
+                &mut tree.children[1],
+                layout.children().next().unwrap(),
+                renderer,
+                operation,
+            );
+        });
     }
 }
 
@@ -1436,7 +1452,7 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) 
             | Event::Touch(touch::Event::FingerPressed { .. }) => { 
                 let cursor_over_overlay = cursor.is_over(bounds);
-                if cursor.is_over(self.button_bounds) && self.state.is_open {
+                if cursor.is_over(self.button_bounds) && self.state.is_open && !(self.hover.config.mode == PositionMode::Inside) {
                     self.state.reset();
                     shell.invalidate_layout();
                     shell.request_redraw();
@@ -2044,5 +2060,17 @@ pub fn warning(theme: &iced::Theme) -> Style {
             offset: Vector::new(0.0, 4.0),
             blur_radius: 16.0,
         },
+    }
+}
+
+pub fn blank(theme: &iced::Theme) -> Style {
+    let palette = theme.extended_palette();
+
+    Style {
+        background: Color::TRANSPARENT,
+        header_background: Color::TRANSPARENT,
+        border_color: Color::TRANSPARENT,
+        text_color: Color::TRANSPARENT,
+        shadow: Shadow::default()
     }
 }

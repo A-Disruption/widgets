@@ -182,6 +182,16 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
         })
     }
 
+    fn diff(&self, tree: &mut Tree) {
+        let state = tree.state.downcast_mut::<State>();
+        
+        // Sync external color to internal state if it changed
+        if state.color != self.color {
+            state.color = self.color;
+            state.overlay_state = OverlayState::from_color(self.color);
+        }
+    }
+
     fn size(&self) -> Size<Length> {
         Size::new(self.width, self.height)
     }
@@ -604,7 +614,8 @@ where
 }
 
 impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColorPickerOverlay<'a, Message> {
-    fn layout(&mut self, _renderer: &Renderer, _bounds: Size) -> Node {
+    fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> Node {
+        self.viewport_size = bounds;
         let size = Size::new(320.0, 440.0);
         let node = Node::new(size);
         
