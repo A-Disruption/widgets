@@ -156,6 +156,8 @@ where
     reset_on_close: bool,
     /// Externally controlled open state
     external_is_open: Option<bool>,
+    /// Forward all updates to base Element
+    interactive_base: bool,
 }
 
 impl<'a, Message, Theme, Renderer> OverlayButton<'a, Message, Theme, Renderer> 
@@ -212,6 +214,7 @@ where
             resizable: ResizeMode::None,
             reset_on_close: false,
             external_is_open: None,
+            interactive_base: false,
         }
     }
 
@@ -433,6 +436,11 @@ where
         self.reset_on_close = true;
         self
     }
+
+    pub fn interactive_base(mut self, interactive: bool) -> Self {
+        self.interactive_base = interactive;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -609,6 +617,7 @@ where
     title_text: widget::text::State<P>,
     suppress_hover_reopen: bool,
     reset_on_close: bool,
+    external_is_open: Option<bool>,
 }
 
 impl<P: iced::advanced::text::Paragraph> State<P> {
@@ -666,6 +675,7 @@ where
                 title_text: widget::text::State::<Renderer::Paragraph>::default(),
                 suppress_hover_reopen: false,
                 reset_on_close: self.reset_on_close,
+                external_is_open: self.external_is_open,
             }
         )
     }
@@ -782,13 +792,26 @@ where
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
         let bounds = layout.bounds();
 
+        if self.interactive_base {
+            self.button_content.as_widget_mut().update(
+                &mut tree.children[1],
+                event,
+                layout.children().next().unwrap(),
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+        }
+
         match event {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. }) => {
                 if self.is_pressed {
                         self.is_pressed = false;
                         self.status = Some(button::Status::Active);
-                    }
+                }
             }
 
             Event::Mouse(mouse::Event::CursorMoved { position: _ }) => {
@@ -827,7 +850,7 @@ where
                         }
                     }
                     
-                    if !(self.hover.config.mode == PositionMode::Inside) {
+                    if !(self.hover.config.mode == PositionMode::Inside) || self.external_is_open.is_none() {
                         self.is_pressed = true;
                         shell.capture_event();
                         shell.invalidate_layout();
@@ -1452,7 +1475,7 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) 
             | Event::Touch(touch::Event::FingerPressed { .. }) => { 
                 let cursor_over_overlay = cursor.is_over(bounds);
-                if cursor.is_over(self.button_bounds) && self.state.is_open && !(self.hover.config.mode == PositionMode::Inside) {
+                if cursor.is_over(self.button_bounds) && self.state.is_open && !(self.hover.config.mode == PositionMode::Inside) && self.state.external_is_open.is_none() {
                     self.state.reset();
                     shell.invalidate_layout();
                     shell.request_redraw();
