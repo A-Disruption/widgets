@@ -808,7 +808,7 @@ where
         match event {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. }) => {
-                if self.is_pressed {
+                if self.is_pressed && self.interactive_base == false {
                         self.is_pressed = false;
                         self.status = Some(button::Status::Active);
                 }
@@ -1598,7 +1598,15 @@ where
                     
                     // Close if cursor over neither button nor overlay
                     if !self.state.cursor_over_button && !self.state.cursor_over_overlay && !has_open_descendant_overlays::<Renderer::Paragraph>(self.tree) {
-                        self.state.reset();
+                        if self.state.external_is_open.is_none() {
+                            self.state.reset();
+                        }
+                        if let Some(on_close) = self.on_close {
+                            shell.publish(on_close());
+                        }
+                        if let Some(on_toggle) = &self.on_toggle {
+                            shell.publish(on_toggle(false))
+                        }
                         shell.invalidate_layout();
                         shell.request_redraw();
                     }

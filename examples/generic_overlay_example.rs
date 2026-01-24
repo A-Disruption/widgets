@@ -375,7 +375,8 @@ impl App {
                 .hover_position(self.hover_position.unwrap_or(Position::Right))
                 .hover_mode(PositionMode::Inside)
                 .hover_alignment(self.hover_alignment.unwrap_or(AlignmentOption::Start).into())
-                .on_close(|| Message::OverlayClosed),
+                .on_close(|| Message::OverlayClosed)
+                .interactive_base(true),
         );
 
         column![
