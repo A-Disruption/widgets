@@ -17,6 +17,7 @@ const HANDLE_HOVER_W: f32 = 24.0;
 const HANDLE_STRIPE_W: f32 = 2.0;   
 const CONTENT_GAP: f32 = 14.0;       
 const DRAG_THRESHOLD: f32 = 5.0;     // Minimum distance to start drag
+const NO_EXTERNAL_ID: usize = usize::MAX;
 
 /// Creates a new [`TreeHandle`] with the given root branches.
 pub fn tree_handle<'a, Message, Theme, Renderer>(
@@ -38,7 +39,7 @@ pub fn branch<'a, Message, Theme, Renderer>(
     Branch {
         content: content.into(),
         children: Vec::new(),
-        external_id: 0,
+        external_id: NO_EXTERNAL_ID,
         align_x: iced::Alignment::Start,
         align_y: iced::Alignment::Center,
         accepts_drops: false,
@@ -132,6 +133,11 @@ struct TreeState {
 
     // Track keyboard modifiers
     current_modifiers: keyboard::Modifiers,
+
+    // Authoritative expanded state using stable external IDs
+    expanded_ext_ids: HashSet<usize>,
+    // Maps child external_id -> parent external_id (for detecting new/moved children)
+    child_parent_map: HashMap<usize, Option<usize>>,
 }
 
 /// Combined state that includes both animation state and text state
@@ -253,10 +259,10 @@ where
         }
 
         let mut ext_to_int = HashMap::new();
-        let mut int_to_ext = vec![0usize; branches.len()];
+        let mut int_to_ext = vec![NO_EXTERNAL_ID; branches.len()];
 
         for b in &branches {
-            if b.external_id != 0 {
+            if b.external_id != NO_EXTERNAL_ID {
                 // Use debug_assert for development, or handle duplicates gracefully
                 if ext_to_int.contains_key(&b.external_id) {
                     eprintln!("Warning: duplicate external_id {} found", b.external_id);
@@ -492,68 +498,24 @@ where
         }
     }
 
-    fn update_has_children(&mut self, state: &TreeState) -> Vec<usize> {
-        // Track which branches are gaining children for the first time
-        let mut newly_has_children = Vec::new();
-        
-        // Store current has_children state
-        let previous_state: Vec<(usize, bool)> = self.branches
+    fn update_has_children_flags(&mut self) {
+        let parent_ids: HashSet<usize> = self.branches
             .iter()
-            .map(|b| (b.id, b.has_children))
+            .filter_map(|b| b.parent_id)
             .collect();
-        
-        // Reset all to false
+
         for branch in &mut self.branches {
-            branch.has_children = false;
+            branch.has_children = parent_ids.contains(&branch.id);
         }
-        
-        // Check actual parent-child relationships from state
-        if let Some(ref branch_order) = state.branch_order {
-            let parent_ids: HashSet<usize> = branch_order
-                .iter()
-                .filter_map(|bs| bs.parent_id)
-                .collect();
-            
-            for branch in &mut self.branches {
-                if parent_ids.contains(&branch.id) {
-                    branch.has_children = true;
-                    
-                    // Check if this branch didn't have children before
-                    if let Some((_, prev_has_children)) = previous_state.iter()
-                        .find(|(id, _)| *id == branch.id)
-                        && !prev_has_children {
-                            newly_has_children.push(branch.id);
-                        }
-                }
-            }
-        } else {
-            // Fallback to original parent_ids
-            let parent_ids: HashSet<usize> = self.branches
-                .iter()
-                .filter_map(|b| b.parent_id)
-                .collect();
-                
-            for branch in &mut self.branches {
-                if parent_ids.contains(&branch.id) {
-                    branch.has_children = true;
-                    
-                    // Check if this branch didn't have children before
-                    if let Some((_, prev_has_children)) = previous_state.iter()
-                        .find(|(id, _)| *id == branch.id)
-                        && !prev_has_children {
-                            newly_has_children.push(branch.id);
-                        }
-                }
-            }
-        }
-        
-        newly_has_children
     }
 
     #[inline]
     fn preferred_id(&self, internal_id: usize) -> usize {
         // Always prefer the external ID if it exists
-        self.int_to_ext.get(internal_id).copied().unwrap_or(internal_id)
+        match self.int_to_ext.get(internal_id).copied() {
+            Some(ext_id) if ext_id != NO_EXTERNAL_ID => ext_id,
+            _ => internal_id,
+        }
     }
 
     /// returns the actual starting index of the branch layouts.
@@ -587,13 +549,25 @@ where
 
     fn state(&self) -> widget::tree::State {
         let mut expanded = HashSet::new();
-        
+        let mut expanded_ext_ids = HashSet::new();
+        let mut child_parent_map = HashMap::new();
+
         for branch in &self.branches {
+            if branch.external_id != NO_EXTERNAL_ID {
+                let parent_ext = branch.parent_id
+                    .and_then(|pid| self.branches.iter().find(|b| b.id == pid))
+                    .map(|p| p.external_id)
+                    .filter(|&eid| eid != NO_EXTERNAL_ID);
+                child_parent_map.insert(branch.external_id, parent_ext);
+            }
             if branch.has_children {
                 expanded.insert(branch.id);
+                if branch.external_id != NO_EXTERNAL_ID {
+                    expanded_ext_ids.insert(branch.external_id);
+                }
             }
         }
-        
+
         widget::tree::State::new(
             CombinedState{
                 tree_state: TreeState {
@@ -610,6 +584,8 @@ where
                     selection_rect: None,
                     branch_order: None,
                     current_modifiers: keyboard::Modifiers::empty(),
+                    expanded_ext_ids,
+                    child_parent_map,
                 },
                 icon_text: widget::text::State::<Renderer::Paragraph>::default(),
             }
@@ -680,13 +656,37 @@ where
             );
         }
 
-        // Update has_children flags based on current state and get newly parented branches
-        let newly_has_children = self.update_has_children(&combined_state.tree_state);
+        // Update has_children flags
+        self.update_has_children_flags();
 
-        // Auto-expand branches that just gained children
-        for branch_id in newly_has_children {
-            combined_state.tree_state.expanded.insert(branch_id);
+        // Detect new or moved children and auto-expand their parents
+        let mut new_child_parent_map = HashMap::new();
+        for branch in &self.branches {
+            if branch.external_id != NO_EXTERNAL_ID {
+                let parent_ext = branch.parent_id
+                    .and_then(|pid| self.branches.iter().find(|b| b.id == pid))
+                    .map(|p| p.external_id)
+                    .filter(|&eid| eid != NO_EXTERNAL_ID);
+
+                let prev_parent = combined_state.tree_state.child_parent_map.get(&branch.external_id);
+                if prev_parent != Some(&parent_ext) {
+                    // New branch or parent changed - expand the new parent
+                    if let Some(parent_ext_id) = parent_ext {
+                        combined_state.tree_state.expanded_ext_ids.insert(parent_ext_id);
+                    }
+                }
+
+                new_child_parent_map.insert(branch.external_id, parent_ext);
+            }
         }
+        combined_state.tree_state.child_parent_map = new_child_parent_map;
+
+        // Rebuild expanded (internal IDs) from expanded_ext_ids (external IDs) each frame
+        // This prevents stale internal IDs from causing incorrect collapse after structural changes
+        combined_state.tree_state.expanded = combined_state.tree_state.expanded_ext_ids.iter()
+            .filter_map(|ext_id| self.ext_to_int.get(ext_id))
+            .copied()
+            .collect();
 
         let ordered_indices = self.get_ordered_indices(&combined_state.tree_state);
         let branch_count = self.branches.len();
@@ -1025,10 +1025,17 @@ where
                             };
                             
                             if arrow_bounds.contains(position) {
+                                let ext_id = self.int_to_ext.get(branch.id).copied().unwrap_or(NO_EXTERNAL_ID);
                                 if combined_state.tree_state.expanded.contains(&branch.id) {
                                     combined_state.tree_state.expanded.remove(&branch.id);
+                                    if ext_id != NO_EXTERNAL_ID {
+                                        combined_state.tree_state.expanded_ext_ids.remove(&ext_id);
+                                    }
                                 } else {
                                     combined_state.tree_state.expanded.insert(branch.id);
+                                    if ext_id != NO_EXTERNAL_ID {
+                                        combined_state.tree_state.expanded_ext_ids.insert(ext_id);
+                                    }
                                 }
                                 shell.invalidate_layout();
                                 shell.request_redraw();
@@ -1291,6 +1298,10 @@ where
                             if let Some(branch) = self.branches.iter().find(|b| b.id == focused)
                                 && branch.has_children && combined_state.tree_state.expanded.contains(&focused) {
                                     combined_state.tree_state.expanded.remove(&focused);
+                                    let ext_id = self.int_to_ext.get(focused).copied().unwrap_or(NO_EXTERNAL_ID);
+                                    if ext_id != NO_EXTERNAL_ID {
+                                        combined_state.tree_state.expanded_ext_ids.remove(&ext_id);
+                                    }
                                     shell.invalidate_layout();
                                     shell.request_redraw();
                                 }
@@ -1299,6 +1310,10 @@ where
                             if let Some(branch) = self.branches.iter().find(|b| b.id == focused)
                                 && branch.has_children && !combined_state.tree_state.expanded.contains(&focused) {
                                     combined_state.tree_state.expanded.insert(focused);
+                                    let ext_id = self.int_to_ext.get(focused).copied().unwrap_or(NO_EXTERNAL_ID);
+                                    if ext_id != NO_EXTERNAL_ID {
+                                        combined_state.tree_state.expanded_ext_ids.insert(ext_id);
+                                    }
                                     shell.invalidate_layout();
                                     shell.request_redraw();
                                 }
@@ -2348,7 +2363,7 @@ where
         let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
         combined_state.tree_state.branch_order = Some(new_order);
         
-        self.tree_handle.update_has_children(&combined_state.tree_state);
+        self.tree_handle.update_has_children_flags();
     }
 }
 
