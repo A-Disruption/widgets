@@ -134,6 +134,9 @@ struct TreeState {
     // Track keyboard modifiers
     current_modifiers: keyboard::Modifiers,
 
+    // Cached icon layout height for vertical centering during draw
+    icon_layout_height: Option<f32>,
+
     // Authoritative expanded state using stable external IDs
     expanded_ext_ids: HashSet<usize>,
     // Maps child external_id -> parent external_id (for detecting new/moved children)
@@ -584,6 +587,7 @@ where
                     selection_rect: None,
                     branch_order: None,
                     current_modifiers: keyboard::Modifiers::empty(),
+                    icon_layout_height: None,
                     expanded_ext_ids,
                     child_parent_map,
                 },
@@ -694,6 +698,7 @@ where
         let limits = limits.width(self.width).height(self.height);
         let available = limits.max();
         let tree_fluid = self.width.fluid();
+        let content_offset = self.get_child_content_index();
 
         // Update visibility
         combined_state.tree_state.visible_branches = vec![false; branch_count];
@@ -731,7 +736,7 @@ where
             }
 
             let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
-            let child_state = &mut tree.children[i];
+            let child_state = &mut tree.children[i + content_offset];
             let content = &mut self.branch_content[i];
 
             let size_hint = content.as_widget().size();
@@ -823,7 +828,7 @@ where
             } // Continue to handle fluid branches
 
             let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
-            let child_state = &mut tree.children[i];
+            let child_state = &mut tree.children[i + content_offset];
             let content = &mut self.branch_content[i];
             let size_hint = content.as_widget().size();
 
@@ -927,6 +932,23 @@ where
                 y - self.spacing + self.padding_y,
             ),
         );
+
+        // Lay out icon elements so their internal state (e.g. text paragraphs) gets populated
+        let icon_limits = layout::Limits::new(Size::ZERO, Size::new(ARROW_W, LINE_HEIGHT));
+        if let Some(ref mut expand_icon) = self.expand_icon {
+            let icon_node = expand_icon.as_widget_mut().layout(&mut tree.children[0], renderer, &icon_limits);
+            combined_state.tree_state.icon_layout_height = Some(icon_node.size().height);
+        }
+        if let Some(ref mut collapse_icon) = self.collapse_icon {
+            let idx = if self.expand_icon.is_some() { 1 } else { 0 };
+            let icon_node = collapse_icon.as_widget_mut().layout(&mut tree.children[idx], renderer, &icon_limits);
+            // Use the larger of the two icon heights
+            if let Some(existing) = combined_state.tree_state.icon_layout_height {
+                combined_state.tree_state.icon_layout_height = Some(existing.max(icon_node.size().height));
+            } else {
+                combined_state.tree_state.icon_layout_height = Some(icon_node.size().height);
+            }
+        }
 
         layout::Node::with_children(intrinsic, cells)
     }
@@ -1597,16 +1619,15 @@ where
                             (self.expand_icon.as_ref().unwrap(), 0)
                         };
                         
-                        // Create a simple layout for the icon
-                        let icon_bounds = Rectangle {
-                            x: indent_x + ARROW_X_PAD,
-                            y: branch_y,
-                            width: ARROW_W,
-                            height: branch_height,
-                        };
-                        
-                        let icon_layout = layout::Node::new(Size::new(ARROW_W, branch_height))
-                            .move_to(Point::new(icon_bounds.x, icon_bounds.y));
+                        // Create a layout for the icon, centered in the arrow area
+                        let icon_h = state.icon_layout_height.unwrap_or(16.0);
+                        let mut icon_layout = layout::Node::new(Size::new(ARROW_W, icon_h));
+                        icon_layout.align_mut(
+                            iced::Alignment::Center,
+                            iced::Alignment::Center,
+                            Size::new(ARROW_W, branch_height),
+                        );
+                        let icon_layout = icon_layout.move_to(Point::new(indent_x, branch_y + (icon_h / 4.0)));
                         
                         icon_element.as_widget().draw(
                             &tree.children[icon_tree_index],
@@ -1642,14 +1663,14 @@ where
                 if let Some(ref drag) = state.drag_active {
                     if !drag.dragged_nodes.contains(&id) {
                         let child_state = &tree.children[i + child_layout_index];
-                        let child_layout = layout.children().nth(i + self.get_child_content_index()).unwrap();
+                        let child_layout = layout.children().nth(i).unwrap();
                         self.branch_content[i].as_widget().draw(
                             child_state, renderer, theme, style, child_layout, cursor, viewport,
                         );
                     }
                 } else {
                     let child_state = &tree.children[i + child_layout_index];
-                    let child_layout = layout.children().nth(i + self.get_child_content_index()).unwrap();
+                    let child_layout = layout.children().nth(i).unwrap();
                     self.branch_content[i].as_widget().draw(
                         child_state, renderer, theme, style, child_layout, cursor, viewport,
                     );
@@ -2201,7 +2222,7 @@ where
                     let content_tree_index = primary_index + child_layout_index;
                     let branch_tree = &self.state.children[content_tree_index];
 
-                    if let Some(child_layout) = self.tree_layout.children().nth(content_tree_index) {
+                    if let Some(child_layout) = self.tree_layout.children().nth(primary_index) {
                         branch_content.as_widget().draw(
                             branch_tree,
                             renderer,
