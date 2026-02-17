@@ -1628,18 +1628,6 @@ where
             _ => {}
         }
 
-        let content_children_start = self.get_child_content_index();
-        for ((child, state), layout) in self
-            .branch_content
-            .iter_mut()
-            .zip(&mut tree.children[content_children_start..])
-            .zip(layout.children().skip(content_children_start))
-        {
-            child.as_widget_mut().update(
-                state, event, layout, cursor, renderer, clipboard, shell,
-                viewport,
-            );
-        }
     }
 
     fn draw(
@@ -2071,7 +2059,7 @@ where
         let child_interaction = self.branch_content
             .iter()
             .zip(&tree.children[child_layout_index..])
-            .zip(layout.children().skip(child_layout_index))
+            .zip(layout.children())
             .enumerate()
             .filter(|(i, _)| {
                 state.visible_branches.get(*i).copied().unwrap_or(false)
@@ -2167,7 +2155,7 @@ where
                 .branch_content
                 .iter_mut()
                 .zip(&mut tree.children[child_layout_index..])
-                .zip(layout.children().skip(child_layout_index))
+                .zip(layout.children())
                 .enumerate()
             {
                 if let Some(overlay) = branch.as_widget_mut().overlay(
