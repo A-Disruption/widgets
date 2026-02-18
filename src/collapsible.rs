@@ -546,7 +546,8 @@ where
 
         // Layout title text after icon
         let title_x = self.header_height + Self::ICON_SPACING;
-        let available_title_width = limits.max().width - title_x - self.padding.right - action_icon_width;
+        //let available_title_width = limits.max().width - title_x - self.padding.right - action_icon_width;
+        let available_title_width = limits.max().width;
         
         let title_limits = layout::Limits::new(
             Size::ZERO,
@@ -695,21 +696,6 @@ where
                     if let Some(ref on_action) = self.on_action {
                         shell.publish(on_action());
                     }
-                } else if self.on_action.is_none()  && cursor.is_over(action_bounds) {
-                    let (_, _, action_index, _) = self.child_indices();
-                    if let Some(ref mut action_icon) = self.action_icon
-                        && let Some(action_idx) = action_index {
-                            return action_icon.as_widget_mut().update(
-                                &mut tree.children[action_idx],
-                                event,
-                                action_layout,
-                                cursor,
-                                renderer,
-                                clipboard,
-                                shell,
-                                viewport,
-                            );
-                        }                
                 } else if ((self.header_clickable && cursor.is_over(header_bounds)) 
                     || cursor.is_over(icon_bounds))
                     && !cursor.is_over(action_bounds) {
@@ -747,6 +733,25 @@ where
             }
             _ => {}
         }
+
+        // Forward content to the action button if .on_action() isn't being used.
+        if self.on_action.is_none() && self.action_icon.is_some() {
+            let (_, _, action_index, _) = self.child_indices();
+            if let Some(ref mut action_icon) = self.action_icon
+                && let Some(action_idx) = action_index {
+                    action_icon.as_widget_mut().update(
+                        &mut tree.children[action_idx],
+                        event,
+                        action_layout,
+                        cursor,
+                        renderer,
+                        clipboard,
+                        shell,
+                        viewport,
+                    );
+                }            
+        }
+   
 
         // Forward events to content / children when expanded
         let (_, _, _, content_index) = self.child_indices();
