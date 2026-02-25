@@ -13,9 +13,8 @@ use std::collections::{HashSet, HashMap};
 const LINE_HEIGHT: f32 = 32.0;       
 const ARROW_X_PAD: f32 = 4.0;       
 const ARROW_W: f32 = 16.0;          
-const HANDLE_HOVER_W: f32 = 24.0;   
-const HANDLE_STRIPE_W: f32 = 2.0;   
-const CONTENT_GAP: f32 = 14.0;       
+const HANDLE_HOVER_W: f32 = 24.0;
+const CONTENT_GAP: f32 = 14.0;
 const DRAG_THRESHOLD: f32 = 5.0;     // Minimum distance to start drag
 const NO_EXTERNAL_ID: usize = usize::MAX;
 
@@ -78,11 +77,13 @@ where
     padding_y: f32,
     on_drop: Option<Box<dyn Fn(DropInfo) -> Message + 'a>>,
     on_select: Option<Box< dyn Fn(HashSet<usize>) -> Message + 'a>>,
+    on_can_drop: Option<Box<dyn Fn(&[usize], Option<usize>, &DropPosition) -> bool + 'a>>,
     force_reset_order: bool,
     ext_to_int: HashMap<usize, usize>,
     int_to_ext: Vec<usize>, // index is internal id; value is external id or 0
     expand_icon: Option<Element<'a, Message, Theme, Renderer>>,
     collapse_icon: Option<Element<'a, Message, Theme, Renderer>>,
+    line_x_offset: f32,
     class: Theme::Class<'a>,
     easing: Easing,
     animation_duration: Option<Duration>,
@@ -299,11 +300,13 @@ where
             padding_y: 5.0,
             on_drop: None,
             on_select: None,
+            on_can_drop: None,
             force_reset_order: false,
             ext_to_int,
             int_to_ext,
             expand_icon: None,
             collapse_icon: None,
+            line_x_offset: 0.0,
             class: Theme::default(),
             easing: Easing::EaseInOut,
             animation_duration: None,
@@ -325,6 +328,26 @@ where
         F: Fn(HashSet<usize>) -> Message + 'a
     {
         self.on_select = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback to validate whether a drop is allowed.
+    /// Return `false` to suppress the drop indicator entirely.
+    /// Receives the external dragged IDs, external target ID, and the drop position.
+    pub fn on_can_drop<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&[usize], Option<usize>, &DropPosition) -> bool + 'a,
+    {
+        self.on_can_drop = Some(Box::new(f));
+        self
+    }
+
+    /// Adjusts the x position of the parent-child connecting lines relative to
+    /// the center of the expand/collapse icon box. Useful when a custom icon's
+    /// glyph doesn't visually center within the `ARROW_W` layout box.
+    /// Positive values shift the line right; negative shift it left.
+    pub fn line_x_offset(mut self, offset: f32) -> Self {
+        self.line_x_offset = offset;
         self
     }
 
@@ -1665,10 +1688,170 @@ where
         renderer.with_layer(*viewport, |renderer| {
             let mut y = bounds.y + self.padding_y;
 
+            // Simulation pass: mirror the main draw loop's y-advancement exactly so that
+            // connecting lines stay in sync with rows even while drop-preview ghost rows
+            // are being inserted (Before / After / Into).
+            {
+                let mut sim_y = bounds.y + self.padding_y;
+                let mut sim_pending_into = false;
+                let mut sim_clip_subtrees: HashMap<usize, (f32, f32)> = HashMap::new();
+                // Maps animating parent id -> the y at which its clip region ends
+                let mut anim_clip_bottom: HashMap<usize, f32> = HashMap::new();
+                // Maps any branch id that sits inside an active clip -> that clip's bottom y
+                let mut branch_clip_bottom: HashMap<usize, f32> = HashMap::new();
+                // (id, parent_id, y, height, depth)
+                let mut branch_layout: Vec<(usize, Option<usize>, f32, f32, u16)> = Vec::new();
+
+                for &i in &ordered_indices {
+                    if i >= self.branches.len()
+                        || i >= state.visible_branches.len()
+                        || !state.visible_branches[i]
+                        || i >= state.branch_heights.len()
+                    {
+                        continue;
+                    }
+                    let (id, parent_id, depth) = self.get_branch_info(i, state);
+                    if let Some(ref drag) = state.drag_active {
+                        if drag.dragged_nodes.contains(&id) { continue; }
+                    }
+
+                    // Mirror: exit animation subtrees
+                    let exited: Vec<usize> = sim_clip_subtrees.keys()
+                        .filter(|&&pid| !self.is_descendant_of_id(i, pid, state))
+                        .copied().collect();
+                    for pid in exited {
+                        if let Some((_, reduction)) = sim_clip_subtrees.remove(&pid) {
+                            sim_y -= reduction;
+                        }
+                    }
+
+                    // Mirror: Before ghost row
+                    if let Some(ref drag) = state.drag_active {
+                        if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Before {
+                            sim_y += LINE_HEIGHT + self.spacing;
+                        }
+                    }
+
+                    // Mirror: pending Into (expanded) adjustment for first child
+                    if sim_pending_into {
+                        sim_y += LINE_HEIGHT + self.spacing;
+                        sim_pending_into = false;
+                    }
+
+                    // If this branch is inside any active animation clip, record the tightest
+                    // clip bottom so spine lines that use it as a parent can be capped too.
+                    if !sim_clip_subtrees.is_empty() {
+                        let min_clip = sim_clip_subtrees.keys()
+                            .filter_map(|pid| anim_clip_bottom.get(pid))
+                            .cloned()
+                            .fold(f32::INFINITY, f32::min);
+                        if min_clip.is_finite() {
+                            branch_clip_bottom.insert(id, min_clip);
+                        }
+                    }
+
+                    let height = state.branch_heights[i];
+                    branch_layout.push((id, parent_id, sim_y, height, depth));
+
+                    // Mirror: set pending_into if this is an Into+expanded target
+                    let drop_is_valid = if let Some(ref drag) = state.drag_active {
+                        if drag.drop_target == Some(id) {
+                            if let Some(ref can_drop_fn) = self.on_can_drop {
+                                let dragged_ext: Vec<usize> = drag.dragged_nodes.iter()
+                                    .map(|&iid| self.preferred_id(iid)).collect();
+                                let target_ext = drag.drop_target.map(|iid| self.preferred_id(iid));
+                                can_drop_fn(&dragged_ext, target_ext, &drag.drop_position)
+                            } else { true }
+                        } else { true }
+                    } else { true };
+                    if let Some(ref drag) = state.drag_active {
+                        if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into
+                            && state.expanded.contains(&id) && drop_is_valid
+                        {
+                            sim_pending_into = true;
+                        }
+                    }
+
+                    sim_y += height + self.spacing;
+
+                    // Mirror: After ghost row
+                    if let Some(ref drag) = state.drag_active {
+                        if drag.drop_target == Some(id) && drag.drop_position == DropPosition::After {
+                            sim_y += LINE_HEIGHT + self.spacing;
+                        }
+                    }
+
+                    // Mirror: register animation subtree clip
+                    if anim_parents.contains_key(&id) {
+                        let full_h = anim_subtree_heights.get(&id).copied().unwrap_or(0.0);
+                        let progress = anim_parents.get(&id).copied().unwrap_or(1.0);
+                        let reduction = full_h * (1.0 - progress);
+                        sim_clip_subtrees.insert(id, (sim_y, reduction));
+                        // The visible clip region ends here; spine must not extend past it
+                        anim_clip_bottom.insert(id, sim_y + full_h * progress);
+                    }
+                }
+
+                // Build lookup: id -> (y, height, depth)
+                let id_to_pos: HashMap<usize, (f32, f32, u16)> = branch_layout
+                    .iter()
+                    .map(|&(id, _, y, h, d)| (id, (y, h, d)))
+                    .collect();
+
+                // Build parent -> ordered children list
+                let mut children_map: HashMap<usize, Vec<usize>> = HashMap::new();
+                for &(id, parent_id, _, _, _) in &branch_layout {
+                    if let Some(pid) = parent_id {
+                        children_map.entry(pid).or_default().push(id);
+                    }
+                }
+
+                // Draw a vertical spine from each parent's bottom to its last visible child's near-bottom
+                for (parent_id, child_ids) in &children_map {
+                    let Some(last_child_id) = child_ids.last() else { continue };
+                    let Some(&(parent_y, parent_h, parent_depth)) = id_to_pos.get(parent_id) else { continue };
+                    let Some(&(last_child_y, last_child_h, _)) = id_to_pos.get(last_child_id) else { continue };
+
+                    let line_x = bounds.x + self.padding_x + (parent_depth as f32 * self.indent) + ARROW_W * 0.5 + self.line_x_offset;
+                    let line_y_start = parent_y + parent_h;
+                    // Cap line to animation clip boundary. Check branch_clip_bottom first
+                    // (covers nested parents inside a collapsing subtree), then fall back to
+                    // anim_clip_bottom (covers the direct animating parent itself).
+                    let effective_clip = branch_clip_bottom.get(parent_id)
+                        .or_else(|| anim_clip_bottom.get(parent_id))
+                        .copied();
+                    let line_y_end = {
+                        let raw = last_child_y + last_child_h - 4.0;
+                        effective_clip.map_or(raw, |clip| raw.min(clip))
+                    };
+                    // Skip the line entirely if it starts at or past the clip boundary
+                    if effective_clip.is_some_and(|clip| line_y_start >= clip) {
+                        continue;
+                    }
+
+                    if line_y_end > line_y_start {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: line_x - 0.5,
+                                    y: line_y_start,
+                                    width: 1.0,
+                                    height: line_y_end - line_y_start,
+                                },
+                                border: Border::default(),
+                                ..Default::default()
+                            },
+                            tree_style.line_color.scale_alpha(0.35),
+                        );
+                    }
+                }
+            }
+
             // Helper to draw drop preview
-            let draw_drop_preview = |renderer: &mut Renderer, y: f32, depth: u16, width: f32| {
+            let draw_drop_preview = |renderer: &mut Renderer, y: f32, depth: u16, width: f32, deny: bool| {
                 let preview_indent = bounds.x + self.padding_x + (depth as f32 * self.indent);
                 let preview_height = LINE_HEIGHT;
+                let indicator_color = if deny { tree_style.deny_drop_indicator_color } else { tree_style.accept_drop_indicator_color };
 
                 renderer.fill_quad(
                     renderer::Quad {
@@ -1679,28 +1862,35 @@ where
                             height: preview_height,
                         },
                         border: Border {
-                            color: tree_style.accept_drop_indicator_color,
+                            color: indicator_color,
                             width: 2.0,
                             radius: Radius::from(4.0),
                         },
                         ..Default::default()
                     },
-                    tree_style.accept_drop_indicator_color.scale_alpha(0.1),
+                    indicator_color.scale_alpha(0.1),
                 );
 
-                let handle_x = preview_indent + ARROW_W;
+                // Vertical marker aligned with the parent's connecting line.
+                // The parent line runs at (depth-1)*indent + ARROW_W*0.5; for depth 0
+                // (root-level previews) there is no parent line so fall back to ARROW_W*0.5.
+                let marker_x = if depth > 0 {
+                    preview_indent - self.indent + ARROW_W * 0.5 + self.line_x_offset
+                } else {
+                    bounds.x + self.padding_x + ARROW_W * 0.5 + self.line_x_offset
+                };
                 renderer.fill_quad(
                     renderer::Quad {
                         bounds: Rectangle {
-                            x: handle_x,
+                            x: marker_x - 0.5,
                             y: y + 2.0,
-                            width: HANDLE_STRIPE_W,
+                            width: 2.0,
                             height: preview_height - 4.0,
                         },
                         border: Border::default(),
                         ..Default::default()
                     },
-                    tree_style.line_color.scale_alpha(0.3),
+                    indicator_color.scale_alpha(0.3),
                 );
             };
 
@@ -1737,10 +1927,29 @@ where
                     }
                 }
 
+                // Compute whether the drop at this branch is allowed via on_can_drop callback.
+                let drop_is_valid = if let Some(ref drag) = state.drag_active {
+                    if drag.drop_target == Some(id) {
+                        if let Some(ref can_drop_fn) = self.on_can_drop {
+                            let dragged_ext: Vec<usize> = drag.dragged_nodes.iter()
+                                .map(|&iid| self.preferred_id(iid))
+                                .collect();
+                            let target_ext = drag.drop_target.map(|iid| self.preferred_id(iid));
+                            can_drop_fn(&dragged_ext, target_ext, &drag.drop_position)
+                        } else {
+                            true
+                        }
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                };
+
                 if let Some(ref drag) = state.drag_active {
                     if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Before {
                         let preview_depth = effective_depth;
-                        draw_drop_preview(renderer, y, preview_depth, bounds.width);
+                        draw_drop_preview(renderer, y, preview_depth, bounds.width, !drop_is_valid);
                         y += LINE_HEIGHT + self.spacing;
                     }
                 }
@@ -1762,9 +1971,10 @@ where
                 let draw_branch = |renderer: &mut Renderer| {
                     if let Some(ref drag) = state.drag_active
                         && drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
-                            if state.expanded.contains(&id) {
+                            let indicator_color = if drop_is_valid { tree_style.accept_drop_indicator_color } else { tree_style.deny_drop_indicator_color };
+                            if state.expanded.contains(&id) && drop_is_valid {
                                 // pending_into_adjustment handled below
-                            } else {
+                            } else if !state.expanded.contains(&id) {
                                 let indicator_width = 30.0;
                                 let indicator_x = bounds.x + bounds.width - indicator_width - 10.0;
 
@@ -1779,7 +1989,7 @@ where
                                         border: Border::default(),
                                         ..Default::default()
                                     },
-                                    tree_style.accept_drop_indicator_color,
+                                    indicator_color,
                                 );
 
                                 renderer.fill_text(
@@ -1795,7 +2005,7 @@ where
                                         wrapping: iced::advanced::text::Wrapping::default(),
                                     },
                                     Point::new(indicator_x - 20.0, branch_y + (branch_height / 2.0)),
-                                    tree_style.accept_drop_indicator_color,
+                                    indicator_color,
                                     *viewport,
                                 );
                             }
@@ -1821,6 +2031,7 @@ where
                     // Draw drop-into indicator border
                     if let Some(ref drag) = state.drag_active
                         && drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
+                            let indicator_color = if drop_is_valid { tree_style.accept_drop_indicator_color } else { tree_style.deny_drop_indicator_color };
                             renderer.fill_quad(
                                 renderer::Quad {
                                     bounds: Rectangle {
@@ -1830,13 +2041,13 @@ where
                                         height: branch_height,
                                     },
                                     border: Border {
-                                        color: tree_style.accept_drop_indicator_color,
+                                        color: indicator_color,
                                         width: 2.0,
                                         radius: Radius::from(4.0),
                                     },
                                     ..Default::default()
                                 },
-                                tree_style.accept_drop_indicator_color.scale_alpha(0.1),
+                                indicator_color.scale_alpha(0.1),
                             );
                         }
 
@@ -1911,24 +2122,6 @@ where
                         }
                     }
 
-                    // Draw handle/drag area
-                    let handle_x = indent_x + ARROW_W;
-                    let handle_width = HANDLE_STRIPE_W;
-
-                    renderer.fill_quad(
-                        renderer::Quad {
-                            bounds: Rectangle {
-                                x: handle_x,
-                                y: branch_y + 2.0,
-                                width: handle_width,
-                                height: branch_height - 4.0,
-                            },
-                            border: Border::default(),
-                            ..Default::default()
-                        },
-                        tree_style.line_color,
-                    );
-
                     // Draw the branch content
                     if let Some(ref drag) = state.drag_active {
                         if !drag.dragged_nodes.contains(&id) {
@@ -1971,7 +2164,7 @@ where
                 // Handle pending_into_adjustment after draw
                 if let Some(ref drag) = state.drag_active
                     && drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into
-                    && state.expanded.contains(&id) {
+                    && state.expanded.contains(&id) && drop_is_valid {
                         pending_into_adjustment = true;
                     }
 
@@ -1980,10 +2173,10 @@ where
                 if let Some(ref drag) = state.drag_active
                     && drag.drop_target == Some(id) &&
                     drag.drop_position == DropPosition::Into &&
-                    state.expanded.contains(&id) {
+                    state.expanded.contains(&id) && drop_is_valid {
                         let child_preview_y = branch_y + branch_height + self.spacing;
                         let child_depth = effective_depth + 1;
-                        draw_drop_preview(renderer, child_preview_y, child_depth, bounds.width);
+                        draw_drop_preview(renderer, child_preview_y, child_depth, bounds.width, false);
                     }
 
                 if let Some(ref drag) = state.drag_active
@@ -1999,7 +2192,7 @@ where
                             effective_depth
                         };
 
-                        draw_drop_preview(renderer, y, preview_depth, bounds.width);
+                        draw_drop_preview(renderer, y, preview_depth, bounds.width, !drop_is_valid);
                         y += LINE_HEIGHT + self.spacing;
                     }
 
@@ -2403,19 +2596,28 @@ where
                 };
                 
                 if let Some(target_id) = drop_target {
-                    // Use internal IDs for reordering
-                    self.reorder_branches(&dragged_nodes, target_id, &drop_position);
-                    
-                    // Use external IDs for the callback
-                    if let Some(ref on_drop) = self.tree_handle.on_drop
-                        && let Some(target_ext) = target_external {
-                            let drop_info = DropInfo {
-                                dragged_ids: dragged_external,
-                                target_id: Some(target_ext),
-                                position: drop_position,
-                            };
-                            shell.publish(on_drop(drop_info));
-                        }
+                    // Check whether the drop is permitted
+                    let drop_allowed = if let Some(ref can_drop_fn) = self.tree_handle.on_can_drop {
+                        can_drop_fn(&dragged_external, target_external, &drop_position)
+                    } else {
+                        true
+                    };
+
+                    if drop_allowed {
+                        // Use internal IDs for reordering
+                        self.reorder_branches(&dragged_nodes, target_id, &drop_position);
+
+                        // Use external IDs for the callback
+                        if let Some(ref on_drop) = self.tree_handle.on_drop
+                            && let Some(target_ext) = target_external {
+                                let drop_info = DropInfo {
+                                    dragged_ids: dragged_external,
+                                    target_id: Some(target_ext),
+                                    position: drop_position,
+                                };
+                                shell.publish(on_drop(drop_info));
+                            }
+                    }
                 }
 
                 let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
@@ -2499,25 +2701,8 @@ where
                 tree_style.selection_background.scale_alpha(0.9),
             );
 
-            // Draw the handle stripe
-            let indent_x = self.tree_handle.padding_x + (effective_depth as f32 * self.tree_handle.indent);
-            let handle_x = drag_bounds.x + indent_x + ARROW_W;
-            
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: Rectangle {
-                        x: handle_x,
-                        y: drag_bounds.y + 2.0,
-                        width: HANDLE_STRIPE_W,
-                        height: branch_height - 4.0,
-                    },
-                    border: Border::default(),
-                    ..Default::default()
-                },
-                tree_style.line_color.scale_alpha(0.7),
-            );
-            
             // Draw the content
+            let indent_x = self.tree_handle.padding_x + (effective_depth as f32 * self.tree_handle.indent);
             let content_x = indent_x + ARROW_W + CONTENT_GAP;
             let translation = Vector::new(
                 (drag_bounds.x + content_x) - self.layout.bounds().x,
