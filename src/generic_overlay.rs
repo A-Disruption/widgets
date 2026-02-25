@@ -144,12 +144,16 @@ where
     is_pressed: bool,
     /// If true, blocks interaction with content behind overlay
     opaque: bool,
+    /// Alpha value for the opaque backdrop (0.1 to 1.0)
+    opaque_alpha: f32,
     /// If true, clicking outside the overlay closes it
     close_on_click_outside: bool,
     /// If true, hides the header completely (no title bar or close button)
     hide_header: bool,
     /// If true, removes the X button from header
     hide_close_button: bool,
+    /// If true, prevents the overlay from being dragged via the header or Ctrl+drag
+    block_dragging: bool,
     /// Resize mode for the overlay
     resizable: ResizeMode,
     /// reset size and position on overlay closure
@@ -208,9 +212,11 @@ where
             hover_positions_on_click: false,
             is_pressed: false,
             opaque: false,
+            opaque_alpha: 0.3,
             close_on_click_outside: false,
             hide_header: false,
             hide_close_button: false,
+            block_dragging: false,
             resizable: ResizeMode::None,
             reset_on_close: false,
             external_is_open: None,
@@ -410,6 +416,13 @@ where
         self
     }
 
+    /// Sets the alpha/darkness of the opaque backdrop (clamped to 0.1–1.0)
+    #[must_use]
+    pub fn opaque_alpha(mut self, alpha: f32) -> Self {
+        self.opaque_alpha = alpha.clamp(0.1, 1.0);
+        self
+    }
+
     /// If true, hides the header (no title bar or close button)
     #[must_use]
     pub fn hide_header(mut self) -> Self {
@@ -421,6 +434,13 @@ where
     #[must_use]
     pub fn hide_close_button(mut self) -> Self {
         self.hide_close_button = true;
+        self
+    }
+
+    /// Prevents the overlay from being dragged via the header or Ctrl+drag
+    #[must_use]
+    pub fn block_dragging(mut self) -> Self {
+        self.block_dragging = true;
         self
     }
 
@@ -1059,10 +1079,12 @@ where
             hover_positions_on_click: self.hover_positions_on_click,
             content_layout: content_node,
             opaque: self.opaque,
+            opaque_alpha: self.opaque_alpha,
             close_on_click_outside: self.close_on_click_outside,
             hide_header: self.hide_header,
             hide_close_button: self.hide_close_button,
             resizable: self.resizable,
+            block_dragging: self.block_dragging,
         })))
     }
 
@@ -1117,10 +1139,12 @@ where
     hover_positions_on_click: bool,
     content_layout: Node,
     opaque: bool,
+    opaque_alpha: f32,
     close_on_click_outside: bool,
     hide_header: bool,
     hide_close_button: bool,
     resizable: ResizeMode,
+    block_dragging: bool,
 }
 
 impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
@@ -1287,7 +1311,7 @@ where
                         shadow: Shadow::default(),
                         snap: false,
                     },
-                    Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                    Color::from_rgba(0.0, 0.0, 0.0, self.opaque_alpha),
                 );
             }
 
@@ -1493,12 +1517,14 @@ where
                     }
                     shell.invalidate_layout();
                     shell.request_redraw();
+                    if self.opaque { shell.capture_event(); }
                     return;
                 }
-                
+
                 // If opaque and clicking outside, consume the event without forwarding
                 if self.opaque && !cursor_over_overlay {
-                    return;  // Block event from reaching widgets below
+                    shell.capture_event();
+                    return;
                 }
 
                 if let Some(position) = cursor.position() {
@@ -1552,7 +1578,7 @@ where
                             height: HEADER_HEIGHT,
                         };
 
-                        if cursor.is_over(header_bounds) {
+                        if cursor.is_over(header_bounds) && !self.block_dragging {
                             self.state.is_dragging = true;
                             self.state.drag_offset = Vector::new(
                                 position.x - bounds.x,
@@ -1565,7 +1591,7 @@ where
                     }
 
                     // Handle Ctrl+drag from anywhere in the overlay
-                    if self.state.ctrl_pressed && cursor_over_overlay {
+                    if self.state.ctrl_pressed && cursor_over_overlay && !self.block_dragging {
                         self.state.is_dragging = true;
                         self.state.drag_offset = Vector::new(
                             position.x - bounds.x,
@@ -1587,6 +1613,7 @@ where
                 
                 // If opaque, consume the event
                 if self.opaque && !cursor_over_overlay {
+                    shell.capture_event();
                     return;
                 }
             }
@@ -1688,6 +1715,7 @@ where
                 }
                 
                 if self.opaque && !cursor.is_over(bounds) {
+                    shell.capture_event();
                     return;
                 }
             }
@@ -1712,6 +1740,7 @@ where
             match event {
                 Event::Mouse(_) | Event::Touch(_) => {
                     if !cursor.is_over(bounds) {
+                        shell.capture_event();
                         return;
                     }
                 }
@@ -1796,7 +1825,7 @@ where
                     height: HEADER_HEIGHT,
                 };
 
-                if cursor.is_over(header_bounds) {
+                if cursor.is_over(header_bounds) && !self.block_dragging {
                     return if self.state.is_dragging {
                         mouse::Interaction::Grabbing
                     } else {
@@ -1806,7 +1835,7 @@ where
             }
 
             // Show grab/grabbing when Ctrl is pressed
-            if self.state.ctrl_pressed {
+            if self.state.ctrl_pressed && !self.block_dragging {
                 return if self.state.is_dragging {
                     mouse::Interaction::Grabbing
                 } else {
