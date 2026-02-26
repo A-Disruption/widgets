@@ -242,6 +242,7 @@ impl App {
         )
         .opaque(true)
         .close_on_click_outside()
+        .quick_animation()
         .on_open(Message::OverlayOpened)
         .on_close(|| Message::OverlayClosed);
 
