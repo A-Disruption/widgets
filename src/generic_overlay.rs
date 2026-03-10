@@ -10,6 +10,9 @@ use iced::{
         Clipboard, Layout, Overlay as _, Renderer as _, Shell, Widget,
     }, alignment::Vertical, border::Radius, keyboard, mouse, touch, widget::button, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow, Size, Vector, Background, Alignment
 };
+use iced::animation::{Animation, Easing};
+use iced::time::{Duration, Instant};
+use iced::window;
 
 const HEADER_HEIGHT: f32 = 32.0;
 const CLOSE_BUTTON_SIZE: f32 = 30.0;
@@ -162,6 +165,14 @@ where
     external_is_open: Option<bool>,
     /// Forward all updates to base Element
     interactive_base: bool,
+    /// Whether to animate open/close transitions
+    animate: bool,
+    /// Duration for open/close animation (None = 200ms)
+    animation_duration: Option<Duration>,
+    /// Easing for open/close animation
+    animation_easing: Easing,
+    /// Whether to use safe triangle to keep hover overlays open during diagonal cursor movement
+    safe_triangle: bool,
 }
 
 impl<'a, Message, Theme, Renderer> OverlayButton<'a, Message, Theme, Renderer> 
@@ -221,6 +232,10 @@ where
             reset_on_close: false,
             external_is_open: None,
             interactive_base: false,
+            animate: false,
+            animation_duration: None,
+            animation_easing: Easing::EaseInOut,
+            safe_triangle: true,
         }
     }
 
@@ -461,6 +476,55 @@ where
         self.interactive_base = interactive;
         self
     }
+
+    /// Enables or disables smooth open/close animation. Default is `false`.
+    #[must_use]
+    pub fn animate(mut self, animate: bool) -> Self {
+        self.animate = animate;
+        self
+    }
+
+    /// Enables animation with a quick (200ms) duration.
+    #[must_use]
+    pub fn quick_animation(mut self) -> Self {
+        self.animate = true;
+        self.animation_duration = Some(Duration::from_millis(200));
+        self
+    }
+
+    /// Enables animation with a slow (400ms) duration.
+    #[must_use]
+    pub fn slow_animation(mut self) -> Self {
+        self.animate = true;
+        self.animation_duration = Some(Duration::from_millis(400));
+        self
+    }
+
+    /// Enables animation with a custom duration.
+    #[must_use]
+    pub fn animation_duration(mut self, duration: Duration) -> Self {
+        self.animate = true;
+        self.animation_duration = Some(duration);
+        self
+    }
+
+    /// Sets the easing function for the animation. Also enables animation.
+    #[must_use]
+    pub fn animation_easing(mut self, easing: Easing) -> Self {
+        self.animate = true;
+        self.animation_easing = easing;
+        self
+    }
+
+    /// Enables or disables the safe triangle for hover mode. Default is `true`.
+    ///
+    /// The safe triangle keeps the overlay open while the cursor moves diagonally
+    /// from the trigger widget toward the overlay, preventing accidental dismissal.
+    #[must_use]
+    pub fn safe_triangle(mut self, enabled: bool) -> Self {
+        self.safe_triangle = enabled;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -613,9 +677,34 @@ where
     tree.children.iter().any(has_open_descendant_overlays::<P>)
 }
 
+/// Returns true if the point `p` is inside the triangle formed by vertices `a`, `b`, `c`.
+/// Uses the sign-of-cross-product method.
+fn point_in_triangle(p: Point, a: Point, b: Point, c: Point) -> bool {
+    let sign = |p1: Point, p2: Point, p3: Point| -> f32 {
+        (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+    };
+    let d1 = sign(p, a, b);
+    let d2 = sign(p, b, c);
+    let d3 = sign(p, c, a);
+    !((d1 < 0.0 || d2 < 0.0 || d3 < 0.0) && (d1 > 0.0 || d2 > 0.0 || d3 > 0.0))
+}
+
+/// Returns the two overlay corners closest to the trigger button, given the hover position.
+/// `extend` widens the base of the triangle perpendicularly (above/below for Left/Right
+/// overlays, left/right for Top/Bottom overlays) so diagonal cursor movement has a
+/// generous safe zone even when the overlay and button are closely aligned.
+fn overlay_near_corners(b: Rectangle, pos: &Position, extend: f32) -> (Point, Point) {
+    match pos {
+        Position::Right  => (Point::new(b.x, b.y - extend), Point::new(b.x, b.y + b.height + extend)),
+        Position::Left   => (Point::new(b.x + b.width, b.y - extend), Point::new(b.x + b.width, b.y + b.height + extend)),
+        Position::Bottom => (Point::new(b.x - extend, b.y), Point::new(b.x + b.width + extend, b.y)),
+        Position::Top    => (Point::new(b.x - extend, b.y + b.height), Point::new(b.x + b.width + extend, b.y + b.height)),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct State<P>
-where 
+where
     P: iced::advanced::text::Paragraph
 {
     is_open: bool,
@@ -638,6 +727,15 @@ where
     suppress_hover_reopen: bool,
     reset_on_close: bool,
     external_is_open: Option<bool>,
+    // Animation fields
+    open_animation: Animation<bool>,
+    open_progress: f32,
+    was_animating: bool,
+    is_closing: bool,
+    pending_close: bool,
+    // Safe triangle fields
+    last_button_cursor_pos: Option<Point>,
+    in_safe_triangle: bool,
 }
 
 impl<P: iced::advanced::text::Paragraph> State<P> {
@@ -645,19 +743,36 @@ impl<P: iced::advanced::text::Paragraph> State<P> {
     /// and forcing a recalculation of size/position on the next open.
     fn reset(&mut self) {
         self.is_open = false;
-        
+        self.is_closing = false;
+        self.pending_close = false;
+        self.open_progress = 0.0;
+        self.last_button_cursor_pos = None;
+        self.in_safe_triangle = false;
+        self.ctrl_pressed = false;
+
         if self.reset_on_close {
             // Resetting position to ORIGIN triggers the centering logic in `overlay::layout`
-            self.position = Point::ORIGIN; 
-            
+            self.position = Point::ORIGIN;
+
             // Resetting dimensions to 0.0 triggers the size calculation logic in `overlay()`
             self.current_width = 0.0;
             self.current_height = 0.0;
-            
+
             // Clear interaction states
             self.is_dragging = false;
             self.is_resizing = false;
             self.resize_edge = ResizeEdge::None;
+        }
+    }
+
+    /// Initiates a close animation if `animate` is true, or resets immediately if false.
+    /// Callers must also call `shell.request_redraw()` and `shell.invalidate_layout()`.
+    fn start_close_animation(&mut self, animate: bool) {
+        if animate && !self.is_closing {
+            self.is_closing = true;
+            self.open_animation.go_mut(false, Instant::now());
+        } else if !animate {
+            self.reset();
         }
     }
 }
@@ -674,6 +789,14 @@ where
     }
 
     fn state(&self) -> widget::tree::State {
+        let open_animation = {
+            let anim = Animation::new(false).easing(self.animation_easing);
+            if let Some(dur) = self.animation_duration {
+                anim.duration(dur)
+            } else {
+                anim.quick()
+            }
+        };
         widget::tree::State::new(
             State {
                 is_open: false,
@@ -696,6 +819,13 @@ where
                 suppress_hover_reopen: false,
                 reset_on_close: self.reset_on_close,
                 external_is_open: self.external_is_open,
+                open_animation,
+                open_progress: 0.0,
+                was_animating: false,
+                is_closing: false,
+                pending_close: false,
+                last_button_cursor_pos: None,
+                in_safe_triangle: false,
             }
         )
     }
@@ -710,9 +840,18 @@ where
             let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
             if state.is_open != external_open {
                 if !external_open {
-                    state.reset();
+                    // Use pending_close so update() can start the animation with shell access
+                    if self.animate {
+                        state.pending_close = true;
+                        // Don't call reset() yet — deferred to update() via pending_close
+                    } else {
+                        state.reset();
+                    }
                 } else {
                     state.is_open = true;
+                    state.is_closing = false;
+                    state.pending_close = false;
+                    state.open_progress = if self.animate { 0.0 } else { 1.0 };
                 }
             }
         }
@@ -812,6 +951,18 @@ where
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
         let bounds = layout.bounds();
 
+        // Handle pending_close set by diff() when external is_open(false) changes
+        if state.pending_close {
+            state.pending_close = false;
+            state.start_close_animation(self.animate);
+            shell.request_redraw();
+            shell.invalidate_layout();
+            if !self.animate {
+                if let Some(on_close) = &self.on_close { shell.publish(on_close()); }
+                if let Some(on_toggle) = &self.on_toggle { shell.publish(on_toggle(false)); }
+            }
+        }
+
         if self.interactive_base {
             self.button_content.as_widget_mut().update(
                 &mut tree.children[1],
@@ -837,11 +988,36 @@ where
             Event::Mouse(mouse::Event::CursorMoved { position: _ }) => {
                 if cursor.is_over(layout.bounds()) {
                     self.status = Some(button::Status::Hovered);
+                    // Track cursor position while over button as safe triangle apex
+                    if self.hover.enabled {
+                        if let Some(pos) = cursor.position() {
+                            state.last_button_cursor_pos = Some(pos);
+                        }
+                        state.in_safe_triangle = false;
+                    }
                     shell.invalidate_layout();
                 } else {
                     self.status = Some(button::Status::Active);
                     if state.suppress_hover_reopen && self.hover.enabled { state.suppress_hover_reopen = !state.suppress_hover_reopen }
                     shell.invalidate_layout();
+                }
+            }
+            Event::Window(window::Event::RedrawRequested(now)) => {
+                if self.animate && (state.is_open || state.is_closing) {
+                    state.open_progress = state.open_animation.interpolate(0.0, 1.0, *now);
+                    if state.open_animation.is_animating(*now) {
+                        state.was_animating = true;
+                        shell.invalidate_layout();
+                        shell.request_redraw();
+                    } else if state.was_animating {
+                        state.was_animating = false;
+                        shell.invalidate_layout();
+                        if state.is_closing {
+                            state.reset();
+                            if let Some(on_close) = &self.on_close { shell.publish(on_close()); }
+                            if let Some(on_toggle) = &self.on_toggle { shell.publish(on_toggle(false)); }
+                        }
+                    }
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
@@ -860,8 +1036,15 @@ where
                     };
                     
                     state.is_open = should_open;
-                    
+
                     if should_open {
+                        if self.animate {
+                            state.is_closing = false;
+                            state.open_animation.go_mut(true, Instant::now());
+                            state.open_progress = state.open_animation.interpolate(0.0, 1.0, Instant::now());
+                        } else {
+                            state.open_progress = 1.0;
+                        }
                         if let Some(on_open) = &self.on_open {
                             shell.publish(on_open(state.position, Size::new(state.current_width, state.current_height)));
                         }
@@ -906,6 +1089,13 @@ where
             // Open on hover
             if cursor_over_button && !state.is_open && !state.suppress_hover_reopen {
                 state.is_open = true;
+                if self.animate {
+                    state.is_closing = false;
+                    state.open_animation.go_mut(true, Instant::now());
+                    state.open_progress = state.open_animation.interpolate(0.0, 1.0, Instant::now());
+                } else {
+                    state.open_progress = 1.0;
+                }
                 if let Some(on_open) = &self.on_open {
                     shell.publish(on_open(state.position, Size::new(state.current_width, state.current_height)));
                 }
@@ -916,9 +1106,9 @@ where
                 shell.request_redraw();
             }
 
-            // Close when cursor exits both button and overlay
-            if !state.cursor_over_button && !state.cursor_over_overlay && state.is_open {
-                state.reset();
+            // Close when cursor exits both button and overlay (fallback; primary close is in Overlay::update)
+            if !state.cursor_over_button && !state.cursor_over_overlay && state.is_open && !state.in_safe_triangle {
+                state.start_close_animation(self.animate);
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
@@ -1085,6 +1275,8 @@ where
             hide_close_button: self.hide_close_button,
             resizable: self.resizable,
             block_dragging: self.block_dragging,
+            animate: self.animate,
+            safe_triangle: self.safe_triangle,
         })))
     }
 
@@ -1145,6 +1337,8 @@ where
     hide_close_button: bool,
     resizable: ResizeMode,
     block_dragging: bool,
+    animate: bool,
+    safe_triangle: bool,
 }
 
 impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
@@ -1286,7 +1480,21 @@ where
             self.state.position = calculated_position;
         }
 
-        Node::new(size).move_to(self.state.position)
+        // Apply slide offset for hover-positioned overlays during open/close animation
+        let final_position = if self.animate && (self.hover.enabled || self.hover_positions_on_click) {
+            let slide_dist = 10.0 * (1.0 - self.state.open_progress);
+            let offset = match self.hover.config.position {
+                Position::Right  => Vector::new(-slide_dist,  0.0),
+                Position::Left   => Vector::new( slide_dist,  0.0),
+                Position::Bottom => Vector::new(0.0, -slide_dist),
+                Position::Top    => Vector::new(0.0,  slide_dist),
+            };
+            Point::new(self.state.position.x + offset.x, self.state.position.y + offset.y)
+        } else {
+            self.state.position
+        };
+
+        Node::new(size).move_to(final_position)
     }
 
     fn draw(
@@ -1300,6 +1508,16 @@ where
         let bounds = layout.bounds();
         let draw_style = <Theme as Catalog>::style(theme, self.class);
 
+        // Animation fade helpers: multiply alpha by open_progress for smooth fade
+        let alpha = self.state.open_progress;
+        let fade = |c: Color| -> Color { Color { a: c.a * alpha, ..c } };
+        let fade_bg = |bg: Background| -> Background {
+            match bg {
+                Background::Color(c) => Background::Color(fade(c)),
+                other => other,
+            }
+        };
+
         // Use layer rendering for proper overlay isolation
         renderer.with_layer(self.state.window_bounds, |renderer| {
             // Draw opaque backdrop if requested
@@ -1311,7 +1529,7 @@ where
                         shadow: Shadow::default(),
                         snap: false,
                     },
-                    Color::from_rgba(0.0, 0.0, 0.0, self.opaque_alpha),
+                    Color::from_rgba(0.0, 0.0, 0.0, self.opaque_alpha * alpha),
                 );
             }
 
@@ -1320,14 +1538,17 @@ where
                 renderer::Quad {
                     bounds,
                     border: Border {
-                        color: draw_style.border_color,
+                        color: fade(draw_style.border_color),
                         width: 1.0,
                         radius: self.radius.into(),
                     },
-                    shadow: draw_style.shadow,
+                    shadow: Shadow {
+                        color: fade(draw_style.shadow.color),
+                        ..draw_style.shadow
+                    },
                     snap: true,
                 },
-                draw_style.background,
+                Background::Color(fade(draw_style.background)),
             );
 
             // Draw header only if not hidden
@@ -1344,7 +1565,7 @@ where
                     renderer::Quad {
                         bounds: header_bounds,
                         border: Border {
-                            color: draw_style.border_color,
+                            color: fade(draw_style.border_color),
                             width: 1.0,
                             radius: Radius {
                                 top_left: self.radius,
@@ -1356,7 +1577,7 @@ where
                         shadow: Shadow::default(),
                         snap: true,
                     },
-                    draw_style.header_background,
+                    Background::Color(fade(draw_style.header_background)),
                 );
 
                 // Draw title
@@ -1373,7 +1594,7 @@ where
                         wrapping: iced::advanced::text::Wrapping::default(),
                     },
                     Point::new(header_bounds.center_x() - (CLOSE_BUTTON_SIZE / 2.0), header_bounds.center_y()),
-                    draw_style.text_color,
+                    fade(draw_style.text_color),
                     header_bounds,
                 );
 
@@ -1397,7 +1618,7 @@ where
                                 shadow: Shadow::default(),
                                 snap: true,
                             },
-                            Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                            Color::from_rgba(0.0, 0.0, 0.0, 0.1 * alpha),
                         );
                     }
 
@@ -1414,7 +1635,7 @@ where
                             wrapping: iced::advanced::text::Wrapping::default(),
                         },
                         Point::new(close_bounds.center_x(), close_bounds.center_y()),
-                        draw_style.text_color,
+                        fade(draw_style.text_color),
                         close_bounds,
                     );
                 }
@@ -1429,30 +1650,95 @@ where
                 height: bounds.height - header_height - self.padding * 2.0,
             };
 
-            renderer.with_translation(
-                Vector::new(content_bounds.x, content_bounds.y),
-                |renderer| {
-                    // Adjust cursor to content coordinate space
-                    let adjusted_cursor = cursor.position().map(|position| {
-                        mouse::Cursor::Available(Point::new(
-                            position.x - content_bounds.x,
-                            position.y - content_bounds.y,
-                        ))
-                    }).unwrap_or(mouse::Cursor::Unavailable);
+            // Adjust cursor to content coordinate space (computed outside closures)
+            let adjusted_cursor = cursor.position().map(|position| {
+                mouse::Cursor::Available(Point::new(
+                    position.x - content_bounds.x,
+                    position.y - content_bounds.y,
+                ))
+            }).unwrap_or(mouse::Cursor::Unavailable);
 
-                    self.content.as_widget().draw(
-                        self.tree,
-                        renderer,
-                        theme,
-                        &renderer::Style {
-                            text_color: draw_style.text_color,
-                        },
-                        Layout::new(&self.content_layout),
-                        adjusted_cursor,
-                        &Rectangle::new(Point::ORIGIN, content_bounds.size()),
-                    );
-                },
-            );
+            // with_layer creates a compositing boundary. Any with_layer calls inside child
+            // widgets are isolated within this layer, so drawing after it closes is guaranteed
+            // to composite on top of all child content.
+            renderer.with_layer(content_bounds, |renderer| {
+                renderer.with_translation(
+                    Vector::new(content_bounds.x, content_bounds.y),
+                    |renderer| {
+                        self.content.as_widget().draw(
+                            self.tree,
+                            renderer,
+                            theme,
+                            &renderer::Style {
+                                text_color: fade(draw_style.text_color),
+                            },
+                            Layout::new(&self.content_layout),
+                            adjusted_cursor,
+                            &Rectangle::new(Point::ORIGIN, content_bounds.size()),
+                        );
+                    },
+                );
+            });
+
+            // Fade mask drawn in PARENT layer after the content layer closes — guaranteed to
+            // composite on top of the entire content layer including any nested layers that
+            // child widgets (buttons, text_input, etc.) create internally.
+            if self.animate && alpha < 1.0 {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: content_bounds,
+                        border: Border::default(),
+                        shadow: Shadow::default(),
+                        snap: true,
+                    },
+                    Color { a: 1.0 - alpha, ..draw_style.background },
+                );
+            }
+
+            // Debug: draw safe triangle outline when Ctrl is held (window coordinate space).
+            // Each edge is rendered as a series of 2×2 pixel squares spaced 1.5px apart,
+            // producing a solid-looking line at typical display densities.
+            if self.state.ctrl_pressed && self.safe_triangle && (self.hover.enabled || self.hover_positions_on_click) {
+                if let Some(last_pos) = self.state.last_button_cursor_pos {
+                    let extend = self.hover.config.gap.max(5.0);
+                    let (corner_a, corner_b) = overlay_near_corners(bounds, &self.hover.config.position, extend);
+                    let line_color = Color::from_rgba(0.0, 0.8, 1.0, 0.8);
+                    let px = 2.0_f32; // square side length
+                    let step = 1.5_f32; // center-to-center spacing
+
+                    for edge in [
+                        (last_pos, corner_a),
+                        (last_pos, corner_b),
+                        (corner_a, corner_b),
+                    ] {
+                        let (p1, p2) = edge;
+                        let dx = p2.x - p1.x;
+                        let dy = p2.y - p1.y;
+                        let len = (dx * dx + dy * dy).sqrt();
+                        if len < 1.0 { continue; }
+                        let steps = (len / step).ceil() as usize + 1;
+                        for i in 0..=steps {
+                            let t = (i as f32 * step / len).min(1.0);
+                            let x = p1.x + dx * t;
+                            let y = p1.y + dy * t;
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: Rectangle {
+                                        x: x - px / 2.0,
+                                        y: y - px / 2.0,
+                                        width: px,
+                                        height: px,
+                                    },
+                                    border: Border::default(),
+                                    shadow: Shadow::default(),
+                                    snap: false,
+                                },
+                                line_color,
+                            );
+                        }
+                    }
+                }
+            }
         });
     }
 
@@ -1469,22 +1755,31 @@ where
 
         // Track Ctrl key state
         match event {
-            Event::Keyboard(keyboard::Event::KeyPressed { 
+            Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(keyboard::key::Named::Control),
                 ..
             }) => {
                 self.state.ctrl_pressed = true;
+                shell.request_redraw();
+                shell.invalidate_layout();
                 return;
             }
-            Event::Keyboard(keyboard::Event::KeyReleased { 
+            Event::Keyboard(keyboard::Event::KeyReleased {
                 key: keyboard::Key::Named(keyboard::key::Named::Control),
                 ..
             }) => {
                 self.state.ctrl_pressed = false;
+                shell.request_redraw();
+                shell.invalidate_layout();
                 return;
             }
             Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                let was_pressed = self.state.ctrl_pressed;
                 self.state.ctrl_pressed = modifiers.control();
+                if self.state.ctrl_pressed != was_pressed {
+                    shell.request_redraw();
+                    shell.invalidate_layout();
+                }
             }
             _ => {}
         }
@@ -1500,7 +1795,7 @@ where
             | Event::Touch(touch::Event::FingerPressed { .. }) => { 
                 let cursor_over_overlay = cursor.is_over(bounds);
                 if cursor.is_over(self.button_bounds) && self.state.is_open && !(self.hover.config.mode == PositionMode::Inside) && self.state.external_is_open.is_none() {
-                    self.state.reset();
+                    self.state.start_close_animation(self.animate);
                     shell.invalidate_layout();
                     shell.request_redraw();
                     shell.capture_event();
@@ -1508,12 +1803,10 @@ where
                 }
 
                 if self.close_on_click_outside && !cursor_over_overlay && self.state.is_open {
-                    self.state.reset();
-                    if let Some(on_close) = self.on_close {
-                        shell.publish(on_close());
-                    }
-                    if let Some(on_toggle) = &self.on_toggle {
-                        shell.publish(on_toggle(false))
+                    self.state.start_close_animation(self.animate);
+                    if !self.animate {
+                        if let Some(on_close) = self.on_close { shell.publish(on_close()); }
+                        if let Some(on_toggle) = &self.on_toggle { shell.publish(on_toggle(false)); }
                     }
                     shell.invalidate_layout();
                     shell.request_redraw();
@@ -1557,12 +1850,10 @@ where
                             };
 
                             if cursor.is_over(close_bounds) {
-                                self.state.reset();
-                                if let Some(on_close) = self.on_close {
-                                    shell.publish(on_close());
-                                }
-                                if let Some(on_toggle) = &self.on_toggle {
-                                    shell.publish(on_toggle(false))
+                                self.state.start_close_animation(self.animate);
+                                if !self.animate {
+                                    if let Some(on_close) = self.on_close { shell.publish(on_close()); }
+                                    if let Some(on_toggle) = &self.on_toggle { shell.publish(on_toggle(false)); }
                                 }
                                 shell.invalidate_layout();
                                 shell.request_redraw();
@@ -1620,19 +1911,54 @@ where
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 // handle hover first
                 if self.hover.enabled || self.hover_positions_on_click {
-                    self.state.cursor_over_overlay = cursor.is_over(layout.bounds().expand(self.hover.config.buffer));
+                    let overlay_bounds = layout.bounds();
+                    // Buffered bounds used for the close/keep-open decision
+                    self.state.cursor_over_overlay = cursor.is_over(overlay_bounds.expand(self.hover.config.buffer));
                     self.state.cursor_over_button = cursor.is_over(self.button_bounds.expand(self.hover.config.buffer));
-                    
-                    // Close if cursor over neither button nor overlay
-                    if !self.state.cursor_over_button && !self.state.cursor_over_overlay && !has_open_descendant_overlays::<Renderer::Paragraph>(self.tree) {
+
+                    // Safe triangle tracking uses RAW (non-buffered) bounds.
+                    // The buffer can be larger than the gap, making the buffered zones overlap
+                    // and leaving no "gap" region where the safe triangle would apply.
+                    let raw_over_button = cursor.is_over(self.button_bounds);
+                    let raw_over_overlay = cursor.is_over(overlay_bounds);
+
+                    if raw_over_button {
+                        // Track cursor position on button as the safe triangle apex
+                        if let Some(pos) = cursor.position() {
+                            self.state.last_button_cursor_pos = Some(pos);
+                        }
+                        self.state.in_safe_triangle = false;
+                    } else if raw_over_overlay {
+                        // Cursor is inside the overlay — safe zone no longer needed.
+                        // last_button_cursor_pos is intentionally NOT updated here: the safe
+                        // triangle for this overlay stays anchored to where the cursor last
+                        // left the trigger button, keeping it frozen while the user navigates
+                        // inside the overlay (including through nested child overlay buttons).
+                        self.state.in_safe_triangle = false;
+                    } else if !self.state.is_closing {
+                        // Cursor is in the gap between button and overlay — check safe triangle
+                        if self.safe_triangle {
+                            if let (Some(last_pos), Some(cur_pos)) = (self.state.last_button_cursor_pos, cursor.position()) {
+                                let (corner_a, corner_b) = overlay_near_corners(overlay_bounds, &self.hover.config.position, self.hover.config.gap.max(5.0));
+                                self.state.in_safe_triangle = point_in_triangle(cur_pos, last_pos, corner_a, corner_b);
+                            }
+                        }
+                    }
+
+                    // Close if cursor over neither button nor overlay (buffered), not in safe triangle, not already closing
+                    let should_close = !self.state.cursor_over_button
+                        && !self.state.cursor_over_overlay
+                        && !self.state.in_safe_triangle
+                        && !self.state.is_closing
+                        && !has_open_descendant_overlays::<Renderer::Paragraph>(self.tree);
+
+                    if should_close {
                         if self.state.external_is_open.is_none() {
-                            self.state.reset();
+                            self.state.start_close_animation(self.animate);
                         }
-                        if let Some(on_close) = self.on_close {
-                            shell.publish(on_close());
-                        }
-                        if let Some(on_toggle) = &self.on_toggle {
-                            shell.publish(on_toggle(false))
+                        if !self.animate {
+                            if let Some(on_close) = self.on_close { shell.publish(on_close()); }
+                            if let Some(on_toggle) = &self.on_toggle { shell.publish(on_toggle(false)); }
                         }
                         shell.invalidate_layout();
                         shell.request_redraw();
@@ -1723,13 +2049,13 @@ where
                 key: keyboard::Key::Named(keyboard::key::Named::Escape),
                 ..
             }) => {
-                self.state.reset();
-                if let Some(on_close) = self.on_close {
-                    shell.publish(on_close());
+                self.state.start_close_animation(self.animate);
+                if !self.animate {
+                    if let Some(on_close) = self.on_close { shell.publish(on_close()); }
+                    if let Some(on_toggle) = &self.on_toggle { shell.publish(on_toggle(false)); }
                 }
-                if let Some(on_toggle) = &self.on_toggle {
-                    shell.publish(on_toggle(false))
-                }
+                shell.invalidate_layout();
+                shell.request_redraw();
                 return;
             }
             _ => {}
