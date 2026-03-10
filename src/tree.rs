@@ -87,6 +87,8 @@ where
     class: Theme::Class<'a>,
     easing: Easing,
     animation_duration: Option<Duration>,
+    on_toggle: Option<Box<dyn Fn(usize, bool) -> Message + 'a>>,
+    initially_expanded_ext_ids: Option<HashSet<usize>>,
 }
 
 #[derive(Clone, Debug)]
@@ -310,6 +312,8 @@ where
             class: Theme::default(),
             easing: Easing::EaseInOut,
             animation_duration: None,
+            on_toggle: None,
+            initially_expanded_ext_ids: None,
         }
     }
 
@@ -446,6 +450,22 @@ where
     /// Sets a custom animation duration.
     pub fn duration(mut self, duration: Duration) -> Self {
         self.animation_duration = Some(duration);
+        self
+    }
+
+    /// Sets a callback fired when a branch is expanded or collapsed.
+    /// Receives `(external_id, is_now_expanded)`.
+    pub fn on_toggle(mut self, f: impl Fn(usize, bool) -> Message + 'a) -> Self {
+        self.on_toggle = Some(Box::new(f));
+        self
+    }
+
+    /// Provides the set of external IDs that should start expanded.
+    /// Branches whose external ID is not in this set start collapsed.
+    /// If this method is never called all branches default to expanded
+    /// (preserving backwards-compatible behaviour).
+    pub fn initially_expanded(mut self, ids: HashSet<usize>) -> Self {
+        self.initially_expanded_ext_ids = Some(ids);
         self
     }
 
@@ -680,7 +700,13 @@ where
                     .filter(|&eid| eid != NO_EXTERNAL_ID);
                 child_parent_map.insert(branch.external_id, parent_ext);
             }
-            if branch.has_children {
+            let should_expand = match &self.initially_expanded_ext_ids {
+                None => branch.has_children,
+                Some(ids) => branch.has_children
+                    && branch.external_id != NO_EXTERNAL_ID
+                    && ids.contains(&branch.external_id),
+            };
+            if should_expand {
                 expanded.insert(branch.id);
                 if branch.external_id != NO_EXTERNAL_ID {
                     expanded_ext_ids.insert(branch.external_id);
@@ -1274,6 +1300,11 @@ where
                                         }
                                     }
                                 }
+                                if ext_id != NO_EXTERNAL_ID {
+                                    if let Some(on_toggle) = &self.on_toggle {
+                                        shell.publish(on_toggle(ext_id, !is_expanded));
+                                    }
+                                }
                                 shell.invalidate_layout();
                                 shell.request_redraw();
                                 return;
@@ -1551,6 +1582,11 @@ where
                                             combined_state.tree_state.expanded_ext_ids.remove(&ext_id);
                                         }
                                     }
+                                    if ext_id != NO_EXTERNAL_ID {
+                                        if let Some(on_toggle) = &self.on_toggle {
+                                            shell.publish(on_toggle(ext_id, false));
+                                        }
+                                    }
                                     shell.invalidate_layout();
                                     shell.request_redraw();
                                 }
@@ -1573,6 +1609,11 @@ where
                                         combined_state.tree_state.expanded.insert(focused);
                                         if ext_id != NO_EXTERNAL_ID {
                                             combined_state.tree_state.expanded_ext_ids.insert(ext_id);
+                                        }
+                                    }
+                                    if ext_id != NO_EXTERNAL_ID {
+                                        if let Some(on_toggle) = &self.on_toggle {
+                                            shell.publish(on_toggle(ext_id, true));
                                         }
                                     }
                                     shell.invalidate_layout();
