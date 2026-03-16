@@ -1,12 +1,10 @@
-use iced::widget::{column, text, scrollable};
+use iced::widget::{column, scrollable, text};
 use iced::{Element, Theme};
 use widgets::collapsible::{self, collapsible};
 use widgets::collapsible_group;
 
 #[derive(Debug, Clone)]
-enum Message {
-}
-
+enum Message {}
 
 struct CollapsibleExample {}
 
@@ -24,16 +22,13 @@ impl CollapsibleExample {
     }
 
     fn update(&mut self, message: Message) {
-        match message {
-
-        }
+        match message {}
     }
 
     fn view<'a>(&'a self) -> Element<'a, Message> {
         scrollable(
             column![
                 text("Collapsible Examples").size(25),
-
                 text("Standalone").size(20),
                 collapsible(
                     "Help Section",
@@ -44,15 +39,12 @@ impl CollapsibleExample {
                     .spacing(10)
                     .padding(15),
                 ),
-                
                 collapsible(
                     "About Section (Starts Open)",
                     text("Can set .expanded(true) to start open"),
                 )
                 .expanded(true),
-                
                 text("Grouped, one open at a time").size(20),
-                
                 collapsible_group![
                     collapsible(
                         "General Settings",
@@ -64,7 +56,6 @@ impl CollapsibleExample {
                         .spacing(5)
                         .padding(15),
                     ),
-                    
                     collapsible(
                         "Advanced Settings",
                         column![
@@ -75,7 +66,6 @@ impl CollapsibleExample {
                         .spacing(5)
                         .padding(15),
                     ),
-                    
                     collapsible(
                         "Privacy Settings",
                         column![
@@ -88,9 +78,7 @@ impl CollapsibleExample {
                     ),
                 ]
                 .spacing(10.0),
-                
                 text("Group 2").size(20),
-                
                 collapsible_group![
                     collapsible(
                         "Profile",
@@ -102,7 +90,6 @@ impl CollapsibleExample {
                         .spacing(5)
                         .padding(15),
                     ),
-                    
                     collapsible(
                         "Notifications",
                         column![
@@ -113,7 +100,6 @@ impl CollapsibleExample {
                         .spacing(5)
                         .padding(15),
                     ),
-                    
                     collapsible(
                         "Security",
                         column![
@@ -126,47 +112,30 @@ impl CollapsibleExample {
                     ),
                 ]
                 .spacing(10.0),
-                
                 text("Styled").size(20),
-                
                 collapsible_group![
                     collapsible(
                         "Styled Section 1",
-                        column![
-                            text("Content with custom styling"),
-                        ]
-                        .spacing(5)
-                        .padding(15),
+                        column![text("Content with custom styling"),]
+                            .spacing(5)
+                            .padding(15),
                     )
                     .style(collapsible::primary),
-                    
                     collapsible(
                         "Styled Section 2",
-                        column![
-                            text("Another styled section"),
-                        ]
-                        .spacing(5)
-                        .padding(15),
+                        column![text("Another styled section"),]
+                            .spacing(5)
+                            .padding(15),
                     )
                     .style(collapsible::success),
-                    
                     collapsible(
                         "Styled Section 3",
-                        column![
-                            text("Danger color theme"),
-                        ]
-                        .spacing(5)
-                        .padding(15),
+                        column![text("Danger color theme"),].spacing(5).padding(15),
                     )
                     .style(collapsible::danger),
-
                     collapsible(
                         "Styled Section 4",
-                        column![
-                            text("Warning color theme"),
-                        ]
-                        .spacing(5)
-                        .padding(15),
+                        column![text("Warning color theme"),].spacing(5).padding(15),
                     )
                     .style(collapsible::warning),
                 ]
@@ -174,8 +143,9 @@ impl CollapsibleExample {
             ]
             .width(400)
             .spacing(20)
-            .padding(20)
-        ).into()
+            .padding(20),
+        )
+        .into()
     }
 }
 
@@ -183,7 +153,7 @@ fn main() -> iced::Result {
     iced::application(
         CollapsibleExample::new,
         CollapsibleExample::update,
-        CollapsibleExample::view
+        CollapsibleExample::view,
     )
     .theme(CollapsibleExample::theme)
     .title(CollapsibleExample::title)

@@ -1,15 +1,19 @@
 use iced::{
+    Border, Color, Element, Event, Length, Padding, Point, Rectangle, Renderer, Shadow, Size,
+    Vector,
     advanced::{
-        layout::{Limits, Node}, overlay, renderer, text::Renderer as _, widget::{self, tree::Tree}, Clipboard, Layout, Overlay, Renderer as _, Shell, Widget
+        Clipboard, Layout, Overlay, Renderer as _, Shell, Widget,
+        layout::{Limits, Node},
+        overlay, renderer,
+        text::Renderer as _,
+        widget::{self, tree::Tree},
     },
-    alignment:: Vertical,
+    alignment::Vertical,
     keyboard, mouse, touch,
     widget::text,
-    Border, Color, Element, Event, Length, Padding, Point, Rectangle, 
-    Renderer, Shadow, Size, Vector,
 };
+use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
-use std::cell::{RefCell, Cell};
 
 static mut ACTIVE_COLOR_PICKER: Option<*mut bool> = None;
 
@@ -21,9 +25,7 @@ const TAB_SPACING: f32 = 8.0;
 const CONTENT_PADDING: f32 = 20.0;
 
 /// Helper function to create a color button
-pub fn color_button<'a, Message>(
-    color: Color,
-) -> ColorButton<'a, Message> {
+pub fn color_button<'a, Message>(color: Color) -> ColorButton<'a, Message> {
     ColorButton::new(color)
 }
 
@@ -123,11 +125,13 @@ impl<'a, Message> ColorButton<'a, Message> {
     }
 
     /// Sets a callback that receives both color and optional theme path
-    pub fn on_change_with_source(mut self, callback: impl Fn(Color, Option<String>) -> Message + 'a) -> Self {
+    pub fn on_change_with_source(
+        mut self,
+        callback: impl Fn(Color, Option<String>) -> Message + 'a,
+    ) -> Self {
         self.on_change_with_source = Some(Box::new(callback));
         self
     }
-
 }
 
 #[derive(Debug, Clone)]
@@ -154,13 +158,22 @@ impl Default for State {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum PickTarget { Color, Text }
+enum PickTarget {
+    Color,
+    Text,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum ColorString { Hex, Rgb}
+enum ColorString {
+    Hex,
+    Rgb,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Tone { color: Color, text: Color }
+struct Tone {
+    color: Color,
+    text: Color,
+}
 
 #[derive(Clone, Debug)]
 struct PaletteRow {
@@ -184,7 +197,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
 
     fn diff(&self, tree: &mut Tree) {
         let state = tree.state.downcast_mut::<State>();
-        
+
         // Sync external color to internal state if it changed
         if state.color != self.color {
             state.color = self.color;
@@ -196,12 +209,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
         Size::new(self.width, self.height)
     }
 
-    fn layout(
-        &mut self,
-        _tree: &mut Tree,
-        _renderer: &Renderer,
-        limits: &Limits,
-    ) -> Node {
+    fn layout(&mut self, _tree: &mut Tree, _renderer: &Renderer, limits: &Limits) -> Node {
         let limits = limits.width(self.width).height(self.height);
         let size = limits.resolve(self.width, self.height, Size::ZERO);
         Node::new(size)
@@ -225,10 +233,10 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
             renderer::Quad {
                 bounds,
                 border: Border {
-                    color: if state.is_open { 
-                        theme.palette().primary 
-                    } else { 
-                        Color::from_rgb(0.5, 0.5, 0.5) 
+                    color: if state.is_open {
+                        theme.palette().primary
+                    } else {
+                        Color::from_rgb(0.5, 0.5, 0.5)
                     },
                     width: self.border_width,
                     radius: self.border_radius.into(),
@@ -274,7 +282,6 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
                 bounds,
             );
         }
-
     }
 
     fn update(
@@ -333,16 +340,17 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
         _translation: Vector,
     ) -> Option<overlay::Element<'b, Message, iced::Theme, Renderer>> {
         let widget_state = state.state.downcast_mut::<State>();
-        
-        if widget_state.is_open {
 
-            unsafe {   // Doesn't seem like a good idea?
+        if widget_state.is_open {
+            unsafe {
+                // Doesn't seem like a good idea?
                 if let Some(active) = ACTIVE_COLOR_PICKER
-                    && !std::ptr::eq(active, &mut widget_state.is_open) {
-                        // Close the other picker
-                        *active = false;
-                    }
-                
+                    && !std::ptr::eq(active, &mut widget_state.is_open)
+                {
+                    // Close the other picker
+                    *active = false;
+                }
+
                 widget_state.is_open = true;
                 ACTIVE_COLOR_PICKER = Some(&mut widget_state.is_open as *mut bool);
             }
@@ -365,7 +373,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
                     (viewport.height - overlay_height) / 2.0,
                 );
             }
-            
+
             Some(
                 ModernColorPickerOverlay {
                     overlay_state,
@@ -377,7 +385,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
                     title: widget_state.title.clone(),
                     viewport_size: widget_state.window_size.unwrap_or(viewport.size()),
                 }
-                .overlay()
+                .overlay(),
             )
         } else {
             None
@@ -385,12 +393,13 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
     }
 }
 
-impl<'a, Message: Clone + 'a> From<ColorButton<'a, Message>> for Element<'a, Message, iced::Theme, Renderer> {
+impl<'a, Message: Clone + 'a> From<ColorButton<'a, Message>>
+    for Element<'a, Message, iced::Theme, Renderer>
+{
     fn from(button: ColorButton<'a, Message>) -> Self {
         Self::new(button)
     }
 }
-
 
 // Modern overlay implementation with tabs
 #[derive(Debug, Clone)]
@@ -417,7 +426,7 @@ struct OverlayState {
     is_dragging: bool,
     drag_offset: Vector,
     // feedback timer for "Copied!"
-    copied_at: Option<Instant>, 
+    copied_at: Option<Instant>,
 
     // filled in draw, read in update
     palette_cache: RefCell<Vec<PaletteRow>>,
@@ -425,7 +434,7 @@ struct OverlayState {
     palette_cache_dirty: Cell<bool>,
 
     // Track if current color came from palette
-    palette_source: Option<PaletteSource>,    
+    palette_source: Option<PaletteSource>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -433,7 +442,7 @@ enum ColorPickerTab {
     Grid,
     Spectrum,
     Sliders,
-    Palette
+    Palette,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -473,7 +482,7 @@ impl OverlayState {
             copied_at: None,
             palette_cache: RefCell::new(Vec::new()),
             palette_cache_dirty: Cell::new(true),
-            palette_source: None
+            palette_source: None,
         }
     }
 
@@ -499,70 +508,162 @@ impl OverlayState {
     /// Generate theme path code from palette source
     fn palette_to_code(&self) -> Option<String> {
         let source = self.palette_source.as_ref()?;
-        
+
         // Build the base theme path
         let base = match (source.row, source.tone, source.pick_target) {
             // Background paths
-            ("Background", "Base", PickTarget::Color) => "theme.extended_palette()    \n.background.base.color\n",
-            ("Background", "Base", PickTarget::Text) => "theme.extended_palette()    \n.background.base.text\n",
-            ("Background", "Neutral", PickTarget::Color) => "theme.extended_palette()    \n.background.neutral.color\n",
-            ("Background", "Neutral", PickTarget::Text) => "theme.extended_palette()    \n.background.neutral.text\n",
-            ("Background", "Weak", PickTarget::Color) => "theme.extended_palette()    \n.background.weak.color\n",
-            ("Background", "Weak", PickTarget::Text) => "theme.extended_palette()    \n.background.weak.text\n",
-            ("Background", "Weaker", PickTarget::Color) => "theme.extended_palette()    \n.background.weaker.color\n",
-            ("Background", "Weaker", PickTarget::Text) => "theme.extended_palette()    \n.background.weaker.text\n",
-            ("Background", "Weakest", PickTarget::Color) => "theme.extended_palette()    \n.background.weakest.color\n",
-            ("Background", "Weakest", PickTarget::Text) => "theme.extended_palette()    \n.background.weakest.text\n",
-            ("Background", "Strong", PickTarget::Color) => "theme.extended_palette()    \n.background.strong.color\n",
-            ("Background", "Strong", PickTarget::Text) => "theme.extended_palette()    \n.background.strong.text\n",
-            ("Background", "Stronger", PickTarget::Color) => "theme.extended_palette()    \n.background.stronger.color\n",
-            ("Background", "Stronger", PickTarget::Text) => "theme.extended_palette()    \n.background.stronger.text\n",
-            ("Background", "Strongest", PickTarget::Color) => "theme.extended_palette()    \n.background.strongest.color\n",
-            ("Background", "Strongest", PickTarget::Text) => "theme.extended_palette()    \n.background.strongest.text\n",
-            
+            ("Background", "Base", PickTarget::Color) => {
+                "theme.extended_palette()    \n.background.base.color\n"
+            }
+            ("Background", "Base", PickTarget::Text) => {
+                "theme.extended_palette()    \n.background.base.text\n"
+            }
+            ("Background", "Neutral", PickTarget::Color) => {
+                "theme.extended_palette()    \n.background.neutral.color\n"
+            }
+            ("Background", "Neutral", PickTarget::Text) => {
+                "theme.extended_palette()    \n.background.neutral.text\n"
+            }
+            ("Background", "Weak", PickTarget::Color) => {
+                "theme.extended_palette()    \n.background.weak.color\n"
+            }
+            ("Background", "Weak", PickTarget::Text) => {
+                "theme.extended_palette()    \n.background.weak.text\n"
+            }
+            ("Background", "Weaker", PickTarget::Color) => {
+                "theme.extended_palette()    \n.background.weaker.color\n"
+            }
+            ("Background", "Weaker", PickTarget::Text) => {
+                "theme.extended_palette()    \n.background.weaker.text\n"
+            }
+            ("Background", "Weakest", PickTarget::Color) => {
+                "theme.extended_palette()    \n.background.weakest.color\n"
+            }
+            ("Background", "Weakest", PickTarget::Text) => {
+                "theme.extended_palette()    \n.background.weakest.text\n"
+            }
+            ("Background", "Strong", PickTarget::Color) => {
+                "theme.extended_palette()    \n.background.strong.color\n"
+            }
+            ("Background", "Strong", PickTarget::Text) => {
+                "theme.extended_palette()    \n.background.strong.text\n"
+            }
+            ("Background", "Stronger", PickTarget::Color) => {
+                "theme.extended_palette()    \n.background.stronger.color\n"
+            }
+            ("Background", "Stronger", PickTarget::Text) => {
+                "theme.extended_palette()    \n.background.stronger.text\n"
+            }
+            ("Background", "Strongest", PickTarget::Color) => {
+                "theme.extended_palette()    \n.background.strongest.color\n"
+            }
+            ("Background", "Strongest", PickTarget::Text) => {
+                "theme.extended_palette()    \n.background.strongest.text\n"
+            }
+
             // Primary paths
-            ("Primary", "Base", PickTarget::Color) => "theme.extended_palette()    \n.primary.base.color\n",
-            ("Primary", "Base", PickTarget::Text) => "theme.extended_palette()    \n.primary.base.text\n",
-            ("Primary", "Weak", PickTarget::Color) => "theme.extended_palette()    \n.primary.weak.color\n",
-            ("Primary", "Weak", PickTarget::Text) => "theme.extended_palette()    \n.primary.weak.text\n",
-            ("Primary", "Strong", PickTarget::Color) => "theme.extended_palette()    \n.primary.strong.color\n",
-            ("Primary", "Strong", PickTarget::Text) => "theme.extended_palette()    \n.primary.strong.text\n",
-            
+            ("Primary", "Base", PickTarget::Color) => {
+                "theme.extended_palette()    \n.primary.base.color\n"
+            }
+            ("Primary", "Base", PickTarget::Text) => {
+                "theme.extended_palette()    \n.primary.base.text\n"
+            }
+            ("Primary", "Weak", PickTarget::Color) => {
+                "theme.extended_palette()    \n.primary.weak.color\n"
+            }
+            ("Primary", "Weak", PickTarget::Text) => {
+                "theme.extended_palette()    \n.primary.weak.text\n"
+            }
+            ("Primary", "Strong", PickTarget::Color) => {
+                "theme.extended_palette()    \n.primary.strong.color\n"
+            }
+            ("Primary", "Strong", PickTarget::Text) => {
+                "theme.extended_palette()    \n.primary.strong.text\n"
+            }
+
             // Secondary paths
-            ("Secondary", "Base", PickTarget::Color) => "theme.extended_palette()    \n.secondary.base.color\n",
-            ("Secondary", "Base", PickTarget::Text) => "theme.extended_palette()    \n.secondary.base.text\n",
-            ("Secondary", "Weak", PickTarget::Color) => "theme.extended_palette()    \n.secondary.weak.color\n",
-            ("Secondary", "Weak", PickTarget::Text) => "theme.extended_palette()    \n.secondary.weak.text\n",
-            ("Secondary", "Strong", PickTarget::Color) => "theme.extended_palette()    \n.secondary.strong.color\n",
-            ("Secondary", "Strong", PickTarget::Text) => "theme.extended_palette()    \n.secondary.strong.text\n",
-            
+            ("Secondary", "Base", PickTarget::Color) => {
+                "theme.extended_palette()    \n.secondary.base.color\n"
+            }
+            ("Secondary", "Base", PickTarget::Text) => {
+                "theme.extended_palette()    \n.secondary.base.text\n"
+            }
+            ("Secondary", "Weak", PickTarget::Color) => {
+                "theme.extended_palette()    \n.secondary.weak.color\n"
+            }
+            ("Secondary", "Weak", PickTarget::Text) => {
+                "theme.extended_palette()    \n.secondary.weak.text\n"
+            }
+            ("Secondary", "Strong", PickTarget::Color) => {
+                "theme.extended_palette()    \n.secondary.strong.color\n"
+            }
+            ("Secondary", "Strong", PickTarget::Text) => {
+                "theme.extended_palette()    \n.secondary.strong.text\n"
+            }
+
             // Success paths
-            ("Success", "Base", PickTarget::Color) => "theme.extended_palette()    \n.success.base.color\n",
-            ("Success", "Base", PickTarget::Text) => "theme.extended_palette()    \n.success.base.text\n",
-            ("Success", "Weak", PickTarget::Color) => "theme.extended_palette()    \n.success.weak.color\n",
-            ("Success", "Weak", PickTarget::Text) => "theme.extended_palette()    \n.success.weak.text\n",
-            ("Success", "Strong", PickTarget::Color) => "theme.extended_palette()    \n.success.strong.color\n",
-            ("Success", "Strong", PickTarget::Text) => "theme.extended_palette()    \n.success.strong.text\n",
-            
+            ("Success", "Base", PickTarget::Color) => {
+                "theme.extended_palette()    \n.success.base.color\n"
+            }
+            ("Success", "Base", PickTarget::Text) => {
+                "theme.extended_palette()    \n.success.base.text\n"
+            }
+            ("Success", "Weak", PickTarget::Color) => {
+                "theme.extended_palette()    \n.success.weak.color\n"
+            }
+            ("Success", "Weak", PickTarget::Text) => {
+                "theme.extended_palette()    \n.success.weak.text\n"
+            }
+            ("Success", "Strong", PickTarget::Color) => {
+                "theme.extended_palette()    \n.success.strong.color\n"
+            }
+            ("Success", "Strong", PickTarget::Text) => {
+                "theme.extended_palette()    \n.success.strong.text\n"
+            }
+
             // Warning paths
-            ("Warning", "Base", PickTarget::Color) => "theme.extended_palette()    \n.warning.base.color\n",
-            ("Warning", "Base", PickTarget::Text) => "theme.extended_palette()    \n.warning.base.text\n",
-            ("Warning", "Weak", PickTarget::Color) => "theme.extended_palette()    \n.warning.weak.color\n",
-            ("Warning", "Weak", PickTarget::Text) => "theme.extended_palette()    \n.warning.weak.text\n",
-            ("Warning", "Strong", PickTarget::Color) => "theme.extended_palette()    \n.warning.strong.color\n",
-            ("Warning", "Strong", PickTarget::Text) => "theme.extended_palette()    \n.warning.strong.text\n",
-            
+            ("Warning", "Base", PickTarget::Color) => {
+                "theme.extended_palette()    \n.warning.base.color\n"
+            }
+            ("Warning", "Base", PickTarget::Text) => {
+                "theme.extended_palette()    \n.warning.base.text\n"
+            }
+            ("Warning", "Weak", PickTarget::Color) => {
+                "theme.extended_palette()    \n.warning.weak.color\n"
+            }
+            ("Warning", "Weak", PickTarget::Text) => {
+                "theme.extended_palette()    \n.warning.weak.text\n"
+            }
+            ("Warning", "Strong", PickTarget::Color) => {
+                "theme.extended_palette()    \n.warning.strong.color\n"
+            }
+            ("Warning", "Strong", PickTarget::Text) => {
+                "theme.extended_palette()    \n.warning.strong.text\n"
+            }
+
             // Danger paths
-            ("Danger", "Base", PickTarget::Color) => "theme.extended_palette()    \n.danger.base.color\n",
-            ("Danger", "Base", PickTarget::Text) => "theme.extended_palette()    \n.danger.base.text\n",
-            ("Danger", "Weak", PickTarget::Color) => "theme.extended_palette()    \n.danger.weak.color\n",
-            ("Danger", "Weak", PickTarget::Text) => "theme.extended_palette()    \n.danger.weak.text\n",
-            ("Danger", "Strong", PickTarget::Color) => "theme.extended_palette()    \n.danger.strong.color\n",
-            ("Danger", "Strong", PickTarget::Text) => "theme.extended_palette()    \n.danger.strong.text\n",
-            
+            ("Danger", "Base", PickTarget::Color) => {
+                "theme.extended_palette()    \n.danger.base.color\n"
+            }
+            ("Danger", "Base", PickTarget::Text) => {
+                "theme.extended_palette()    \n.danger.base.text\n"
+            }
+            ("Danger", "Weak", PickTarget::Color) => {
+                "theme.extended_palette()    \n.danger.weak.color\n"
+            }
+            ("Danger", "Weak", PickTarget::Text) => {
+                "theme.extended_palette()    \n.danger.weak.text\n"
+            }
+            ("Danger", "Strong", PickTarget::Color) => {
+                "theme.extended_palette()    \n.danger.strong.color\n"
+            }
+            ("Danger", "Strong", PickTarget::Text) => {
+                "theme.extended_palette()    \n.danger.strong.text\n"
+            }
+
             _ => return None,
         };
-        
+
         // If alpha is modified from 1.0, append scale_alpha
         if (self.alpha - 1.0).abs() > 0.001 {
             Some(format!("{}    .scale_alpha({:.3})", base, self.alpha))
@@ -595,9 +696,9 @@ struct ModernColorPickerOverlay<'a, Message> {
     viewport_size: Size,
 }
 
-impl<'a, Message> ModernColorPickerOverlay<'a, Message> 
+impl<'a, Message> ModernColorPickerOverlay<'a, Message>
 where
-    Message: Clone
+    Message: Clone,
 {
     fn overlay(self) -> overlay::Element<'a, Message, iced::Theme, Renderer> {
         overlay::Element::new(Box::new(self))
@@ -613,12 +714,14 @@ where
     }
 }
 
-impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColorPickerOverlay<'a, Message> {
+impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
+    for ModernColorPickerOverlay<'a, Message>
+{
     fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> Node {
         self.viewport_size = bounds;
         let size = Size::new(320.0, 440.0);
         let node = Node::new(size);
-        
+
         node.move_to(*self.position)
     }
 
@@ -634,7 +737,7 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
         let header_bounds = header_rect(bounds);
         let close_bounds = close_button_rect(bounds);
         let content_bounds = content_rect(bounds);
-        
+
         // Draw background with shadow
         renderer.fill_quad(
             renderer::Quad {
@@ -665,10 +768,10 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                 },
                 border: Border {
                     radius: iced::border::Radius {
-                        top_left: 12.0, 
-                        top_right: 12.0, 
-                        bottom_right: 0.0, 
-                        bottom_left: 0.0
+                        top_left: 12.0,
+                        top_right: 12.0,
+                        bottom_right: 0.0,
+                        bottom_left: 0.0,
                     },
                     ..Default::default()
                 },
@@ -676,7 +779,7 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                 snap: true,
             },
             theme.extended_palette().background.neutral.color,
-        );        
+        );
 
         // Shadow under header with no bleed to left / right
         for i in 0..4 {
@@ -762,12 +865,20 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
             renderer.fill_quad(
                 renderer::Quad {
                     bounds: *tab_bounds,
-                    border: Border { width: 1.0, radius: 8.0.into(), ..Default::default() },
+                    border: Border {
+                        width: 1.0,
+                        radius: 8.0.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                if is_active { theme.extended_palette().primary.base.color }
-                else if is_hovered { theme.extended_palette().background.weak.color }
-                else { Color::TRANSPARENT },
+                if is_active {
+                    theme.extended_palette().primary.base.color
+                } else if is_hovered {
+                    theme.extended_palette().background.weak.color
+                } else {
+                    Color::TRANSPARENT
+                },
             );
             renderer.fill_text(
                 iced::advanced::Text {
@@ -782,20 +893,29 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                     wrapping: iced::widget::text::Wrapping::default(),
                 },
                 Point::new(tab_bounds.center_x(), tab_bounds.center_y()),
-                if is_active { Color::WHITE } else { style.text_color },
+                if is_active {
+                    Color::WHITE
+                } else {
+                    style.text_color
+                },
                 *tab_bounds,
             );
         }
 
         match self.overlay_state.active_tab {
             ColorPickerTab::Grid => self.draw_grid_tab(renderer, theme, content_bounds, cursor),
-            ColorPickerTab::Spectrum => self.draw_spectrum_tab(renderer, theme, content_bounds, cursor),
-            ColorPickerTab::Sliders => self.draw_sliders_tab(renderer, theme, style, content_bounds),
-            ColorPickerTab::Palette => self.draw_palette_tab(renderer, theme, content_bounds, cursor),
+            ColorPickerTab::Spectrum => {
+                self.draw_spectrum_tab(renderer, theme, content_bounds, cursor)
+            }
+            ColorPickerTab::Sliders => {
+                self.draw_sliders_tab(renderer, theme, style, content_bounds)
+            }
+            ColorPickerTab::Palette => {
+                self.draw_palette_tab(renderer, theme, content_bounds, cursor)
+            }
         }
 
         if self.overlay_state.active_tab != ColorPickerTab::Palette {
-
             // Preset colors
             let preset_y = bounds.y + 355.0;
             let preset_size = 30.0;
@@ -842,7 +962,6 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
             let add_row = last_preset_idx / preset_per_row;
             let add_col = last_preset_idx % preset_per_row;
 
-            
             if add_row < 2 && add_col < preset_per_row {
                 let add_preset_bounds = Rectangle {
                     x: bounds.x + 20.0 + (preset_size + preset_spacing) * add_col as f32,
@@ -881,10 +1000,8 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                     style.text_color,
                     add_preset_bounds,
                 );
-
             }
         }
-        
     }
 
     fn update(
@@ -903,33 +1020,34 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
 
         // Clear "Copied" flag
         if let Some(t) = self.overlay_state.copied_at
-            && t.elapsed() > Duration::from_millis(1200) {
-                self.overlay_state.copied_at = None;
-            }
+            && t.elapsed() > Duration::from_millis(1200)
+        {
+            self.overlay_state.copied_at = None;
+        }
 
         // Palette tab specific clicks
         let palette_bounds = Rectangle {
             x: content_bounds.x,
-            y: content_bounds.y,  
+            y: content_bounds.y,
             width: content_bounds.width,
             height: content_bounds.height + 78.0,
         };
-        
+
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-
-                if cursor.is_over(header_bounds) && !cursor.is_over(close_bounds) && !self.overlay_state.is_dragging
-                    && !self.overlay_state.spectrum_dragging && 
-                        !self.overlay_state.hue_dragging && 
-                        self.overlay_state.dragging_slider.is_none()
-                            && let Some(position) = cursor.position() {
-                                self.overlay_state.is_dragging = true;
-                                self.overlay_state.drag_offset = Vector::new(
-                                    position.x - bounds.x,
-                                    position.y - bounds.y,
-                                );
-                                return;
-                            }
+                if cursor.is_over(header_bounds)
+                    && !cursor.is_over(close_bounds)
+                    && !self.overlay_state.is_dragging
+                    && !self.overlay_state.spectrum_dragging
+                    && !self.overlay_state.hue_dragging
+                    && self.overlay_state.dragging_slider.is_none()
+                    && let Some(position) = cursor.position()
+                {
+                    self.overlay_state.is_dragging = true;
+                    self.overlay_state.drag_offset =
+                        Vector::new(position.x - bounds.x, position.y - bounds.y);
+                    return;
+                }
 
                 if cursor.is_over(close_bounds) {
                     *self.is_open = false;
@@ -940,7 +1058,12 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                     return;
                 }
 
-                let tabs_only = [ColorPickerTab::Grid, ColorPickerTab::Spectrum, ColorPickerTab::Sliders, ColorPickerTab::Palette];
+                let tabs_only = [
+                    ColorPickerTab::Grid,
+                    ColorPickerTab::Spectrum,
+                    ColorPickerTab::Sliders,
+                    ColorPickerTab::Palette,
+                ];
                 let rects = tab_rects(bounds, tabs_only.len());
                 for (tab, r) in tabs_only.iter().zip(rects.iter()) {
                     if cursor.is_over(*r) {
@@ -960,19 +1083,21 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                     let preset_y = bounds.y + 355.0;
                     let preset_size = 30.0;
                     let preset_spacing = 8.0;
-                    let presets_per_row = ((bounds.width - 40.0) / (preset_size + preset_spacing)) as usize;
+                    let presets_per_row =
+                        ((bounds.width - 40.0) / (preset_size + preset_spacing)) as usize;
 
                     for (i, color) in self.overlay_state.preset_colors.clone().iter().enumerate() {
                         let row = i / presets_per_row;
                         let col = i % presets_per_row;
-                        
+
                         if row >= 2 {
                             continue;
                         }
-                        
-                        let preset_x = bounds.x + 20.0 + (preset_size + preset_spacing) * col as f32;
+
+                        let preset_x =
+                            bounds.x + 20.0 + (preset_size + preset_spacing) * col as f32;
                         let preset_y = preset_y + (preset_size + preset_spacing) * row as f32;
-                        
+
                         let preset_bounds = Rectangle {
                             x: preset_x,
                             y: preset_y,
@@ -981,7 +1106,6 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                         };
 
                         if cursor.is_over(preset_bounds) {
-
                             self.overlay_state.red = color.r;
                             self.overlay_state.green = color.g;
                             self.overlay_state.blue = color.b;
@@ -1002,7 +1126,8 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                     let add_row = last_preset_idx / presets_per_row;
                     let add_col = last_preset_idx % presets_per_row;
 
-                    if add_row < 2 {  // Only check if we haven't exceeded 2 rows
+                    if add_row < 2 {
+                        // Only check if we haven't exceeded 2 rows
                         let add_preset_bounds = Rectangle {
                             x: bounds.x + 20.0 + (preset_size + preset_spacing) * add_col as f32,
                             y: preset_y + (preset_size + preset_spacing) * add_row as f32,
@@ -1031,7 +1156,13 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                         self.handle_spectrum_click(content_bounds, cursor, shell);
                     }
                     ColorPickerTab::Sliders => {
-                        self.handle_slider_click(content_bounds, cursor, clipboard, shell, ColorString::Hex);
+                        self.handle_slider_click(
+                            content_bounds,
+                            cursor,
+                            clipboard,
+                            shell,
+                            ColorString::Hex,
+                        );
                     }
                     ColorPickerTab::Palette => {
                         self.overlay_state.palette_cache_dirty.set(true);
@@ -1054,7 +1185,13 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 match self.overlay_state.active_tab {
                     ColorPickerTab::Sliders => {
-                        self.handle_slider_click(content_bounds, cursor, clipboard, shell, ColorString::Rgb);
+                        self.handle_slider_click(
+                            content_bounds,
+                            cursor,
+                            clipboard,
+                            shell,
+                            ColorString::Rgb,
+                        );
                     }
                     ColorPickerTab::Palette => {
                         self.overlay_state.palette_cache_dirty.set(true);
@@ -1068,11 +1205,14 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                     if let Some(position) = cursor.position() {
                         let new_x = position.x - self.overlay_state.drag_offset.x;
                         let new_y = position.y - self.overlay_state.drag_offset.y;
-                        
+
                         // Keep within viewport bounds
-                        self.position.x = new_x.max(0.0).min(self.viewport_size.width - bounds.width);
-                        self.position.y = new_y.max(0.0).min(self.viewport_size.height - bounds.height);
-                        
+                        self.position.x =
+                            new_x.max(0.0).min(self.viewport_size.width - bounds.width);
+                        self.position.y = new_y
+                            .max(0.0)
+                            .min(self.viewport_size.height - bounds.height);
+
                         shell.invalidate_layout();
                         shell.invalidate_widgets();
                         shell.capture_event();
@@ -1093,9 +1233,9 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
                 shell.invalidate_widgets();
                 shell.capture_event();
             }
-            Event::Keyboard(keyboard::Event::KeyPressed { 
-                key: keyboard::Key::Named(keyboard::key::Named::Escape), 
-                .. 
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                ..
             }) => {
                 *self.is_open = false;
                 shell.request_redraw();
@@ -1127,14 +1267,13 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer> for ModernColor
         if cursor.is_over(header_bounds) {
             return mouse::Interaction::Grab;
         }
-        
+
         mouse::Interaction::None
-            
     }
 }
 
 impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
-        fn draw_grid_tab(
+    fn draw_grid_tab(
         &self,
         renderer: &mut Renderer,
         _theme: &iced::Theme,
@@ -1149,13 +1288,13 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             for col in 0..cols {
                 let x = bounds.x + col as f32 * cell_size;
                 let y = bounds.y + row as f32 * cell_size;
-                
+
                 let hue = (col as f32 / cols as f32) * 360.0;
                 let saturation = 1.0 - (row as f32 / rows as f32) * 0.7;
                 let value = 1.0 - (row as f32 / rows as f32) * 0.5;
-                
+
                 let color = hsv_to_rgb(hue, saturation, value);
-                
+
                 let cell_bounds = Rectangle {
                     x,
                     y,
@@ -1191,7 +1330,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             let x = bounds.x + col as f32 * cell_size;
             let gray_value = col as f32 / (cols - 1) as f32;
             let color = Color::from_rgb(gray_value, gray_value, gray_value);
-            
+
             let cell_bounds = Rectangle {
                 x,
                 y: gray_y,
@@ -1206,7 +1345,11 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                     bounds: cell_bounds,
                     border: if is_hovered {
                         Border {
-                            color: if gray_value > 0.5 { Color::BLACK } else { Color::WHITE },
+                            color: if gray_value > 0.5 {
+                                Color::BLACK
+                            } else {
+                                Color::WHITE
+                            },
                             width: 2.0,
                             radius: 0.0.into(),
                         }
@@ -1245,7 +1388,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                 let saturation = x as f32 / spectrum_size;
                 let value = 1.0 - (y as f32 / spectrum_size);
                 let color = hsv_to_rgb(self.overlay_state.hue, saturation, value);
-                
+
                 renderer.fill_quad(
                     renderer::Quad {
                         bounds: Rectangle {
@@ -1266,7 +1409,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         // Draw selection indicator
         let indicator_x = spectrum_bounds.x + self.overlay_state.saturation * spectrum_size;
         let indicator_y = spectrum_bounds.y + (1.0 - self.overlay_state.value) * spectrum_size;
-        
+
         renderer.fill_quad(
             renderer::Quad {
                 bounds: Rectangle {
@@ -1318,7 +1461,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         for x in 0..spectrum_bounds.width as u32 {
             let hue = (x as f32 / spectrum_bounds.width) * 360.0;
             let color = hsv_to_rgb(hue, 1.0, 1.0);
-            
+
             renderer.fill_quad(
                 renderer::Quad {
                     bounds: Rectangle {
@@ -1337,7 +1480,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
 
         // Draw hue indicator
         let hue_indicator_x = hue_bounds.x + (self.overlay_state.hue / 360.0) * hue_bounds.width;
-        
+
         renderer.fill_quad(
             renderer::Quad {
                 bounds: Rectangle {
@@ -1373,10 +1516,26 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
 
         // RGB sliders
         let sliders = [
-            ("RED", self.overlay_state.red, Color::from_rgb(1.0, 0.0, 0.0)),
-            ("GREEN", self.overlay_state.green, Color::from_rgb(0.0, 1.0, 0.0)),
-            ("BLUE", self.overlay_state.blue, Color::from_rgb(0.0, 0.0, 1.0)),
-            ("ALPHA", self.overlay_state.alpha, Color::from_rgba(1.0, 1.0, 1.0, 0.5))
+            (
+                "RED",
+                self.overlay_state.red,
+                Color::from_rgb(1.0, 0.0, 0.0),
+            ),
+            (
+                "GREEN",
+                self.overlay_state.green,
+                Color::from_rgb(0.0, 1.0, 0.0),
+            ),
+            (
+                "BLUE",
+                self.overlay_state.blue,
+                Color::from_rgb(0.0, 0.0, 1.0),
+            ),
+            (
+                "ALPHA",
+                self.overlay_state.alpha,
+                Color::from_rgba(1.0, 1.0, 1.0, 0.5),
+            ),
         ];
 
         for (i, (label, value, color)) in sliders.iter().enumerate() {
@@ -1484,7 +1643,10 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                     shaping: iced::advanced::text::Shaping::Basic,
                     wrapping: iced::widget::text::Wrapping::default(),
                 },
-                Point::new(bounds.x + bounds.width - value_width / 2.0, y + slider_height / 2.0),
+                Point::new(
+                    bounds.x + bounds.width - value_width / 2.0,
+                    y + slider_height / 2.0,
+                ),
                 style.text_color,
                 Rectangle {
                     x: bounds.x + bounds.width - value_width,
@@ -1500,7 +1662,12 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         let chip_x = bounds.x + (bounds.width - chip_w) / 2.0;
         let chip_y = bounds.y + 4.0 * spacing + 8.0;
 
-        let chip_bounds = Rectangle { x: chip_x, y: chip_y, width: chip_w, height: chip_h };
+        let chip_bounds = Rectangle {
+            x: chip_x,
+            y: chip_y,
+            width: chip_w,
+            height: chip_h,
+        };
 
         let chip_color = self.overlay_state.current_color();
 
@@ -1521,15 +1688,20 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                 snap: true,
             },
             chip_color,
-        ); 
-        
+        );
+
         // pick contrasting text
         let lum = 0.299 * chip_color.r + 0.587 * chip_color.g + 0.114 * chip_color.b;
-        let text_color = if lum > 0.5 { Color::BLACK } else { Color::WHITE };
-
+        let text_color = if lum > 0.5 {
+            Color::BLACK
+        } else {
+            Color::WHITE
+        };
 
         // Chip label: either hex or "Copied!"
-        let show_copied = self.overlay_state.copied_at
+        let show_copied = self
+            .overlay_state
+            .copied_at
             .map(|t| t.elapsed() < Duration::from_millis(1200))
             .unwrap_or(false);
 
@@ -1543,12 +1715,11 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             chip_label_size = 12.0;
             chip_label_y_position = chip_bounds.center_y();
             (palette_code, String::new())
-
         } else {
             // Fall back to hex + rgb
             (
                 self.overlay_state.hex_input.to_uppercase(),
-                rgb_or_rgba_string(chip_color)
+                rgb_or_rgba_string(chip_color),
             )
         };
 
@@ -1571,7 +1742,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         );
 
         // Second, smaller line under it
-        if !show_copied{
+        if !show_copied {
             renderer.fill_text(
                 iced::advanced::Text {
                     content: small_label,
@@ -1617,7 +1788,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                 false
             }
         };
-        
+
         if needs_update {
             let ep = theme.extended_palette();
             let bg = &ep.background;
@@ -1648,7 +1819,12 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                 },
                 Point::new(bounds.center_x(), y + g.label_h * 0.5),
                 title_color,
-                Rectangle { x: bounds.x, y, width: bounds.width, height: g.label_h },
+                Rectangle {
+                    x: bounds.x,
+                    y,
+                    width: bounds.width,
+                    height: g.label_h,
+                },
             );
         };
 
@@ -1665,7 +1841,12 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             let long_w = (bounds.width - g.col_gap) / 2.0;
             let mut x = bounds.x;
             for i in 0..2 {
-                let r = Rectangle { x, y, width: long_w, height: g.pill_h };
+                let r = Rectangle {
+                    x,
+                    y,
+                    width: long_w,
+                    height: g.pill_h,
+                };
                 draw_pill(renderer, r, bg.tones[i].1, cursor.is_over(r), theme);
                 draw_pill_label(renderer, r, bg.tones[i].0, bg.tones[i].1.text);
                 x += long_w + g.col_gap;
@@ -1677,7 +1858,12 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         if y + g.pill_h <= max_y {
             let mut x = bounds.x;
             for i in 2..5 {
-                let r = Rectangle { x, y, width: g.eq_w3, height: g.pill_h };
+                let r = Rectangle {
+                    x,
+                    y,
+                    width: g.eq_w3,
+                    height: g.pill_h,
+                };
                 draw_pill(renderer, r, bg.tones[i].1, cursor.is_over(r), theme);
                 draw_pill_label(renderer, r, bg.tones[i].0, bg.tones[i].1.text);
                 x += g.eq_w3 + g.col_gap;
@@ -1689,7 +1875,12 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         if y + g.pill_h <= max_y {
             let mut x = bounds.x;
             for i in 5..8 {
-                let r = Rectangle { x, y, width: g.eq_w3, height: g.pill_h };
+                let r = Rectangle {
+                    x,
+                    y,
+                    width: g.eq_w3,
+                    height: g.pill_h,
+                };
                 draw_pill(renderer, r, bg.tones[i].1, cursor.is_over(r), theme);
                 draw_pill_label(renderer, r, bg.tones[i].0, bg.tones[i].1.text);
                 x += g.eq_w3 + g.col_gap;
@@ -1700,7 +1891,6 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         // Color sections (Primary, Secondary, Success, Warning, Danger)
         let names = ["Primary", "Secondary", "Success", "Warning", "Danger"];
         for name in names.iter() {
-    
             // Title
             draw_title(renderer, y, name);
             y += g.label_h + g.row_gap;
@@ -1709,7 +1899,12 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             if let Some(row) = rows.iter().find(|r| r.name == *name) {
                 let mut x = bounds.x;
                 for i in 0..3 {
-                    let r = Rectangle { x, y, width: g.eq_w3, height: g.pill_h };
+                    let r = Rectangle {
+                        x,
+                        y,
+                        width: g.eq_w3,
+                        height: g.pill_h,
+                    };
                     draw_pill(renderer, r, row.tones[i].1, cursor.is_over(r), theme);
                     draw_pill_label(renderer, r, row.tones[i].0, row.tones[i].1.text);
                     x += g.eq_w3 + g.col_gap;
@@ -1730,37 +1925,37 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             let cell_size = bounds.width / 12.0;
             let col = (position.x / cell_size) as usize;
             let row = (position.y / cell_size) as usize;
-            
+
             if row < 8 && col < 12 {
                 self.overlay_state.palette_source = None;
-                
+
                 let hue = (col as f32 / 12.0) * 360.0;
                 let saturation = 1.0 - (row as f32 / 8.0) * 0.7;
                 let value = 1.0 - (row as f32 / 8.0) * 0.5;
-                
+
                 self.overlay_state.hue = hue;
                 self.overlay_state.saturation = saturation;
                 self.overlay_state.value = value;
                 self.overlay_state.update_from_hsv();
-                
+
                 let color = self.overlay_state.current_color();
                 *self.color = color;
                 self.publish_color_change(color, shell);
             } else {
                 let gray_y_start = 8.0 * cell_size + 10.0;
                 let gray_col = ((position.x / cell_size) as usize).min(11);
-                
+
                 if position.y >= gray_y_start && position.y < gray_y_start + cell_size {
                     self.overlay_state.palette_source = None;
-                    
+
                     let gray_value = gray_col as f32 / 11.0;
                     let color = Color::from_rgb(gray_value, gray_value, gray_value);
-                    
+
                     self.overlay_state.red = gray_value;
                     self.overlay_state.green = gray_value;
                     self.overlay_state.blue = gray_value;
                     self.overlay_state.update_from_rgb();
-                    
+
                     *self.color = color;
                     self.publish_color_change(color, shell);
                 }
@@ -1794,7 +1989,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         if let Some(pos) = cursor.position() {
             if self.overlay_state.spectrum_dragging {
                 self.overlay_state.palette_source = None;
-                
+
                 // Use global position, clamp into the rect
                 let local_x = (pos.x - spectrum_bounds.x).clamp(0.0, spectrum_bounds.width);
                 let local_y = (pos.y - spectrum_bounds.y).clamp(0.0, spectrum_bounds.height);
@@ -1809,7 +2004,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                 shell.request_redraw();
             } else if self.overlay_state.hue_dragging {
                 self.overlay_state.palette_source = None;
-                
+
                 let local_x = (pos.x - hue_bounds.x).clamp(0.0, hue_bounds.width);
                 self.overlay_state.hue = (local_x / hue_bounds.width) * 360.0;
                 self.overlay_state.update_from_hsv();
@@ -1861,7 +2056,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         cursor: mouse::Cursor,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
-        copy_string: ColorString
+        copy_string: ColorString,
     ) {
         // shared
         let spacing = 35.0;
@@ -1877,19 +2072,26 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         let chip_x = bounds.x + (bounds.width - chip_w) / 2.0;
         let chip_y = bounds.y + 4.0 * spacing + 8.0;
 
-        let chip_bounds = Rectangle { x: chip_x, y: chip_y, width: chip_w, height: chip_h };
+        let chip_bounds = Rectangle {
+            x: chip_x,
+            y: chip_y,
+            width: chip_w,
+            height: chip_h,
+        };
 
         if cursor.is_over(chip_bounds) {
             // Priority: palette code > hex > rgb
             if let Some(palette_code) = self.overlay_state.palette_to_code_compact() {
                 clipboard.write(iced::advanced::clipboard::Kind::Standard, palette_code);
             } else if copy_string != ColorString::Rgb {
-                clipboard.write(iced::advanced::clipboard::Kind::Standard, self.overlay_state.hex_input.clone());
+                clipboard.write(
+                    iced::advanced::clipboard::Kind::Standard,
+                    self.overlay_state.hex_input.clone(),
+                );
             } else {
                 let rgb = rgb_or_rgba_string(self.overlay_state.current_color());
                 clipboard.write(iced::advanced::clipboard::Kind::Standard, rgb);
             }
-            
 
             // flash "Copied!"
             self.overlay_state.copied_at = Some(Instant::now());
@@ -1952,25 +2154,25 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             if let Some(pos) = cursor.position() {
                 let local_x = (pos.x - track_bounds.x).clamp(0.0, track_bounds.width);
                 let value = (local_x / track_bounds.width).clamp(0.0, 1.0);
-                
+
                 match slider_type {
                     SliderType::Red => {
                         self.overlay_state.palette_source = None;
                         self.overlay_state.red = value;
-                    },
+                    }
                     SliderType::Green => {
                         self.overlay_state.palette_source = None;
                         self.overlay_state.green = value;
-                    },
+                    }
                     SliderType::Blue => {
                         self.overlay_state.palette_source = None;
                         self.overlay_state.blue = value;
-                    },
+                    }
                     SliderType::Alpha => {
                         self.overlay_state.alpha = value;
-                    },
+                    }
                 }
-                
+
                 self.overlay_state.update_from_rgb();
                 let color = self.overlay_state.current_color();
                 *self.color = color;
@@ -1987,17 +2189,21 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         shell: &mut Shell<'_, Message>,
         target: PickTarget,
     ) {
-        if !cursor.is_over(bounds) { return; }
-        let Some(_) = cursor.position() else { return; };
+        if !cursor.is_over(bounds) {
+            return;
+        }
+        let Some(_) = cursor.position() else {
+            return;
+        };
 
         let picked: Option<(Color, &'static str, &'static str)> = {
             let rows = self.overlay_state.palette_cache.borrow();
             let g = palette_geom_compact(bounds);
 
             let choose = |tone: Tone| -> Color {
-                match target { 
-                    PickTarget::Color => tone.color, 
-                    PickTarget::Text => tone.text 
+                match target {
+                    PickTarget::Color => tone.color,
+                    PickTarget::Text => tone.text,
                 }
             };
 
@@ -2007,16 +2213,25 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             'scan: {
                 // Background title
                 y += g.label_h + g.row_gap;
-                
+
                 if let Some(bg) = rows.iter().find(|r| r.name == "Background") {
                     // Row 1
                     if y + g.pill_h <= max_y {
                         let long_w = (bounds.width - g.col_gap) / 2.0;
                         let mut x = bounds.x;
                         for i in 0..2 {
-                            let r = Rectangle { x, y, width: long_w, height: g.pill_h };
-                            if cursor.is_over(r) { 
-                                break 'scan Some((choose(bg.tones[i].1), "Background", bg.tones[i].0)); 
+                            let r = Rectangle {
+                                x,
+                                y,
+                                width: long_w,
+                                height: g.pill_h,
+                            };
+                            if cursor.is_over(r) {
+                                break 'scan Some((
+                                    choose(bg.tones[i].1),
+                                    "Background",
+                                    bg.tones[i].0,
+                                ));
                             }
                             x += long_w + g.col_gap;
                         }
@@ -2027,9 +2242,18 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                     if y + g.pill_h <= max_y {
                         let mut x = bounds.x;
                         for i in 2..5 {
-                            let r = Rectangle { x, y, width: g.eq_w3, height: g.pill_h };
-                            if cursor.is_over(r) { 
-                                break 'scan Some((choose(bg.tones[i].1), "Background", bg.tones[i].0)); 
+                            let r = Rectangle {
+                                x,
+                                y,
+                                width: g.eq_w3,
+                                height: g.pill_h,
+                            };
+                            if cursor.is_over(r) {
+                                break 'scan Some((
+                                    choose(bg.tones[i].1),
+                                    "Background",
+                                    bg.tones[i].0,
+                                ));
                             }
                             x += g.eq_w3 + g.col_gap;
                         }
@@ -2040,9 +2264,18 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                     if y + g.pill_h <= max_y {
                         let mut x = bounds.x;
                         for i in 5..8 {
-                            let r = Rectangle { x, y, width: g.eq_w3, height: g.pill_h };
-                            if cursor.is_over(r) { 
-                                break 'scan Some((choose(bg.tones[i].1), "Background", bg.tones[i].0)); 
+                            let r = Rectangle {
+                                x,
+                                y,
+                                width: g.eq_w3,
+                                height: g.pill_h,
+                            };
+                            if cursor.is_over(r) {
+                                break 'scan Some((
+                                    choose(bg.tones[i].1),
+                                    "Background",
+                                    bg.tones[i].0,
+                                ));
                             }
                             x += g.eq_w3 + g.col_gap;
                         }
@@ -2053,15 +2286,18 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                 // Color sections
                 let names = ["Primary", "Secondary", "Success", "Warning", "Danger"];
                 for name in names.iter() {
-
-                    
                     // Title row
                     y += g.label_h + g.row_gap;
 
                     if let Some(row) = rows.iter().find(|r| r.name == *name) {
                         let mut x = bounds.x;
                         for i in 0..3 {
-                            let r = Rectangle { x, y, width: g.eq_w3, height: g.pill_h };
+                            let r = Rectangle {
+                                x,
+                                y,
+                                width: g.eq_w3,
+                                height: g.pill_h,
+                            };
                             if cursor.is_over(r) {
                                 break 'scan Some((choose(row.tones[i].1), *name, row.tones[i].0));
                             }
@@ -2093,7 +2329,6 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             shell.capture_event();
         }
     }
-
 }
 
 // Helper functions
@@ -2101,7 +2336,7 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Color {
     let c = v * s;
     let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
     let m = v - c;
-    
+
     let (r, g, b) = if h < 60.0 {
         (c, x, 0.0)
     } else if h < 120.0 {
@@ -2115,7 +2350,7 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Color {
     } else {
         (c, 0.0, x)
     };
-    
+
     Color::from_rgb(r + m, g + m, b + m)
 }
 
@@ -2123,11 +2358,11 @@ fn rgb_to_hsv(color: Color) -> (f32, f32, f32) {
     let r = color.r;
     let g = color.g;
     let b = color.b;
-    
+
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
     let delta = max - min;
-    
+
     let h = if delta == 0.0 {
         0.0
     } else if max == r {
@@ -2137,25 +2372,27 @@ fn rgb_to_hsv(color: Color) -> (f32, f32, f32) {
     } else {
         60.0 * (((r - g) / delta) + 4.0)
     };
-    
+
     let h = if h < 0.0 { h + 360.0 } else { h };
-    
+
     let s = if max == 0.0 { 0.0 } else { delta / max };
     let v = max;
-    
+
     (h, s, v)
 }
 
 fn color_to_hex(color: Color) -> String {
     if color.a < 1.0 {
-        format!("#{:02X}{:02X}{:02X}{:02X}", 
+        format!(
+            "#{:02X}{:02X}{:02X}{:02X}",
             (color.r * 255.0) as u8,
             (color.g * 255.0) as u8,
             (color.b * 255.0) as u8,
             (color.a * 255.0) as u8
         )
     } else {
-        format!("#{:02X}{:02X}{:02X}", 
+        format!(
+            "#{:02X}{:02X}{:02X}",
             (color.r * 255.0) as u8,
             (color.g * 255.0) as u8,
             (color.b * 255.0) as u8
@@ -2175,8 +2412,12 @@ fn rgb_or_rgba_string(c: Color) -> String {
         // CSS-like rgba with alpha 0..1 (trim trailing zeros)
         let mut a = a8 as f32 / 255.0;
         // clamp minor fp noise
-        if (a - 1.0).abs() < 1e-4 { a = 1.0; }
-        if (a - 0.0).abs() < 1e-4 { a = 0.0; }
+        if (a - 1.0).abs() < 1e-4 {
+            a = 1.0;
+        }
+        if (a - 0.0).abs() < 1e-4 {
+            a = 0.0;
+        }
         let s = format!("{a:.3}");
         let s = s.trim_end_matches('0').trim_end_matches('.').to_string();
         format!("{r:1}, {g:1}, {b:1}, {s}")
@@ -2203,52 +2444,79 @@ fn build_palette_rows_compact(
         PaletteRow {
             name: "Background",
             tones: vec![
-                ("Base",     t(bg.base.color,     bg.base.text)),
-                ("Neutral",  t(bg.neutral.color,  bg.neutral.text)),
-                ("Weak",     t(bg.weak.color,     bg.weak.text)),
-                ("Weaker",   t(bg.weaker.color,   bg.weaker.text)),
-                ("Weakest",  t(bg.weakest.color,  bg.weakest.text)),
-                ("Strong",   t(bg.strong.color,   bg.strong.text)),
+                ("Base", t(bg.base.color, bg.base.text)),
+                ("Neutral", t(bg.neutral.color, bg.neutral.text)),
+                ("Weak", t(bg.weak.color, bg.weak.text)),
+                ("Weaker", t(bg.weaker.color, bg.weaker.text)),
+                ("Weakest", t(bg.weakest.color, bg.weakest.text)),
+                ("Strong", t(bg.strong.color, bg.strong.text)),
                 ("Stronger", t(bg.stronger.color, bg.stronger.text)),
-                ("Strongest",t(bg.strongest.color,bg.strongest.text)),
+                ("Strongest", t(bg.strongest.color, bg.strongest.text)),
             ],
         },
         // 3-tone rows
-        PaletteRow { name: "Primary",   tones: vec![
-            ("Base", t(ep.primary.base.color,   ep.primary.base.text)),
-            ("Weak", t(ep.primary.weak.color,   ep.primary.weak.text)),
-            ("Strong",t(ep.primary.strong.color,ep.primary.strong.text)),
-        ]},
-        PaletteRow { name: "Secondary", tones: vec![
-            ("Base", t(ep.secondary.base.color, ep.secondary.base.text)),
-            ("Weak", t(ep.secondary.weak.color, ep.secondary.weak.text)),
-            ("Strong",t(ep.secondary.strong.color,ep.secondary.strong.text)),
-        ]},
-        PaletteRow { name: "Success",   tones: vec![
-            ("Base", t(ep.success.base.color,   ep.success.base.text)),
-            ("Weak", t(ep.success.weak.color,   ep.success.weak.text)),
-            ("Strong",t(ep.success.strong.color,ep.success.strong.text)),
-        ]},
-        PaletteRow { name: "Warning",   tones: vec![
-            ("Base", t(ep.warning.base.color,   ep.warning.base.text)),
-            ("Weak", t(ep.warning.weak.color,   ep.warning.weak.text)),
-            ("Strong",t(ep.warning.strong.color,ep.warning.strong.text)),
-        ]},
-        PaletteRow { name: "Danger",    tones: vec![
-            ("Base", t(ep.danger.base.color,    ep.danger.base.text)),
-            ("Weak", t(ep.danger.weak.color,    ep.danger.weak.text)),
-            ("Strong",t(ep.danger.strong.color, ep.danger.strong.text)),
-        ]},
+        PaletteRow {
+            name: "Primary",
+            tones: vec![
+                ("Base", t(ep.primary.base.color, ep.primary.base.text)),
+                ("Weak", t(ep.primary.weak.color, ep.primary.weak.text)),
+                ("Strong", t(ep.primary.strong.color, ep.primary.strong.text)),
+            ],
+        },
+        PaletteRow {
+            name: "Secondary",
+            tones: vec![
+                ("Base", t(ep.secondary.base.color, ep.secondary.base.text)),
+                ("Weak", t(ep.secondary.weak.color, ep.secondary.weak.text)),
+                (
+                    "Strong",
+                    t(ep.secondary.strong.color, ep.secondary.strong.text),
+                ),
+            ],
+        },
+        PaletteRow {
+            name: "Success",
+            tones: vec![
+                ("Base", t(ep.success.base.color, ep.success.base.text)),
+                ("Weak", t(ep.success.weak.color, ep.success.weak.text)),
+                ("Strong", t(ep.success.strong.color, ep.success.strong.text)),
+            ],
+        },
+        PaletteRow {
+            name: "Warning",
+            tones: vec![
+                ("Base", t(ep.warning.base.color, ep.warning.base.text)),
+                ("Weak", t(ep.warning.weak.color, ep.warning.weak.text)),
+                ("Strong", t(ep.warning.strong.color, ep.warning.strong.text)),
+            ],
+        },
+        PaletteRow {
+            name: "Danger",
+            tones: vec![
+                ("Base", t(ep.danger.base.color, ep.danger.base.text)),
+                ("Weak", t(ep.danger.weak.color, ep.danger.weak.text)),
+                ("Strong", t(ep.danger.strong.color, ep.danger.strong.text)),
+            ],
+        },
     ]
 }
 
-fn draw_pill(renderer: &mut Renderer, r: Rectangle, tone: Tone, hovered: bool, theme: &iced::Theme) {
+fn draw_pill(
+    renderer: &mut Renderer,
+    r: Rectangle,
+    tone: Tone,
+    hovered: bool,
+    theme: &iced::Theme,
+) {
     renderer.fill_quad(
         renderer::Quad {
             bounds: r,
             border: Border {
-                color: if hovered { theme.palette().primary }
-                       else { Color::from_rgba(0.0,0.0,0.0,0.25) },
+                color: if hovered {
+                    theme.palette().primary
+                } else {
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.25)
+                },
                 width: if hovered { 2.0 } else { 1.0 },
                 radius: 8.0.into(),
             },
@@ -2286,12 +2554,14 @@ fn tab_rects(bounds: Rectangle, n: usize) -> Vec<Rectangle> {
 
     let total_w = right - left;
     let w = (total_w - TAB_SPACING * (n as f32 - 1.0)) / n as f32;
-    (0..n).map(|i| Rectangle {
-        x: left + i as f32 * (w + TAB_SPACING),
-        y: tab_y,
-        width: w,
-        height: TAB_HEIGHT,
-    }).collect()
+    (0..n)
+        .map(|i| Rectangle {
+            x: left + i as f32 * (w + TAB_SPACING),
+            y: tab_y,
+            width: w,
+            height: TAB_HEIGHT,
+        })
+        .collect()
 }
 
 #[inline]
@@ -2318,15 +2588,14 @@ fn close_button_rect(bounds: Rectangle) -> Rectangle {
 fn content_rect(bounds: Rectangle) -> Rectangle {
     let tab_y = HEADER_HEIGHT + TAB_SPACING;
     let content_y = tab_y + TAB_HEIGHT + TAB_SPACING;
-    
+
     Rectangle {
         x: bounds.x + CONTENT_PADDING,
         y: bounds.y + content_y,
         width: bounds.width - (CONTENT_PADDING * 2.0),
-        height: 250.0,  // Or calculate dynamically
+        height: 250.0, // Or calculate dynamically
     }
 }
-
 
 #[derive(Clone, Copy)]
 struct PalGeom {
@@ -2345,17 +2614,24 @@ fn palette_geom_compact(content: Rectangle) -> PalGeom {
     let row_gap = 3.0;
     let col_gap = 10.0;
     let section_gap = 6.0;
-    
+
     // Total: 6*16 + 8*22 + 6*3 + 5*6 + 2*3 = 96 + 176 + 18 + 30 + 6 = 326
-    
+
     let eq_w3 = (content.width - 2.0 * col_gap) / 3.0;
-    
-    PalGeom { label_h, pill_h, row_gap, col_gap, section_gap, eq_w3 }
+
+    PalGeom {
+        label_h,
+        pill_h,
+        row_gap,
+        col_gap,
+        section_gap,
+        eq_w3,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct PaletteSource {
-    row: &'static str,      // "Background", "Primary", etc.
-    tone: &'static str,     // "Base", "Weak", "Strong", etc.
+    row: &'static str,       // "Background", "Primary", etc.
+    tone: &'static str,      // "Base", "Weak", "Strong", etc.
     pick_target: PickTarget, // Color or Text
 }

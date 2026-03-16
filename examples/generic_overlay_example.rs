@@ -2,10 +2,16 @@
 // This shows all the new features added to generic_overlay.rs
 
 use iced::{
-    Alignment, Element, Length, Task, Theme, widget::{button, checkbox, column, container, pick_list, row, text, text_editor, text_input, space}
+    Alignment, Element, Length, Task, Theme,
+    widget::{
+        button, checkbox, column, container, pick_list, row, space, text, text_editor, text_input,
+    },
 };
 
-use widgets::generic_overlay::{self, overlay_button, ResizeMode, interactive_tooltip, Position, dropdown_menu, dropdown_root, PositionMode, OverlayButton};
+use widgets::generic_overlay::{
+    self, OverlayButton, Position, PositionMode, ResizeMode, dropdown_menu, dropdown_root,
+    interactive_tooltip, overlay_button,
+};
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -58,26 +64,37 @@ impl App {
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::OverlayCheckboxToggled(bool) => {self.overlay_checkbox = bool;},
-            Message::TextInputChanged(str) => {self.text_input_value = str},
-            Message::ButtonPressed => {println!("Button was pressed")},
-            Message::OverlayOpened(overlay_position, overlay_size) => {println!("Overlay was opened. \n\tPosition: {}, \n\tSize: {:?}", overlay_position, overlay_size)},
-            Message::OverlayClosed => {println!("Overlay was closed")},
+            Message::OverlayCheckboxToggled(bool) => {
+                self.overlay_checkbox = bool;
+            }
+            Message::TextInputChanged(str) => self.text_input_value = str,
+            Message::ButtonPressed => {
+                println!("Button was pressed")
+            }
+            Message::OverlayOpened(overlay_position, overlay_size) => {
+                println!(
+                    "Overlay was opened. \n\tPosition: {}, \n\tSize: {:?}",
+                    overlay_position, overlay_size
+                )
+            }
+            Message::OverlayClosed => {
+                println!("Overlay was closed")
+            }
             Message::UpdateAlignment(alignment) => self.hover_alignment = Some(alignment),
             Message::UpdatePosition(position) => self.hover_position = Some(position),
             Message::UpdateGap(gap_text) => {
                 self.gap_text = gap_text;
-                if let Ok(gap) = self.gap_text.as_str().trim().parse::<f32>() { self.hover_gap = gap }
+                if let Ok(gap) = self.gap_text.as_str().trim().parse::<f32>() {
+                    self.hover_gap = gap
+                }
             }
             Message::CloseOverlay(id) => {
                 println!("Called on id: {:?}", id);
                 return iced::advanced::widget::operate(
-                    widgets::generic_overlay::close::<Message>(id)
+                    widgets::generic_overlay::close::<Message>(id),
                 );
             }
-            Message::ToggleOverlay(toggle) => {
-                self.overlay_status = toggle
-            }
+            Message::ToggleOverlay(toggle) => self.overlay_status = toggle,
             Message::ActionPerformed(action) => {
                 self.editor_content.perform(action);
             }
@@ -96,8 +113,7 @@ impl App {
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
-            button("Do Something")
-                .on_press(Message::ButtonPressed),
+            button("Do Something").on_press(Message::ButtonPressed),
             button("Close Overlay from internal content")
                 .on_press(Message::CloseOverlay("basic-overlay".into()))
                 .style(button::danger),
@@ -129,8 +145,7 @@ impl App {
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
-            button("Do Something")
-                .on_press(Message::ButtonPressed),
+            button("Do Something").on_press(Message::ButtonPressed),
         ]
         .spacing(15)
         .padding(10)
@@ -159,8 +174,7 @@ impl App {
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
-            button("Do Something")
-                .on_press(Message::ButtonPressed),
+            button("Do Something").on_press(Message::ButtonPressed),
         ]
         .spacing(15)
         .padding(10)
@@ -174,8 +188,7 @@ impl App {
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
-            button("Do Something")
-                .on_press(Message::ButtonPressed),
+            button("Do Something").on_press(Message::ButtonPressed),
         ]
         .spacing(15)
         .padding(10)
@@ -186,9 +199,9 @@ impl App {
             text("Positions mirror Tooltip, minus following the mouse"),
             row![
                 text("Set Gap:"),
-                text_input("Enter gap", &self.gap_text)
-                    .on_input(Message::UpdateGap),
-            ].spacing(10),
+                text_input("Enter gap", &self.gap_text).on_input(Message::UpdateGap),
+            ]
+            .spacing(10),
         ]
         .spacing(15)
         .padding(10)
@@ -202,8 +215,7 @@ impl App {
                 .on_toggle(Message::OverlayCheckboxToggled),
             text_input("Type something...", &self.text_input_value)
                 .on_input(Message::TextInputChanged),
-            button("Do Something")
-                .on_press(Message::ButtonPressed),
+            button("Do Something").on_press(Message::ButtonPressed),
         ]
         .spacing(15)
         .padding(10)
@@ -232,19 +244,16 @@ impl App {
             text("Open Default Overlay"),
             "Default Generic Overlay Example",
             basic_overlay_content,
-        ).id("basic-overlay");
+        )
+        .id("basic-overlay");
 
         // EXAMPLE 2: Opaque overlay that blocks interaction with content behind it
-        let opaque_overlay = overlay_button(
-            "Open Opaque",
-            "Opaque",
-            opaque_overlay_content,
-        )
-        .opaque(true)
-        .close_on_click_outside()
-        .quick_animation()
-        .on_open(Message::OverlayOpened)
-        .on_close(|| Message::OverlayClosed);
+        let opaque_overlay = overlay_button("Open Opaque", "Opaque", opaque_overlay_content)
+            .opaque(true)
+            .close_on_click_outside()
+            .quick_animation()
+            .on_open(Message::OverlayOpened)
+            .on_close(|| Message::OverlayClosed);
 
         // EXAMPLE 3: Click-outside-to-close overlay
         let click_outside_overlay = overlay_button(
@@ -258,7 +267,7 @@ impl App {
         // EXAMPLE 4: Headerless overlay (no title bar or close button)
         let headerless_overlay = overlay_button(
             "Open Headerless",
-            "",  // Title is ignored when hide_header is true
+            "", // Title is ignored when hide_header is true
             headless_overlay_content,
         )
         .hide_header()
@@ -293,39 +302,85 @@ impl App {
         .on_hover()
         .hover_position(self.hover_position.unwrap_or(Position::Right))
         .hover_gap(self.hover_gap)
-        .hover_alignment(self.hover_alignment.unwrap_or(AlignmentOption::Center).into())
+        .hover_alignment(
+            self.hover_alignment
+                .unwrap_or(AlignmentOption::Center)
+                .into(),
+        )
         .on_close(|| Message::OverlayClosed);
 
         // EXAMPLE 8: Same as 7, but with the interactive_tooltip helper
-        let interactive_tooltip1 = interactive_tooltip("Hover to Open - Right", interactive_tooltip_overlay_content);
+        let interactive_tooltip1 =
+            interactive_tooltip("Hover to Open - Right", interactive_tooltip_overlay_content);
 
         let menu3 = column![
-            button("Menu3 option 1").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            button("Menu3 option 2").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            button("Menu3 option 3").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            button("Menu3 option 4").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-
-        ].width(Length::Fill);
+            button("Menu3 option 1")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Menu3 option 2")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Menu3 option 3")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Menu3 option 4")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+        ]
+        .width(Length::Fill);
 
         let menu2 = column![
-            button("Menu2 option 1").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            button("Menu2 option 2").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            button("Menu2 option 3").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            button("Menu2 option 4").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            dropdown_menu("Menu3", menu3).style(button::subtle).width(Length::Fill),
-        ].width(Length::Fill);
+            button("Menu2 option 1")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Menu2 option 2")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Menu2 option 3")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Menu2 option 4")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            dropdown_menu("Menu3", menu3)
+                .style(button::subtle)
+                .width(Length::Fill),
+        ]
+        .width(Length::Fill);
 
         let menu1 = column![
-            button("Menu option 1").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            button("Menu option 2").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            button("Menu option 3").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            button("Menu option 4").on_press(Message::ButtonPressed).style(button::subtle).width(Length::Fill),
-            dropdown_menu("Menu2", menu2).style(button::subtle).width(Length::Fill),
-        ].width(Length::Fill);
+            button("Menu option 1")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Menu option 2")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Menu option 3")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Menu option 4")
+                .on_press(Message::ButtonPressed)
+                .style(button::subtle)
+                .width(Length::Fill),
+            dropdown_menu("Menu2", menu2)
+                .style(button::subtle)
+                .width(Length::Fill),
+        ]
+        .width(Length::Fill);
 
-        let nav_menu = container(row![
-            dropdown_root("File", menu1),
-        ].width(Length::Fill)).style(container::secondary);
+        let nav_menu = container(row![dropdown_root("File", menu1),].width(Length::Fill))
+            .style(container::secondary);
 
         // EXAMPLE 10: Dynamically sized based on parent viewport
         let dynamic_size = overlay_button(
@@ -339,51 +394,61 @@ impl App {
         .id("dynamic_overlay");
 
         // EXAMPLE 11: Using a custom helper for making generic overlay easier to use in your application.
-        let custom_overlay = my_custom_headerless_overlay(
-            "custom helper", 
-            custom_helper_overlay_content
-        ).id("custom_helper_overlay");
+        let custom_overlay =
+            my_custom_headerless_overlay("custom helper", custom_helper_overlay_content)
+                .id("custom_helper_overlay");
 
         // Example 12: Controlling open state via app state
         let app_state_controlled = overlay_button(
             Option::<Element<'_, _>>::None,
             "Warning!",
-            column![text("Do the thing!"), button("close").on_press(Message::ToggleOverlay(!self.overlay_status))].spacing(10.0)
+            column![
+                text("Do the thing!"),
+                button("close").on_press(Message::ToggleOverlay(!self.overlay_status))
+            ]
+            .spacing(10.0),
         )
         .style(button::text)
         .hide_close_button() // remove the X in the header, keep the header
-        .is_open(self.overlay_status)  // bool held in state
+        .is_open(self.overlay_status) // bool held in state
         .on_toggle(Message::ToggleOverlay) // change app state with internal open/close calls
         .overlay_style(generic_overlay::danger);
 
         let on_hover_internal = container(
-                overlay_button(
-                    text_editor(&self.editor_content)
-                        .width(500.0)
-                        .height(400.0)
-                        .on_action(Message::ActionPerformed),
-                    "Hidden",
-                    button("C").width(Length::Shrink).height(Length::Shrink).on_press(Message::ButtonPressed).style(button::subtle),
-                )
-                .style(button::text)
-                .hide_header()
-                .on_hover()
-                .overlay_padding(0.0)
-                .overlay_padding(0.0)
-                .hover_gap(self.hover_gap)
-                .overlay_height(Length::Shrink)
-                .overlay_width(Length::Shrink)
-                .hover_position(self.hover_position.unwrap_or(Position::Right))
-                .hover_mode(PositionMode::Inside)
-                .hover_alignment(self.hover_alignment.unwrap_or(AlignmentOption::Start).into())
-                .on_close(|| Message::OverlayClosed)
-                .interactive_base(true),
+            overlay_button(
+                text_editor(&self.editor_content)
+                    .width(500.0)
+                    .height(400.0)
+                    .on_action(Message::ActionPerformed),
+                "Hidden",
+                button("C")
+                    .width(Length::Shrink)
+                    .height(Length::Shrink)
+                    .on_press(Message::ButtonPressed)
+                    .style(button::subtle),
+            )
+            .style(button::text)
+            .hide_header()
+            .on_hover()
+            .overlay_padding(0.0)
+            .overlay_padding(0.0)
+            .hover_gap(self.hover_gap)
+            .overlay_height(Length::Shrink)
+            .overlay_width(Length::Shrink)
+            .hover_position(self.hover_position.unwrap_or(Position::Right))
+            .hover_mode(PositionMode::Inside)
+            .hover_alignment(
+                self.hover_alignment
+                    .unwrap_or(AlignmentOption::Start)
+                    .into(),
+            )
+            .on_close(|| Message::OverlayClosed)
+            .interactive_base(true),
         );
 
         column![
             nav_menu,
             column![
-                
                 text("Generic Overlay Examples").size(24),
                 basic_overlay,
                 opaque_overlay,
@@ -400,25 +465,33 @@ impl App {
                                     Position::ALL,
                                     self.hover_position,
                                     Message::UpdatePosition
-                                ).width(100),
-                            ].spacing(5),
+                                )
+                                .width(100),
+                            ]
+                            .spacing(5),
                             column![
                                 text("Set Alignment"),
                                 pick_list(
                                     AlignmentOption::ALL,
                                     self.hover_alignment,
                                     Message::UpdateAlignment
-                                ).width(100),
-                            ].spacing(5),
-                        ].spacing(10),
+                                )
+                                .width(100),
+                            ]
+                            .spacing(5),
+                        ]
+                        .spacing(10),
                         on_hover_overlay,
-                    ].spacing(10)
-                ).center_x(Length::Fill),
+                    ]
+                    .spacing(10)
+                )
+                .center_x(Length::Fill),
                 interactive_tooltip1,
                 dynamic_size,
                 custom_overlay,
                 app_state_controlled,
-                button("Some External Toggle for an overlay").on_press(Message::ToggleOverlay(!self.overlay_status)),
+                button("Some External Toggle for an overlay")
+                    .on_press(Message::ToggleOverlay(!self.overlay_status)),
                 on_hover_internal,
             ]
             .spacing(20)
@@ -434,9 +507,7 @@ fn main() -> iced::Result {
         .run()
 }
 
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq,)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlignmentOption {
     Start,
     Center,
@@ -444,11 +515,7 @@ pub enum AlignmentOption {
 }
 
 impl AlignmentOption {
-    pub const ALL: &'static [Self] = &[
-        Self::Start,
-        Self::Center,
-        Self::End,     
-    ];
+    pub const ALL: &'static [Self] = &[Self::Start, Self::Center, Self::End];
 }
 
 impl std::fmt::Display for AlignmentOption {
@@ -481,13 +548,12 @@ impl From<Alignment> for AlignmentOption {
     }
 }
 
-
 /// Creating your own helper function for overlays.
 pub fn my_custom_headerless_overlay<'a, Message, Theme, Renderer>(
     button_label: impl Into<Element<'a, Message, Theme, Renderer>>,
     overlay_content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> OverlayButton<'a, Message, Theme, Renderer> 
-where 
+) -> OverlayButton<'a, Message, Theme, Renderer>
+where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
     Theme: widgets::generic_overlay::Catalog + button::Catalog,
 {

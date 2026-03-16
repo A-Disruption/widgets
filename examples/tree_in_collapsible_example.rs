@@ -1,9 +1,9 @@
-use iced::widget::{button, column, container, space, row, scrollable, text};
+use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Alignment, Element, Task, Theme};
+use std::collections::HashSet;
 use widgets::collapsible::collapsible;
 use widgets::collapsible_group;
-use widgets::tree::{branch, tree_handle, DropInfo, DropPosition};
-use std::collections::HashSet;
+use widgets::tree::{DropInfo, DropPosition, branch, tree_handle};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -23,7 +23,7 @@ impl App {
             selected_items: None,
         }
     }
-    
+
     fn theme(&self) -> Theme {
         iced::Theme::Light
     }
@@ -49,7 +49,7 @@ impl App {
                 println!("  Dragged IDs: {:?}", drop_info.dragged_ids);
                 println!("  Target ID: {:?}", drop_info.target_id);
                 println!("  Position: {:?}", drop_info.position);
-                
+
                 // Example of how to handle the drop:
                 match drop_info.position {
                     DropPosition::Before => {
@@ -75,55 +75,75 @@ impl App {
 
     pub fn view(&self) -> Element<Message> {
         let tree_widget = tree_handle(vec![
-            branch(button("Fruit").on_press(Message::ButtonPressed)).with_id(10).block_dragging()
+            branch(button("Fruit").on_press(Message::ButtonPressed))
+                .with_id(10)
+                .block_dragging()
                 .with_children(vec![
                     branch(text("Strawberries")).with_id(1),
                     branch(text("Blueberries")).with_id(2),
-                    branch(container(text("Citrus")).padding(5)).with_id(3)
+                    branch(container(text("Citrus")).padding(5))
+                        .with_id(3)
                         .with_children(vec![
                             branch(text("Oranges")).with_id(4),
                             branch(text("Lemons")).with_id(5),
-                        ]).accepts_drops(),
-                ]).accepts_drops(),
-            branch(button("Vegetables").on_press(Message::ButtonPressed)).with_id(6)
+                        ])
+                        .accepts_drops(),
+                ])
+                .accepts_drops(),
+            branch(button("Vegetables").on_press(Message::ButtonPressed))
+                .with_id(6)
                 .with_children(vec![
                     branch(text("Carrots")).with_id(7),
                     branch(text("Broccoli")).with_id(8),
-                ]).accepts_drops(),
+                ])
+                .accepts_drops(),
             branch(
                 row![
                     button("button1").on_press(Message::ButtonPressed),
                     space::horizontal(),
                     button("button2").on_press(Message::ButtonPressed)
-                ].spacing(50) // If using a horizonal_space() inside a row, set the row to shrink or the branch will not render
-            ).with_id(19).accepts_drops(),
+                ]
+                .spacing(50), // If using a horizonal_space() inside a row, set the row to shrink or the branch will not render
+            )
+            .with_id(19)
+            .accepts_drops(),
         ])
         .on_drop(Message::HandleBranchDropped)
         .on_select(Message::TreeSelect);
 
         let tree_widget1 = tree_handle(vec![
-            branch(button("Fruit").on_press(Message::ButtonPressed)).with_id(10).block_dragging()
+            branch(button("Fruit").on_press(Message::ButtonPressed))
+                .with_id(10)
+                .block_dragging()
                 .with_children(vec![
                     branch(text("Strawberries")).with_id(1),
                     branch(text("Blueberries")).with_id(2),
-                    branch(container(text("Citrus")).padding(5)).with_id(3)
+                    branch(container(text("Citrus")).padding(5))
+                        .with_id(3)
                         .with_children(vec![
                             branch(text("Oranges")).with_id(4),
                             branch(text("Lemons")).with_id(5),
-                        ]).accepts_drops(),
-                ]).accepts_drops(),
-            branch(button("Vegetables").on_press(Message::ButtonPressed)).with_id(6)
+                        ])
+                        .accepts_drops(),
+                ])
+                .accepts_drops(),
+            branch(button("Vegetables").on_press(Message::ButtonPressed))
+                .with_id(6)
                 .with_children(vec![
                     branch(text("Carrots")).with_id(7),
                     branch(text("Broccoli")).with_id(8),
-                ]).accepts_drops(),
+                ])
+                .accepts_drops(),
             branch(
                 row![
                     button("button1").on_press(Message::ButtonPressed),
                     space::horizontal(),
                     button("button2").on_press(Message::ButtonPressed)
-                ].spacing(50)
-            ).with_id(19).accepts_drops(),
+                ]
+                .spacing(50),
+            )
+            .with_id(19)
+            .accepts_drops(),
         ])
         .on_drop(Message::HandleBranchDropped)
         .on_select(Message::TreeSelect);
@@ -136,25 +156,27 @@ impl App {
                     collapsible_group![
                         collapsible(
                             "Tree 1 - Very Slow - EaseInOutBounce",
-                            collapsible(
-                                "Nested Collapsible 1",
-                                tree_widget,
-                            ).title_alignment(Alignment::Center),
-                        ).easing(iced::animation::Easing::EaseInOutBounce).very_slow(),
+                            collapsible("Nested Collapsible 1", tree_widget,)
+                                .title_alignment(Alignment::Center),
+                        )
+                        .easing(iced::animation::Easing::EaseInOutBounce)
+                        .very_slow(),
                         collapsible(
                             "Tree 2 - Very Slow - EaseInOutBounce",
-                            collapsible(
-                                "Nested Collapsible 2",
-                                tree_widget1,
-                            ).title_alignment(Alignment::Center),
-                        ).easing(iced::animation::Easing::EaseInOutBounce).very_slow()
-                    ].spacing(10.0),
+                            collapsible("Nested Collapsible 2", tree_widget1,)
+                                .title_alignment(Alignment::Center),
+                        )
+                        .easing(iced::animation::Easing::EaseInOutBounce)
+                        .very_slow()
+                    ]
+                    .spacing(10.0),
                 ]
                 .width(400)
                 .spacing(20)
                 .padding(20)
             )
-        ].align_x(iced::Alignment::Center)
+        ]
+        .align_x(iced::Alignment::Center)
         .into()
     }
 }

@@ -5,6 +5,10 @@ edition = "2024"
 
 [dependencies]
 iced = { version = "0.14.0", features = ["tokio", "advanced"] }
+chrono = { version = "0.4", optional = true }
+
+[dev-dependencies]
+iced_runtime = "0.14.0"
 
 [features]
 default = []
@@ -12,7 +16,9 @@ tree = []
 color_picker = []
 collapsible = []
 generic_overlay = []
-all = ["tree", "color_picker", "collapsible", "generic_overlay"]
+flow_editor = []
+date_picker = ["dep:chrono"]
+all = ["tree", "color_picker", "collapsible", "generic_overlay", "flow_editor", "date_picker"]
 
 [[example]]
 name = "tree_example"
@@ -38,3 +44,13 @@ required-features = ["collapsible"]
 name = "generic_overlay_example"
 path = "examples/generic_overlay_example.rs"
 required-features = ["generic_overlay"]
+
+[[example]]
+name = "flow_editor_example"
+path = "examples/flow_editor_example.rs"
+required-features = ["flow_editor"]
+
+[[example]]
+name = "date_picker_example"
+path = "examples/date_picker_example.rs"
+required-features = ["date_picker"]

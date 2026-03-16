@@ -1,21 +1,26 @@
 use iced::{
+    Border, Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector,
     advanced::{
-        layout,
-        renderer,
+        Clipboard, Layout, Shell, Widget, layout, renderer,
         text::Renderer as _,
         widget::{self, tree::Tree},
-        Clipboard, Layout, Shell, Widget,
-    }, animation::{Animation, Easing}, border::Radius, keyboard, mouse, time::{Duration, Instant}, widget::text::Alignment, window, Border, Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector
+    },
+    animation::{Animation, Easing},
+    border::Radius,
+    keyboard, mouse,
+    time::{Duration, Instant},
+    widget::text::Alignment,
+    window,
 };
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 
 // Constants for layout
-const LINE_HEIGHT: f32 = 32.0;       
-const ARROW_X_PAD: f32 = 4.0;       
-const ARROW_W: f32 = 16.0;          
+const LINE_HEIGHT: f32 = 32.0;
+const ARROW_X_PAD: f32 = 4.0;
+const ARROW_W: f32 = 16.0;
 const HANDLE_HOVER_W: f32 = 24.0;
 const CONTENT_GAP: f32 = 14.0;
-const DRAG_THRESHOLD: f32 = 5.0;     // Minimum distance to start drag
+const DRAG_THRESHOLD: f32 = 5.0; // Minimum distance to start drag
 const NO_EXTERNAL_ID: usize = usize::MAX;
 
 /// Creates a new [`TreeHandle`] with the given root branches.
@@ -33,8 +38,7 @@ where
 /// Creates a new [`Branch`] with the given content element.
 pub fn branch<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> Branch<'a, Message, Theme, Renderer>
-{
+) -> Branch<'a, Message, Theme, Renderer> {
     Branch {
         content: content.into(),
         children: Vec::new(),
@@ -47,7 +51,7 @@ pub fn branch<'a, Message, Theme, Renderer>(
 }
 
 #[derive(Debug, Clone)]
-pub struct DropInfo{
+pub struct DropInfo {
     pub dragged_ids: Vec<usize>,
     pub target_id: Option<usize>,
     pub position: DropPosition,
@@ -56,27 +60,27 @@ pub struct DropInfo{
 #[derive(Debug, Clone, PartialEq)]
 pub enum DropPosition {
     Before,
-    After, 
+    After,
     Into,
 }
 
 #[allow(missing_debug_implementations)]
-pub struct TreeHandle<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> 
-where 
+pub struct TreeHandle<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
+where
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::text::Renderer,
 {
     branches: Vec<Branch_>,
-    branch_content: Vec<Element<'a, Message, Theme, Renderer>>, 
-    width: Length, 
+    branch_content: Vec<Element<'a, Message, Theme, Renderer>>,
+    width: Length,
     height: Length,
-    spacing: f32, 
-    indent: f32, 
+    spacing: f32,
+    indent: f32,
     padding_x: f32,
     padding_y: f32,
     on_drop: Option<Box<dyn Fn(DropInfo) -> Message + 'a>>,
-    on_select: Option<Box< dyn Fn(HashSet<usize>) -> Message + 'a>>,
+    on_select: Option<Box<dyn Fn(HashSet<usize>) -> Message + 'a>>,
     on_can_drop: Option<Box<dyn Fn(&[usize], Option<usize>, &DropPosition) -> bool + 'a>>,
     force_reset_order: bool,
     ext_to_int: HashMap<usize, usize>,
@@ -112,10 +116,10 @@ struct BranchState {
 }
 
 struct BranchAnimation {
-    animation: Animation<bool>,  // true = expanded
-    progress: f32,               // 0.0 = collapsed, 1.0 = expanded
+    animation: Animation<bool>, // true = expanded
+    progress: f32,              // 0.0 = collapsed, 1.0 = expanded
     was_animating: bool,
-    subtree_full_height: f32,    // computed during layout
+    subtree_full_height: f32, // computed during layout
 }
 
 // Combined state structure
@@ -126,20 +130,20 @@ struct TreeState {
     branch_heights: Vec<f32>,
     branch_widths: Vec<f32>,
     visible_branches: Vec<bool>,
-    
+
     // Interaction state
     selected: HashSet<usize>,
     focused: Option<usize>,
     hovered: Option<usize>,
     hovered_handle: Option<usize>,
-    
+
     // Drag state
     drag_pending: Option<DragPending>,
     drag_active: Option<DragActive>,
 
     // Selection rectangle state
     selection_rect: Option<SelectionRect>,
-    
+
     // Tree structure state (for reordering)
     branch_order: Option<Vec<BranchState>>,
 
@@ -160,9 +164,9 @@ struct TreeState {
 }
 
 /// Combined state that includes both animation state and text state
-struct CombinedState<P> 
-where 
-    P: iced::advanced::text::Paragraph
+struct CombinedState<P>
+where
+    P: iced::advanced::text::Paragraph,
 {
     tree_state: TreeState,
     icon_text: widget::text::State<P>,
@@ -192,20 +196,17 @@ struct DragActive {
 struct SelectionRect {
     start_position: Point,
     current_position: Point,
-    initial_selection: HashSet<usize>,  // Items selected before drag started
+    initial_selection: HashSet<usize>, // Items selected before drag started
 }
 
-impl<'a, Message, Theme, Renderer> 
-    TreeHandle<'a, Message, Theme, Renderer>
-where 
+impl<'a, Message, Theme, Renderer> TreeHandle<'a, Message, Theme, Renderer>
+where
     Message: Clone,
     Theme: Catalog,
-    Renderer: iced::advanced::Renderer  + iced::advanced::text::Renderer,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     /// Creates a new [`TreeHandle`] from root branches.
-    pub fn new<'b>( 
-        roots: impl IntoIterator<Item = Branch<'a, Message, Theme, Renderer>>,
-    ) -> Self {
+    pub fn new<'b>(roots: impl IntoIterator<Item = Branch<'a, Message, Theme, Renderer>>) -> Self {
         let roots = roots.into_iter();
 
         let mut width = Length::Shrink;
@@ -226,13 +227,13 @@ where
             width: &mut Length,
             height: &mut Length,
         ) where
-            Renderer: iced::advanced::Renderer  + iced::advanced::text::Renderer,
+            Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
         {
             let current_id = *next_id;
             *next_id += 1;
-            
+
             let has_children = !branch.children.is_empty();
-            
+
             branches.push(Branch_ {
                 id: current_id,
                 external_id: branch.external_id,
@@ -244,12 +245,12 @@ where
                 align_x: branch.align_x,
                 align_y: branch.align_y,
             });
-            
+
             let size_hint = branch.content.as_widget().size_hint();
             *width = width.enclose(size_hint.width);
             *height = height.enclose(size_hint.height);
             branch_content.push(branch.content);
-            
+
             for child in branch.children {
                 flatten_branch(
                     child,
@@ -318,7 +319,7 @@ where
     }
 
     /// Sets the message to emit when a drop occurs
-    pub fn on_drop<F>(mut self, f: F) -> Self 
+    pub fn on_drop<F>(mut self, f: F) -> Self
     where
         F: Fn(DropInfo) -> Message + 'a,
     {
@@ -328,8 +329,8 @@ where
 
     /// Sets the message emit when a branch is selected
     pub fn on_select<F>(mut self, f: F) -> Self
-    where 
-        F: Fn(HashSet<usize>) -> Message + 'a
+    where
+        F: Fn(HashSet<usize>) -> Message + 'a,
     {
         self.on_select = Some(Box::new(f));
         self
@@ -356,19 +357,13 @@ where
     }
 
     /// Sets the collapse icon (shown when branch is expanded)
-    pub fn collapse_icon(
-        mut self,
-        icon: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self {
+    pub fn collapse_icon(mut self, icon: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
         self.collapse_icon = Some(icon.into());
         self
     }
 
     /// Sets the expand icon (shown when branch is collapsed)
-    pub fn expand_icon(
-        mut self,
-        icon: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self {
+    pub fn expand_icon(mut self, icon: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
         self.expand_icon = Some(icon.into());
         self
     }
@@ -394,21 +389,21 @@ where
     }
 
     /// Sets the indent of the [`Tree`].
-    pub fn indent(mut self, px: f32) -> Self { 
-        self.indent = px; 
-        self 
+    pub fn indent(mut self, px: f32) -> Self {
+        self.indent = px;
+        self
     }
 
     /// Sets the spacing of the [`Tree`].
-    pub fn spacing(mut self, px: f32) -> Self { 
-        self.spacing = px; 
-        self 
+    pub fn spacing(mut self, px: f32) -> Self {
+        self.spacing = px;
+        self
     }
 
     /// Sets the class of the [`Tree`].
-    pub fn class(mut self, class: impl Into<Theme::Class<'a>>) -> Self { 
-        self.class = class.into(); 
-        self 
+    pub fn class(mut self, class: impl Into<Theme::Class<'a>>) -> Self {
+        self.class = class.into();
+        self
     }
 
     /// Sets the padding of the cells of the [`Tree`].
@@ -473,38 +468,39 @@ where
     fn get_ordered_indices(&self, state: &TreeState) -> Vec<usize> {
         if let Some(ref branch_order) = state.branch_order {
             let mut indices = Vec::new();
-            
+
             for bs in branch_order {
                 if let Some(idx) = self.branches.iter().position(|b| b.id == bs.id) {
                     indices.push(idx);
                 }
             }
-            
+
             // Add any new branches not in saved state
             for (i, branch) in self.branches.iter().enumerate() {
                 if !branch_order.iter().any(|bs| bs.id == branch.id) {
                     indices.push(i);
                 }
             }
-            
+
             indices
         } else {
             (0..self.branches.len()).collect()
         }
     }
-    
+
     // Helper to get effective branch info
     fn get_branch_info(&self, index: usize, state: &TreeState) -> (usize, Option<usize>, u16) {
         let branch = &self.branches[index];
-        
+
         if let Some(ref branch_order) = state.branch_order
-            && let Some(bs) = branch_order.iter().find(|bs| bs.id == branch.id) {
-                return (branch.id, bs.parent_id, bs.depth);
-            }
-        
+            && let Some(bs) = branch_order.iter().find(|bs| bs.id == branch.id)
+        {
+            return (branch.id, bs.parent_id, bs.depth);
+        }
+
         (branch.id, branch.parent_id, branch.depth)
     }
-    
+
     // Determines if a branch is visible
     fn is_branch_visible(&self, index: usize, state: &TreeState) -> bool {
         if index >= self.branches.len() {
@@ -512,22 +508,24 @@ where
         }
 
         let (id, parent_id, _) = self.get_branch_info(index, state);
-        
+
         // Check if being dragged
         if let Some(ref drag) = state.drag_active {
             if drag.dragged_nodes.contains(&id) {
                 return false;
             }
-            
+
             // Check if parent is being dragged
             if let Some(parent_id) = parent_id {
                 if drag.dragged_nodes.contains(&parent_id) {
                     return false;
                 }
-                
+
                 // Check ancestors
                 let mut current_parent = parent_id;
-                while let Some(parent_idx) = self.branches.iter().position(|b| b.id == current_parent) {
+                while let Some(parent_idx) =
+                    self.branches.iter().position(|b| b.id == current_parent)
+                {
                     if drag.dragged_nodes.contains(&current_parent) {
                         return false;
                     }
@@ -540,19 +538,20 @@ where
                 }
             }
         }
-        
+
         // Root level items are always visible
         if parent_id.is_none() {
             return true;
         }
-        
+
         // Check if parent is expanded
         if let Some(parent_id) = parent_id
-            && let Some(parent_index) = self.branches.iter().position(|b| b.id == parent_id) {
-                return self.is_branch_visible(parent_index, state) 
-                    && state.expanded.contains(&parent_id);
-            }
-        
+            && let Some(parent_index) = self.branches.iter().position(|b| b.id == parent_id)
+        {
+            return self.is_branch_visible(parent_index, state)
+                && state.expanded.contains(&parent_id);
+        }
+
         false
     }
 
@@ -573,18 +572,18 @@ where
 
     /// Calculate drop position based on mouse position
     fn calculate_drop_position(
-        &self, 
-        mouse_y: f32, 
-        branch_bounds: Rectangle, 
-        has_children: bool, 
-        expanded: bool, 
-        accepts_drops: bool  // Add this parameter
+        &self,
+        mouse_y: f32,
+        branch_bounds: Rectangle,
+        has_children: bool,
+        expanded: bool,
+        accepts_drops: bool, // Add this parameter
     ) -> DropPosition {
         let relative_y = mouse_y - branch_bounds.y;
         let third_height = branch_bounds.height / 3.0;
-        
+
         let can_drop_into = (has_children && expanded) || accepts_drops;
-        
+
         if relative_y < third_height {
             DropPosition::Before
         } else if relative_y > branch_bounds.height - third_height {
@@ -599,10 +598,7 @@ where
     }
 
     fn update_has_children_flags(&mut self) {
-        let parent_ids: HashSet<usize> = self.branches
-            .iter()
-            .filter_map(|b| b.parent_id)
-            .collect();
+        let parent_ids: HashSet<usize> = self.branches.iter().filter_map(|b| b.parent_id).collect();
 
         for branch in &mut self.branches {
             branch.has_children = parent_ids.contains(&branch.id);
@@ -644,17 +640,18 @@ where
         } else {
             // Create a new animation
             let initial = !expanding; // start from the opposite state
-            let mut animation = Animation::new(initial)
-                .easing(easing)
-                .duration(duration);
+            let mut animation = Animation::new(initial).easing(easing).duration(duration);
             animation.go_mut(expanding, now);
             let progress = animation.interpolate(0.0, 1.0, now);
-            state.branch_animations.insert(ext_id, BranchAnimation {
-                animation,
-                progress,
-                was_animating: true,
-                subtree_full_height: 0.0,
-            });
+            state.branch_animations.insert(
+                ext_id,
+                BranchAnimation {
+                    animation,
+                    progress,
+                    was_animating: true,
+                    subtree_full_height: 0.0,
+                },
+            );
         }
     }
 
@@ -666,7 +663,6 @@ where
             (None, None) => 0,
         }
     }
-
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -694,7 +690,8 @@ where
 
         for branch in &self.branches {
             if branch.external_id != NO_EXTERNAL_ID {
-                let parent_ext = branch.parent_id
+                let parent_ext = branch
+                    .parent_id
                     .and_then(|pid| self.branches.iter().find(|b| b.id == pid))
                     .map(|p| p.external_id)
                     .filter(|&eid| eid != NO_EXTERNAL_ID);
@@ -702,9 +699,11 @@ where
             }
             let should_expand = match &self.initially_expanded_ext_ids {
                 None => branch.has_children,
-                Some(ids) => branch.has_children
-                    && branch.external_id != NO_EXTERNAL_ID
-                    && ids.contains(&branch.external_id),
+                Some(ids) => {
+                    branch.has_children
+                        && branch.external_id != NO_EXTERNAL_ID
+                        && ids.contains(&branch.external_id)
+                }
             };
             if should_expand {
                 expanded.insert(branch.id);
@@ -714,58 +713,56 @@ where
             }
         }
 
-        widget::tree::State::new(
-            CombinedState{
-                tree_state: TreeState {
-                    expanded,
-                    branch_heights: Vec::new(),
-                    branch_widths: Vec::new(),
-                    visible_branches: Vec::new(),
-                    selected: HashSet::new(),
-                    focused: None,
-                    hovered: None,
-                    hovered_handle: None,
-                    drag_pending: None,
-                    drag_active: None,
-                    selection_rect: None,
-                    branch_order: None,
-                    current_modifiers: keyboard::Modifiers::empty(),
-                    icon_layout_height: None,
-                    expanded_ext_ids,
-                    child_parent_map,
-                    branch_animations: HashMap::new(),
-                    pending_collapse: HashSet::new(),
-                },
-                icon_text: widget::text::State::<Renderer::Paragraph>::default(),
-            }
-        )
+        widget::tree::State::new(CombinedState {
+            tree_state: TreeState {
+                expanded,
+                branch_heights: Vec::new(),
+                branch_widths: Vec::new(),
+                visible_branches: Vec::new(),
+                selected: HashSet::new(),
+                focused: None,
+                hovered: None,
+                hovered_handle: None,
+                drag_pending: None,
+                drag_active: None,
+                selection_rect: None,
+                branch_order: None,
+                current_modifiers: keyboard::Modifiers::empty(),
+                icon_layout_height: None,
+                expanded_ext_ids,
+                child_parent_map,
+                branch_animations: HashMap::new(),
+                pending_collapse: HashSet::new(),
+            },
+            icon_text: widget::text::State::<Renderer::Paragraph>::default(),
+        })
     }
 
     fn children(&self) -> Vec<Tree> {
         let mut children = vec![];
-        
+
         if let Some(ref expand_icon) = self.expand_icon {
             children.push(Tree::new(expand_icon));
         }
-        
+
         if let Some(ref collapse_icon) = self.collapse_icon {
             children.push(Tree::new(collapse_icon));
         }
-        
+
         for content in &self.branch_content {
             children.push(Tree::new(content));
         }
-        
+
         children
     }
 
     fn diff(&self, state: &mut widget::Tree) {
         let mut children = vec![];
-        
+
         if let Some(ref expand_icon) = self.expand_icon {
             children.push(expand_icon);
         }
-        
+
         if let Some(ref collapse_icon) = self.collapse_icon {
             children.push(collapse_icon);
         }
@@ -783,7 +780,9 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let combined_state = tree.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+        let combined_state = tree
+            .state
+            .downcast_mut::<CombinedState<Renderer::Paragraph>>();
 
         // Check if we need to force reset the order
         if self.force_reset_order {
@@ -812,17 +811,24 @@ where
         let mut new_child_parent_map = HashMap::new();
         for branch in &self.branches {
             if branch.external_id != NO_EXTERNAL_ID {
-                let parent_ext = branch.parent_id
+                let parent_ext = branch
+                    .parent_id
                     .and_then(|pid| self.branches.iter().find(|b| b.id == pid))
                     .map(|p| p.external_id)
                     .filter(|&eid| eid != NO_EXTERNAL_ID);
 
-                let prev_parent = combined_state.tree_state.child_parent_map.get(&branch.external_id);
+                let prev_parent = combined_state
+                    .tree_state
+                    .child_parent_map
+                    .get(&branch.external_id);
                 if prev_parent != Some(&parent_ext) {
                     // New branch or parent changed - expand the new parent
                     if let Some(parent_ext_id) = parent_ext {
                         // Only animate if the parent was NOT already expanded
-                        let already_expanded = combined_state.tree_state.expanded_ext_ids.contains(&parent_ext_id);
+                        let already_expanded = combined_state
+                            .tree_state
+                            .expanded_ext_ids
+                            .contains(&parent_ext_id);
                         if !already_expanded {
                             if let Some(duration) = self.animation_duration {
                                 Self::start_branch_animation(
@@ -833,7 +839,10 @@ where
                                     duration,
                                 );
                             } else {
-                                combined_state.tree_state.expanded_ext_ids.insert(parent_ext_id);
+                                combined_state
+                                    .tree_state
+                                    .expanded_ext_ids
+                                    .insert(parent_ext_id);
                             }
                         }
                         // If already expanded, no animation needed - just keep it expanded
@@ -847,7 +856,10 @@ where
 
         // Rebuild expanded (internal IDs) from expanded_ext_ids (external IDs) each frame
         // This prevents stale internal IDs from causing incorrect collapse after structural changes
-        combined_state.tree_state.expanded = combined_state.tree_state.expanded_ext_ids.iter()
+        combined_state.tree_state.expanded = combined_state
+            .tree_state
+            .expanded_ext_ids
+            .iter()
             .filter_map(|ext_id| self.ext_to_int.get(ext_id))
             .copied()
             .collect();
@@ -863,7 +875,8 @@ where
         // Update visibility
         combined_state.tree_state.visible_branches = vec![false; branch_count];
         for i in 0..branch_count {
-            combined_state.tree_state.visible_branches[i] = self.is_branch_visible(i, &combined_state.tree_state);
+            combined_state.tree_state.visible_branches[i] =
+                self.is_branch_visible(i, &combined_state.tree_state);
         }
 
         let mut cells = Vec::with_capacity(branch_count);
@@ -923,7 +936,10 @@ where
             )
             .max_width(avail_w);
 
-            let content_layout = content.as_widget_mut().layout(child_state, renderer, &content_limits);
+            let content_layout =
+                content
+                    .as_widget_mut()
+                    .layout(child_state, renderer, &content_limits);
             let content_size =
                 content_limits.resolve(Length::Shrink, Length::Shrink, content_layout.size());
 
@@ -953,7 +969,14 @@ where
         let total_height_fill: u16 = row_fill_factors
             .iter()
             .enumerate()
-            .filter(|(i, _)| combined_state.tree_state.visible_branches.get(*i).copied().unwrap_or(false))
+            .filter(|(i, _)| {
+                combined_state
+                    .tree_state
+                    .visible_branches
+                    .get(*i)
+                    .copied()
+                    .unwrap_or(false)
+            })
             .map(|(_, &f)| f)
             .sum();
 
@@ -961,7 +984,8 @@ where
             - total_nonfluid_height
             - self.padding_y * 2.0
             - self.spacing
-                * combined_state.tree_state
+                * combined_state
+                    .tree_state
                     .visible_branches
                     .iter()
                     .filter(|&&v| v)
@@ -976,7 +1000,6 @@ where
         };
 
         for &i in &ordered_indices {
-
             // don't skip invisible branches, fix rendering fluid branches in overlay?
             if i >= self.branches.len() {
                 continue;
@@ -1012,16 +1035,25 @@ where
             let content_limits =
                 layout::Limits::new(Size::ZERO, Size::new(avail_w, max_h)).max_width(avail_w);
 
-            let content_layout = content.as_widget_mut().layout(child_state, renderer, &content_limits);
+            let content_layout =
+                content
+                    .as_widget_mut()
+                    .layout(child_state, renderer, &content_limits);
 
             let content_size = content_limits.resolve(
-                if is_width_fluid { tree_fluid } else { Length::Shrink },
+                if is_width_fluid {
+                    tree_fluid
+                } else {
+                    Length::Shrink
+                },
                 Length::Shrink,
                 content_layout.size(),
             );
 
-            combined_state.tree_state.branch_heights[i] = combined_state.tree_state.branch_heights[i].max(content_size.height);
-            combined_state.tree_state.branch_widths[i] = combined_state.tree_state.branch_widths[i].max(content_size.width);
+            combined_state.tree_state.branch_heights[i] =
+                combined_state.tree_state.branch_heights[i].max(content_size.height);
+            combined_state.tree_state.branch_widths[i] =
+                combined_state.tree_state.branch_widths[i].max(content_size.width);
             cells[i] = content_layout;
 
             let total_w = content_x + content_size.width;
@@ -1033,7 +1065,12 @@ where
         // to apply the animation reduction
         {
             // Build a map: parent_ext_id -> list of child indices (only for animating parents)
-            let animating_ext_ids: HashSet<usize> = combined_state.tree_state.branch_animations.keys().copied().collect();
+            let animating_ext_ids: HashSet<usize> = combined_state
+                .tree_state
+                .branch_animations
+                .keys()
+                .copied()
+                .collect();
 
             for &parent_ext_id in &animating_ext_ids {
                 // Find the parent's internal id
@@ -1041,15 +1078,23 @@ where
                     // Sum heights of all visible descendants
                     let mut subtree_height = 0.0f32;
                     for &idx in &ordered_indices {
-                        if idx >= self.branches.len() || !combined_state.tree_state.visible_branches[idx] {
+                        if idx >= self.branches.len()
+                            || !combined_state.tree_state.visible_branches[idx]
+                        {
                             continue;
                         }
                         // Check if this branch is a descendant of parent_int_id
-                        if self.is_descendant_of_id(idx, parent_int_id, &combined_state.tree_state) {
-                            subtree_height += combined_state.tree_state.branch_heights[idx] + self.spacing;
+                        if self.is_descendant_of_id(idx, parent_int_id, &combined_state.tree_state)
+                        {
+                            subtree_height +=
+                                combined_state.tree_state.branch_heights[idx] + self.spacing;
                         }
                     }
-                    if let Some(anim) = combined_state.tree_state.branch_animations.get_mut(&parent_ext_id) {
+                    if let Some(anim) = combined_state
+                        .tree_state
+                        .branch_animations
+                        .get_mut(&parent_ext_id)
+                    {
                         anim.subtree_full_height = subtree_height;
                     }
                 }
@@ -1066,7 +1111,10 @@ where
         };
 
         // Pre-compute animation reductions: map parent_int_id -> reduction amount
-        let animation_reductions: HashMap<usize, f32> = combined_state.tree_state.branch_animations.iter()
+        let animation_reductions: HashMap<usize, f32> = combined_state
+            .tree_state
+            .branch_animations
+            .iter()
             .filter_map(|(&ext_id, anim)| {
                 self.ext_to_int.get(&ext_id).map(|&int_id| {
                     let reduction = anim.subtree_full_height * (1.0 - anim.progress);
@@ -1094,8 +1142,11 @@ where
             }
 
             // Check if we've exited any active animation subtrees
-            let exited: Vec<usize> = active_anim_subtrees.keys()
-                .filter(|&&parent_id| !self.is_descendant_of_id(i, parent_id, &combined_state.tree_state))
+            let exited: Vec<usize> = active_anim_subtrees
+                .keys()
+                .filter(|&&parent_id| {
+                    !self.is_descendant_of_id(i, parent_id, &combined_state.tree_state)
+                })
                 .copied()
                 .collect();
             for parent_id in exited {
@@ -1105,8 +1156,7 @@ where
             }
 
             if let Some(ref drag) = combined_state.tree_state.drag_active {
-                if drag.drop_target == Some(branch.id)
-                    && drag.drop_position == DropPosition::Before
+                if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::Before
                 {
                     y += drop_indicator_space;
                 }
@@ -1119,22 +1169,30 @@ where
 
             cells[i].move_to_mut((content_x, y));
 
-            let Branch_ { align_x, align_y, .. } = branch;
+            let Branch_ {
+                align_x, align_y, ..
+            } = branch;
             cells[i].align_mut(
                 *align_x,
                 *align_y,
-                Size::new(combined_state.tree_state.branch_widths[i], combined_state.tree_state.branch_heights[i]),
+                Size::new(
+                    combined_state.tree_state.branch_widths[i],
+                    combined_state.tree_state.branch_heights[i],
+                ),
             );
 
             y += combined_state.tree_state.branch_heights[i] + self.spacing;
 
             if let Some(ref drag) = combined_state.tree_state.drag_active {
-                if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::Into
-                    && combined_state.tree_state.expanded.contains(&branch.id) {
-                        y += drop_indicator_space;
-                    }
+                if drag.drop_target == Some(branch.id)
+                    && drag.drop_position == DropPosition::Into
+                    && combined_state.tree_state.expanded.contains(&branch.id)
+                {
+                    y += drop_indicator_space;
+                }
 
-                if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::After {
+                if drag.drop_target == Some(branch.id) && drag.drop_position == DropPosition::After
+                {
                     y += drop_indicator_space;
                 }
             }
@@ -1163,15 +1221,23 @@ where
         // Lay out icon elements so their internal state (e.g. text paragraphs) gets populated
         let icon_limits = layout::Limits::new(Size::ZERO, Size::new(ARROW_W, LINE_HEIGHT));
         if let Some(ref mut expand_icon) = self.expand_icon {
-            let icon_node = expand_icon.as_widget_mut().layout(&mut tree.children[0], renderer, &icon_limits);
+            let icon_node =
+                expand_icon
+                    .as_widget_mut()
+                    .layout(&mut tree.children[0], renderer, &icon_limits);
             combined_state.tree_state.icon_layout_height = Some(icon_node.size().height);
         }
         if let Some(ref mut collapse_icon) = self.collapse_icon {
             let idx = if self.expand_icon.is_some() { 1 } else { 0 };
-            let icon_node = collapse_icon.as_widget_mut().layout(&mut tree.children[idx], renderer, &icon_limits);
+            let icon_node = collapse_icon.as_widget_mut().layout(
+                &mut tree.children[idx],
+                renderer,
+                &icon_limits,
+            );
             // Use the larger of the two icon heights
             if let Some(existing) = combined_state.tree_state.icon_layout_height {
-                combined_state.tree_state.icon_layout_height = Some(existing.max(icon_node.size().height));
+                combined_state.tree_state.icon_layout_height =
+                    Some(existing.max(icon_node.size().height));
             } else {
                 combined_state.tree_state.icon_layout_height = Some(icon_node.size().height);
             }
@@ -1179,7 +1245,6 @@ where
 
         layout::Node::with_children(intrinsic, cells)
     }
-
 
     fn update(
         &mut self,
@@ -1192,32 +1257,43 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let combined_state = tree.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+        let combined_state = tree
+            .state
+            .downcast_mut::<CombinedState<Renderer::Paragraph>>();
         let ordered_indices = self.get_ordered_indices(&combined_state.tree_state);
         let child_layout_index = self.get_child_content_index();
-        
+
         // Update all visible children
         for &i in &ordered_indices {
-            if i >= self.branches.len() || 
-               i >= combined_state.tree_state.visible_branches.len() || 
-               !combined_state.tree_state.visible_branches[i] {
+            if i >= self.branches.len()
+                || i >= combined_state.tree_state.visible_branches.len()
+                || !combined_state.tree_state.visible_branches[i]
+            {
                 continue;
             }
-            
+
             if let Some(ref drag) = combined_state.tree_state.drag_active
-                && drag.dragged_nodes.contains(&self.branches[i].id) {
-                    continue;
-                }
-            
+                && drag.dragged_nodes.contains(&self.branches[i].id)
+            {
+                continue;
+            }
+
             let branch = &mut self.branch_content[i];
             let child_state = &mut tree.children[i + child_layout_index];
             let child_layout = layout.children().nth(i).unwrap();
-            
+
             branch.as_widget_mut().update(
-                child_state, event, child_layout, cursor, renderer, clipboard, shell, viewport,
+                child_state,
+                event,
+                child_layout,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
             );
         }
-        
+
         // Handle tree-specific events
         match event {
             Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
@@ -1229,7 +1305,9 @@ where
                     let bounds = layout.bounds();
 
                     // Check if Ctrl is held for selection rectangle
-                    if combined_state.tree_state.current_modifiers.control() || combined_state.tree_state.current_modifiers.command() {
+                    if combined_state.tree_state.current_modifiers.control()
+                        || combined_state.tree_state.current_modifiers.command()
+                    {
                         combined_state.tree_state.selection_rect = Some(SelectionRect {
                             start_position: position,
                             current_position: position,
@@ -1239,23 +1317,27 @@ where
                     }
 
                     let mut y = bounds.y + self.padding_y;
-                    
+
                     for &i in &ordered_indices {
-                        if i >= self.branches.len() || 
-                           i >= combined_state.tree_state.visible_branches.len() || 
-                           !combined_state.tree_state.visible_branches[i] {
+                        if i >= self.branches.len()
+                            || i >= combined_state.tree_state.visible_branches.len()
+                            || !combined_state.tree_state.visible_branches[i]
+                        {
                             continue;
                         }
-                        
+
                         let branch = &self.branches[i];
-                        let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
-                        
+                        let (_, _, effective_depth) =
+                            self.get_branch_info(i, &combined_state.tree_state);
+
                         if let Some(ref drag) = combined_state.tree_state.drag_active
-                            && drag.dragged_nodes.contains(&branch.id) {
-                                continue;
-                            }
-                        
-                        let indent_x = bounds.x + self.padding_x + (effective_depth as f32 * self.indent);
+                            && drag.dragged_nodes.contains(&branch.id)
+                        {
+                            continue;
+                        }
+
+                        let indent_x =
+                            bounds.x + self.padding_x + (effective_depth as f32 * self.indent);
                         let branch_height = combined_state.tree_state.branch_heights[i];
                         let branch_bounds = Rectangle {
                             x: bounds.x,
@@ -1263,7 +1345,7 @@ where
                             width: bounds.width,
                             height: branch_height,
                         };
-                        
+
                         // Check if clicking on arrow
                         if branch.has_children {
                             let arrow_bounds = Rectangle {
@@ -1272,10 +1354,15 @@ where
                                 width: ARROW_W,
                                 height: branch_height,
                             };
-                            
+
                             if arrow_bounds.contains(position) {
-                                let ext_id = self.int_to_ext.get(branch.id).copied().unwrap_or(NO_EXTERNAL_ID);
-                                let is_expanded = combined_state.tree_state.expanded.contains(&branch.id);
+                                let ext_id = self
+                                    .int_to_ext
+                                    .get(branch.id)
+                                    .copied()
+                                    .unwrap_or(NO_EXTERNAL_ID);
+                                let is_expanded =
+                                    combined_state.tree_state.expanded.contains(&branch.id);
 
                                 if let Some(duration) = self.animation_duration {
                                     if ext_id != NO_EXTERNAL_ID {
@@ -1291,12 +1378,18 @@ where
                                     if is_expanded {
                                         combined_state.tree_state.expanded.remove(&branch.id);
                                         if ext_id != NO_EXTERNAL_ID {
-                                            combined_state.tree_state.expanded_ext_ids.remove(&ext_id);
+                                            combined_state
+                                                .tree_state
+                                                .expanded_ext_ids
+                                                .remove(&ext_id);
                                         }
                                     } else {
                                         combined_state.tree_state.expanded.insert(branch.id);
                                         if ext_id != NO_EXTERNAL_ID {
-                                            combined_state.tree_state.expanded_ext_ids.insert(ext_id);
+                                            combined_state
+                                                .tree_state
+                                                .expanded_ext_ids
+                                                .insert(ext_id);
                                         }
                                     }
                                 }
@@ -1312,10 +1405,11 @@ where
                         }
 
                         if branch_bounds.contains(position) {
-
                             if !branch.draggable {
                                 // Branch is not draggable - only allow selection
-                                if combined_state.tree_state.current_modifiers.control() || combined_state.tree_state.current_modifiers.command() {
+                                if combined_state.tree_state.current_modifiers.control()
+                                    || combined_state.tree_state.current_modifiers.command()
+                                {
                                     if combined_state.tree_state.selected.contains(&branch.id) {
                                         combined_state.tree_state.selected.remove(&branch.id);
                                     } else {
@@ -1328,7 +1422,8 @@ where
                                 combined_state.tree_state.focused = Some(branch.id);
 
                                 if let Some(ref on_select) = self.on_select {
-                                    let external_ids: HashSet<usize> = combined_state.tree_state
+                                    let external_ids: HashSet<usize> = combined_state
+                                        .tree_state
                                         .selected
                                         .iter()
                                         .map(|&internal| self.preferred_id(internal))
@@ -1342,18 +1437,23 @@ where
                             }
 
                             // Set up pending drag
-                            let mut filtered_ids: Vec<usize> = if combined_state.tree_state.selected.contains(&branch.id) {
-                                combined_state.tree_state.selected.iter().copied().collect()
-                            } else {
-                                vec![branch.id]
-                            };
-                            filtered_ids = filter_redundant_selections(&filtered_ids, &self.branches, &combined_state.tree_state.branch_order);
-                            
+                            let mut filtered_ids: Vec<usize> =
+                                if combined_state.tree_state.selected.contains(&branch.id) {
+                                    combined_state.tree_state.selected.iter().copied().collect()
+                                } else {
+                                    vec![branch.id]
+                                };
+                            filtered_ids = filter_redundant_selections(
+                                &filtered_ids,
+                                &self.branches,
+                                &combined_state.tree_state.branch_order,
+                            );
+
                             let click_offset = Vector::new(
                                 position.x - branch_bounds.x,
                                 position.y - branch_bounds.y,
                             );
-                            
+
                             combined_state.tree_state.drag_pending = Some(DragPending {
                                 start_position: position,
                                 branch_ids: filtered_ids,
@@ -1361,8 +1461,10 @@ where
                                 branch_bounds,
                                 click_offset,
                             });
-                            
-                            if combined_state.tree_state.current_modifiers.control() || combined_state.tree_state.current_modifiers.command() {
+
+                            if combined_state.tree_state.current_modifiers.control()
+                                || combined_state.tree_state.current_modifiers.command()
+                            {
                                 if combined_state.tree_state.selected.contains(&branch.id) {
                                     combined_state.tree_state.selected.remove(&branch.id);
                                 } else {
@@ -1375,7 +1477,8 @@ where
                             combined_state.tree_state.focused = Some(branch.id);
 
                             if let Some(ref on_select) = self.on_select {
-                                let external_ids: HashSet<usize> = combined_state.tree_state
+                                let external_ids: HashSet<usize> = combined_state
+                                    .tree_state
                                     .selected
                                     .iter()
                                     .map(|&internal| self.preferred_id(internal))
@@ -1383,7 +1486,7 @@ where
                                 shell.publish(on_select(external_ids));
                             }
                         }
-                        
+
                         y += branch_height + self.spacing;
                     }
                 }
@@ -1393,17 +1496,18 @@ where
                 // End selection rectangle if active
                 if combined_state.tree_state.selection_rect.is_some() {
                     combined_state.tree_state.selection_rect = None;
-                    
+
                     // Trigger selection callback if present
                     if let Some(ref on_select) = self.on_select {
-                        let external_ids: HashSet<usize> = combined_state.tree_state
+                        let external_ids: HashSet<usize> = combined_state
+                            .tree_state
                             .selected
                             .iter()
                             .map(|&internal| self.preferred_id(internal))
                             .collect();
                         shell.publish(on_select(external_ids));
                     }
-                    
+
                     shell.request_redraw();
                 }
 
@@ -1412,32 +1516,43 @@ where
 
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position() {
-
                     // Handle selection rectangle
                     if let Some(ref mut selection_rect) = combined_state.tree_state.selection_rect {
                         selection_rect.current_position = position;
-                        
+
                         // Calculate which branches are within the selection rectangle
                         let bounds = layout.bounds();
                         let rect_bounds = Rectangle {
-                            x: selection_rect.start_position.x.min(selection_rect.current_position.x),
-                            y: selection_rect.start_position.y.min(selection_rect.current_position.y),
-                            width: (selection_rect.current_position.x - selection_rect.start_position.x).abs(),
-                            height: (selection_rect.current_position.y - selection_rect.start_position.y).abs(),
+                            x: selection_rect
+                                .start_position
+                                .x
+                                .min(selection_rect.current_position.x),
+                            y: selection_rect
+                                .start_position
+                                .y
+                                .min(selection_rect.current_position.y),
+                            width: (selection_rect.current_position.x
+                                - selection_rect.start_position.x)
+                                .abs(),
+                            height: (selection_rect.current_position.y
+                                - selection_rect.start_position.y)
+                                .abs(),
                         };
-                        
+
                         // Start with initial selection
-                        combined_state.tree_state.selected = selection_rect.initial_selection.clone();
-                        
+                        combined_state.tree_state.selected =
+                            selection_rect.initial_selection.clone();
+
                         // Add branches that intersect with selection rectangle
                         let mut y = bounds.y + self.padding_y;
                         for &i in &ordered_indices {
-                            if i >= self.branches.len() || 
-                            i >= combined_state.tree_state.visible_branches.len() || 
-                            !combined_state.tree_state.visible_branches[i] {
+                            if i >= self.branches.len()
+                                || i >= combined_state.tree_state.visible_branches.len()
+                                || !combined_state.tree_state.visible_branches[i]
+                            {
                                 continue;
                             }
-                            
+
                             let branch = &self.branches[i];
                             let branch_height = combined_state.tree_state.branch_heights[i];
                             let branch_bounds = Rectangle {
@@ -1446,7 +1561,7 @@ where
                                 width: bounds.width,
                                 height: branch_height,
                             };
-                            
+
                             // Check if branch intersects with selection rectangle
                             if rectangles_intersect(&branch_bounds, &rect_bounds) {
                                 if combined_state.tree_state.current_modifiers.shift() {
@@ -1456,19 +1571,20 @@ where
                                     combined_state.tree_state.selected.insert(branch.id);
                                 }
                             }
-                            
+
                             y += branch_height + self.spacing;
                         }
-                        
+
                         shell.request_redraw();
                         return;
                     }
 
                     // Check if we should start dragging
                     if let Some(ref pending) = combined_state.tree_state.drag_pending {
-                        let distance = ((position.x - pending.start_position.x).powi(2) + 
-                                       (position.y - pending.start_position.y).powi(2)).sqrt();
-                        
+                        let distance = ((position.x - pending.start_position.x).powi(2)
+                            + (position.y - pending.start_position.y).powi(2))
+                        .sqrt();
+
                         if distance >= DRAG_THRESHOLD {
                             // Start actual drag
                             combined_state.tree_state.drag_active = Some(DragActive {
@@ -1490,14 +1606,15 @@ where
                         let mut y = bounds.y + self.padding_y;
                         let mut new_hovered = None;
                         let mut new_hovered_handle = None;
-                        
+
                         for &i in &ordered_indices {
-                            if i >= self.branches.len() || 
-                               i >= combined_state.tree_state.visible_branches.len() || 
-                               !combined_state.tree_state.visible_branches[i] {
+                            if i >= self.branches.len()
+                                || i >= combined_state.tree_state.visible_branches.len()
+                                || !combined_state.tree_state.visible_branches[i]
+                            {
                                 continue;
                             }
-                            
+
                             let branch = &self.branches[i];
                             let branch_height = combined_state.tree_state.branch_heights[i];
                             let branch_bounds = Rectangle {
@@ -1506,12 +1623,15 @@ where
                                 width: bounds.width,
                                 height: branch_height,
                             };
-                            
+
                             if branch_bounds.contains(position) {
                                 new_hovered = Some(branch.id);
-                                
-                                let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
-                                let indent_x = bounds.x + self.padding_x + (effective_depth as f32 * self.indent);
+
+                                let (_, _, effective_depth) =
+                                    self.get_branch_info(i, &combined_state.tree_state);
+                                let indent_x = bounds.x
+                                    + self.padding_x
+                                    + (effective_depth as f32 * self.indent);
                                 let handle_x = indent_x + ARROW_W;
                                 let handle_bounds = Rectangle {
                                     x: handle_x,
@@ -1519,17 +1639,19 @@ where
                                     width: HANDLE_HOVER_W,
                                     height: branch_bounds.height,
                                 };
-                                
+
                                 if handle_bounds.contains(position) {
                                     new_hovered_handle = Some(branch.id);
                                 }
                                 break;
                             }
-                            
+
                             y += branch_height + self.spacing;
                         }
-                        
-                        if new_hovered != combined_state.tree_state.hovered || new_hovered_handle != combined_state.tree_state.hovered_handle {
+
+                        if new_hovered != combined_state.tree_state.hovered
+                            || new_hovered_handle != combined_state.tree_state.hovered_handle
+                        {
                             combined_state.tree_state.hovered = new_hovered;
                             combined_state.tree_state.hovered_handle = new_hovered_handle;
                             shell.request_redraw();
@@ -1540,85 +1662,107 @@ where
 
             Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 if let Some(focused) = combined_state.tree_state.focused {
-                    let visible_ordered: Vec<usize> = ordered_indices.iter()
-                        .filter(|&&i| i < combined_state.tree_state.visible_branches.len() && combined_state.tree_state.visible_branches[i])
+                    let visible_ordered: Vec<usize> = ordered_indices
+                        .iter()
+                        .filter(|&&i| {
+                            i < combined_state.tree_state.visible_branches.len()
+                                && combined_state.tree_state.visible_branches[i]
+                        })
                         .map(|&i| self.branches[i].id)
                         .collect();
 
                     match key {
                         keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
-                            if let Some(current_pos) = visible_ordered.iter().position(|&id| id == focused)
-                                && current_pos > 0 {
-                                    combined_state.tree_state.focused = Some(visible_ordered[current_pos - 1]);
-                                    shell.invalidate_widgets();
-                                    shell.request_redraw();
-                                }
+                            if let Some(current_pos) =
+                                visible_ordered.iter().position(|&id| id == focused)
+                                && current_pos > 0
+                            {
+                                combined_state.tree_state.focused =
+                                    Some(visible_ordered[current_pos - 1]);
+                                shell.invalidate_widgets();
+                                shell.request_redraw();
+                            }
                         }
                         keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
-                            if let Some(current_pos) = visible_ordered.iter().position(|&id| id == focused)
-                                && current_pos < visible_ordered.len() - 1 {
-                                    combined_state.tree_state.focused = Some(visible_ordered[current_pos + 1]);
-                                    shell.invalidate_widgets();
-                                    shell.request_redraw();
-                                }
+                            if let Some(current_pos) =
+                                visible_ordered.iter().position(|&id| id == focused)
+                                && current_pos < visible_ordered.len() - 1
+                            {
+                                combined_state.tree_state.focused =
+                                    Some(visible_ordered[current_pos + 1]);
+                                shell.invalidate_widgets();
+                                shell.request_redraw();
+                            }
                         }
                         keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
                             if let Some(branch) = self.branches.iter().find(|b| b.id == focused)
-                                && branch.has_children && combined_state.tree_state.expanded.contains(&focused) {
-                                    let ext_id = self.int_to_ext.get(focused).copied().unwrap_or(NO_EXTERNAL_ID);
-                                    if let Some(duration) = self.animation_duration {
-                                        if ext_id != NO_EXTERNAL_ID {
-                                            Self::start_branch_animation(
-                                                &mut combined_state.tree_state,
-                                                ext_id,
-                                                false,
-                                                self.easing,
-                                                duration,
-                                            );
-                                        }
-                                    } else {
-                                        combined_state.tree_state.expanded.remove(&focused);
-                                        if ext_id != NO_EXTERNAL_ID {
-                                            combined_state.tree_state.expanded_ext_ids.remove(&ext_id);
-                                        }
-                                    }
+                                && branch.has_children
+                                && combined_state.tree_state.expanded.contains(&focused)
+                            {
+                                let ext_id = self
+                                    .int_to_ext
+                                    .get(focused)
+                                    .copied()
+                                    .unwrap_or(NO_EXTERNAL_ID);
+                                if let Some(duration) = self.animation_duration {
                                     if ext_id != NO_EXTERNAL_ID {
-                                        if let Some(on_toggle) = &self.on_toggle {
-                                            shell.publish(on_toggle(ext_id, false));
-                                        }
+                                        Self::start_branch_animation(
+                                            &mut combined_state.tree_state,
+                                            ext_id,
+                                            false,
+                                            self.easing,
+                                            duration,
+                                        );
                                     }
-                                    shell.invalidate_layout();
-                                    shell.request_redraw();
+                                } else {
+                                    combined_state.tree_state.expanded.remove(&focused);
+                                    if ext_id != NO_EXTERNAL_ID {
+                                        combined_state.tree_state.expanded_ext_ids.remove(&ext_id);
+                                    }
                                 }
+                                if ext_id != NO_EXTERNAL_ID {
+                                    if let Some(on_toggle) = &self.on_toggle {
+                                        shell.publish(on_toggle(ext_id, false));
+                                    }
+                                }
+                                shell.invalidate_layout();
+                                shell.request_redraw();
+                            }
                         }
                         keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
                             if let Some(branch) = self.branches.iter().find(|b| b.id == focused)
-                                && branch.has_children && !combined_state.tree_state.expanded.contains(&focused) {
-                                    let ext_id = self.int_to_ext.get(focused).copied().unwrap_or(NO_EXTERNAL_ID);
-                                    if let Some(duration) = self.animation_duration {
-                                        if ext_id != NO_EXTERNAL_ID {
-                                            Self::start_branch_animation(
-                                                &mut combined_state.tree_state,
-                                                ext_id,
-                                                true,
-                                                self.easing,
-                                                duration,
-                                            );
-                                        }
-                                    } else {
-                                        combined_state.tree_state.expanded.insert(focused);
-                                        if ext_id != NO_EXTERNAL_ID {
-                                            combined_state.tree_state.expanded_ext_ids.insert(ext_id);
-                                        }
-                                    }
+                                && branch.has_children
+                                && !combined_state.tree_state.expanded.contains(&focused)
+                            {
+                                let ext_id = self
+                                    .int_to_ext
+                                    .get(focused)
+                                    .copied()
+                                    .unwrap_or(NO_EXTERNAL_ID);
+                                if let Some(duration) = self.animation_duration {
                                     if ext_id != NO_EXTERNAL_ID {
-                                        if let Some(on_toggle) = &self.on_toggle {
-                                            shell.publish(on_toggle(ext_id, true));
-                                        }
+                                        Self::start_branch_animation(
+                                            &mut combined_state.tree_state,
+                                            ext_id,
+                                            true,
+                                            self.easing,
+                                            duration,
+                                        );
                                     }
-                                    shell.invalidate_layout();
-                                    shell.request_redraw();
+                                } else {
+                                    combined_state.tree_state.expanded.insert(focused);
+                                    if ext_id != NO_EXTERNAL_ID {
+                                        combined_state.tree_state.expanded_ext_ids.insert(ext_id);
+                                    }
                                 }
+                                if ext_id != NO_EXTERNAL_ID {
+                                    if let Some(on_toggle) = &self.on_toggle {
+                                        shell.publish(on_toggle(ext_id, true));
+                                    }
+                                }
+                                shell.invalidate_layout();
+                                shell.request_redraw();
+                            }
                         }
                         keyboard::Key::Named(keyboard::key::Named::Space) => {
                             if modifiers.control() || modifiers.command() {
@@ -1633,7 +1777,8 @@ where
                             }
 
                             if let Some(ref on_select) = self.on_select {
-                                let external_ids: HashSet<usize> = combined_state.tree_state
+                                let external_ids: HashSet<usize> = combined_state
+                                    .tree_state
                                     .selected
                                     .iter()
                                     .map(|&internal| self.preferred_id(internal))
@@ -1691,7 +1836,6 @@ where
             }
             _ => {}
         }
-
     }
 
     fn draw(
@@ -1705,24 +1849,34 @@ where
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let combined_state = tree.state.downcast_ref::<CombinedState<Renderer::Paragraph>>();
+        let combined_state = tree
+            .state
+            .downcast_ref::<CombinedState<Renderer::Paragraph>>();
 
         let state = &combined_state.tree_state;
         let child_layout_index = self.get_child_content_index();
         let ordered_indices = self.get_ordered_indices(state);
         let tree_style = theme.style(&self.class);
-        
+
         // Pre-compute animation info for draw: map parent_int_id -> (subtree_y_start, clip_height, subtree_full_height)
         // We'll populate subtree_y_start during the draw loop.
-        let anim_parents: HashMap<usize, f32> = state.branch_animations.iter()
+        let anim_parents: HashMap<usize, f32> = state
+            .branch_animations
+            .iter()
             .filter_map(|(&ext_id, anim)| {
-                self.ext_to_int.get(&ext_id).map(|&int_id| (int_id, anim.progress))
+                self.ext_to_int
+                    .get(&ext_id)
+                    .map(|&int_id| (int_id, anim.progress))
             })
             .collect();
 
-        let anim_subtree_heights: HashMap<usize, f32> = state.branch_animations.iter()
+        let anim_subtree_heights: HashMap<usize, f32> = state
+            .branch_animations
+            .iter()
             .filter_map(|(&ext_id, anim)| {
-                self.ext_to_int.get(&ext_id).map(|&int_id| (int_id, anim.subtree_full_height))
+                self.ext_to_int
+                    .get(&ext_id)
+                    .map(|&int_id| (int_id, anim.subtree_full_height))
             })
             .collect();
 
@@ -1753,13 +1907,17 @@ where
                     }
                     let (id, parent_id, depth) = self.get_branch_info(i, state);
                     if let Some(ref drag) = state.drag_active {
-                        if drag.dragged_nodes.contains(&id) { continue; }
+                        if drag.dragged_nodes.contains(&id) {
+                            continue;
+                        }
                     }
 
                     // Mirror: exit animation subtrees
-                    let exited: Vec<usize> = sim_clip_subtrees.keys()
+                    let exited: Vec<usize> = sim_clip_subtrees
+                        .keys()
                         .filter(|&&pid| !self.is_descendant_of_id(i, pid, state))
-                        .copied().collect();
+                        .copied()
+                        .collect();
                     for pid in exited {
                         if let Some((_, reduction)) = sim_clip_subtrees.remove(&pid) {
                             sim_y -= reduction;
@@ -1768,7 +1926,9 @@ where
 
                     // Mirror: Before ghost row
                     if let Some(ref drag) = state.drag_active {
-                        if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Before {
+                        if drag.drop_target == Some(id)
+                            && drag.drop_position == DropPosition::Before
+                        {
                             sim_y += LINE_HEIGHT + self.spacing;
                         }
                     }
@@ -1782,7 +1942,8 @@ where
                     // If this branch is inside any active animation clip, record the tightest
                     // clip bottom so spine lines that use it as a parent can be capped too.
                     if !sim_clip_subtrees.is_empty() {
-                        let min_clip = sim_clip_subtrees.keys()
+                        let min_clip = sim_clip_subtrees
+                            .keys()
                             .filter_map(|pid| anim_clip_bottom.get(pid))
                             .cloned()
                             .fold(f32::INFINITY, f32::min);
@@ -1798,16 +1959,27 @@ where
                     let drop_is_valid = if let Some(ref drag) = state.drag_active {
                         if drag.drop_target == Some(id) {
                             if let Some(ref can_drop_fn) = self.on_can_drop {
-                                let dragged_ext: Vec<usize> = drag.dragged_nodes.iter()
-                                    .map(|&iid| self.preferred_id(iid)).collect();
+                                let dragged_ext: Vec<usize> = drag
+                                    .dragged_nodes
+                                    .iter()
+                                    .map(|&iid| self.preferred_id(iid))
+                                    .collect();
                                 let target_ext = drag.drop_target.map(|iid| self.preferred_id(iid));
                                 can_drop_fn(&dragged_ext, target_ext, &drag.drop_position)
-                            } else { true }
-                        } else { true }
-                    } else { true };
+                            } else {
+                                true
+                            }
+                        } else {
+                            true
+                        }
+                    } else {
+                        true
+                    };
                     if let Some(ref drag) = state.drag_active {
-                        if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into
-                            && state.expanded.contains(&id) && drop_is_valid
+                        if drag.drop_target == Some(id)
+                            && drag.drop_position == DropPosition::Into
+                            && state.expanded.contains(&id)
+                            && drop_is_valid
                         {
                             sim_pending_into = true;
                         }
@@ -1817,7 +1989,8 @@ where
 
                     // Mirror: After ghost row
                     if let Some(ref drag) = state.drag_active {
-                        if drag.drop_target == Some(id) && drag.drop_position == DropPosition::After {
+                        if drag.drop_target == Some(id) && drag.drop_position == DropPosition::After
+                        {
                             sim_y += LINE_HEIGHT + self.spacing;
                         }
                     }
@@ -1849,16 +2022,28 @@ where
 
                 // Draw a vertical spine from each parent's bottom to its last visible child's near-bottom
                 for (parent_id, child_ids) in &children_map {
-                    let Some(last_child_id) = child_ids.last() else { continue };
-                    let Some(&(parent_y, parent_h, parent_depth)) = id_to_pos.get(parent_id) else { continue };
-                    let Some(&(last_child_y, last_child_h, _)) = id_to_pos.get(last_child_id) else { continue };
+                    let Some(last_child_id) = child_ids.last() else {
+                        continue;
+                    };
+                    let Some(&(parent_y, parent_h, parent_depth)) = id_to_pos.get(parent_id) else {
+                        continue;
+                    };
+                    let Some(&(last_child_y, last_child_h, _)) = id_to_pos.get(last_child_id)
+                    else {
+                        continue;
+                    };
 
-                    let line_x = bounds.x + self.padding_x + (parent_depth as f32 * self.indent) + ARROW_W * 0.5 + self.line_x_offset;
+                    let line_x = bounds.x
+                        + self.padding_x
+                        + (parent_depth as f32 * self.indent)
+                        + ARROW_W * 0.5
+                        + self.line_x_offset;
                     let line_y_start = parent_y + parent_h;
                     // Cap line to animation clip boundary. Check branch_clip_bottom first
                     // (covers nested parents inside a collapsing subtree), then fall back to
                     // anim_clip_bottom (covers the direct animating parent itself).
-                    let effective_clip = branch_clip_bottom.get(parent_id)
+                    let effective_clip = branch_clip_bottom
+                        .get(parent_id)
                         .or_else(|| anim_clip_bottom.get(parent_id))
                         .copied();
                     let line_y_end = {
@@ -1889,51 +2074,56 @@ where
             }
 
             // Helper to draw drop preview
-            let draw_drop_preview = |renderer: &mut Renderer, y: f32, depth: u16, width: f32, deny: bool| {
-                let preview_indent = bounds.x + self.padding_x + (depth as f32 * self.indent);
-                let preview_height = LINE_HEIGHT;
-                let indicator_color = if deny { tree_style.deny_drop_indicator_color } else { tree_style.accept_drop_indicator_color };
+            let draw_drop_preview =
+                |renderer: &mut Renderer, y: f32, depth: u16, width: f32, deny: bool| {
+                    let preview_indent = bounds.x + self.padding_x + (depth as f32 * self.indent);
+                    let preview_height = LINE_HEIGHT;
+                    let indicator_color = if deny {
+                        tree_style.deny_drop_indicator_color
+                    } else {
+                        tree_style.accept_drop_indicator_color
+                    };
 
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: preview_indent,
-                            y,
-                            width: width - preview_indent + bounds.x,
-                            height: preview_height,
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: preview_indent,
+                                y,
+                                width: width - preview_indent + bounds.x,
+                                height: preview_height,
+                            },
+                            border: Border {
+                                color: indicator_color,
+                                width: 2.0,
+                                radius: Radius::from(4.0),
+                            },
+                            ..Default::default()
                         },
-                        border: Border {
-                            color: indicator_color,
-                            width: 2.0,
-                            radius: Radius::from(4.0),
-                        },
-                        ..Default::default()
-                    },
-                    indicator_color.scale_alpha(0.1),
-                );
+                        indicator_color.scale_alpha(0.1),
+                    );
 
-                // Vertical marker aligned with the parent's connecting line.
-                // The parent line runs at (depth-1)*indent + ARROW_W*0.5; for depth 0
-                // (root-level previews) there is no parent line so fall back to ARROW_W*0.5.
-                let marker_x = if depth > 0 {
-                    preview_indent - self.indent + ARROW_W * 0.5 + self.line_x_offset
-                } else {
-                    bounds.x + self.padding_x + ARROW_W * 0.5 + self.line_x_offset
+                    // Vertical marker aligned with the parent's connecting line.
+                    // The parent line runs at (depth-1)*indent + ARROW_W*0.5; for depth 0
+                    // (root-level previews) there is no parent line so fall back to ARROW_W*0.5.
+                    let marker_x = if depth > 0 {
+                        preview_indent - self.indent + ARROW_W * 0.5 + self.line_x_offset
+                    } else {
+                        bounds.x + self.padding_x + ARROW_W * 0.5 + self.line_x_offset
+                    };
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: marker_x - 0.5,
+                                y: y + 2.0,
+                                width: 2.0,
+                                height: preview_height - 4.0,
+                            },
+                            border: Border::default(),
+                            ..Default::default()
+                        },
+                        indicator_color.scale_alpha(0.3),
+                    );
                 };
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: marker_x - 0.5,
-                            y: y + 2.0,
-                            width: 2.0,
-                            height: preview_height - 4.0,
-                        },
-                        border: Border::default(),
-                        ..Default::default()
-                    },
-                    indicator_color.scale_alpha(0.3),
-                );
-            };
 
             let mut pending_into_adjustment = false;
 
@@ -1941,10 +2131,11 @@ where
             let mut active_clip_subtrees: HashMap<usize, (f32, f32)> = HashMap::new();
 
             for &i in &ordered_indices {
-                if i >= self.branches.len() ||
-                i >= state.visible_branches.len() ||
-                !state.visible_branches[i] ||
-                i >= state.branch_heights.len() {
+                if i >= self.branches.len()
+                    || i >= state.visible_branches.len()
+                    || !state.visible_branches[i]
+                    || i >= state.branch_heights.len()
+                {
                     continue;
                 }
 
@@ -1958,7 +2149,8 @@ where
                 }
 
                 // Check if we've exited any animation subtrees
-                let exited: Vec<usize> = active_clip_subtrees.keys()
+                let exited: Vec<usize> = active_clip_subtrees
+                    .keys()
                     .filter(|&&parent_id| !self.is_descendant_of_id(i, parent_id, state))
                     .copied()
                     .collect();
@@ -1972,7 +2164,9 @@ where
                 let drop_is_valid = if let Some(ref drag) = state.drag_active {
                     if drag.drop_target == Some(id) {
                         if let Some(ref can_drop_fn) = self.on_can_drop {
-                            let dragged_ext: Vec<usize> = drag.dragged_nodes.iter()
+                            let dragged_ext: Vec<usize> = drag
+                                .dragged_nodes
+                                .iter()
                                 .map(|&iid| self.preferred_id(iid))
                                 .collect();
                             let target_ext = drag.drop_target.map(|iid| self.preferred_id(iid));
@@ -2005,52 +2199,60 @@ where
                 let branch_y = y;
 
                 // Check if this branch is inside an animating subtree and should be clipped
-                let clip_parent: Option<usize> = active_clip_subtrees.keys().copied()
+                let clip_parent: Option<usize> = active_clip_subtrees
+                    .keys()
+                    .copied()
                     .find(|&parent_id| self.is_descendant_of_id(i, parent_id, state));
 
                 // A closure-like approach: draw branch content into either a clip layer or directly
                 let draw_branch = |renderer: &mut Renderer| {
                     if let Some(ref drag) = state.drag_active
-                        && drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
-                            let indicator_color = if drop_is_valid { tree_style.accept_drop_indicator_color } else { tree_style.deny_drop_indicator_color };
-                            if state.expanded.contains(&id) && drop_is_valid {
-                                // pending_into_adjustment handled below
-                            } else if !state.expanded.contains(&id) {
-                                let indicator_width = 30.0;
-                                let indicator_x = bounds.x + bounds.width - indicator_width - 10.0;
+                        && drag.drop_target == Some(id)
+                        && drag.drop_position == DropPosition::Into
+                    {
+                        let indicator_color = if drop_is_valid {
+                            tree_style.accept_drop_indicator_color
+                        } else {
+                            tree_style.deny_drop_indicator_color
+                        };
+                        if state.expanded.contains(&id) && drop_is_valid {
+                            // pending_into_adjustment handled below
+                        } else if !state.expanded.contains(&id) {
+                            let indicator_width = 30.0;
+                            let indicator_x = bounds.x + bounds.width - indicator_width - 10.0;
 
-                                renderer.fill_quad(
-                                    renderer::Quad {
-                                        bounds: Rectangle {
-                                            x: indicator_x,
-                                            y: branch_y + branch_height / 2.0 - 1.5,
-                                            width: indicator_width,
-                                            height: 3.0,
-                                        },
-                                        border: Border::default(),
-                                        ..Default::default()
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: Rectangle {
+                                        x: indicator_x,
+                                        y: branch_y + branch_height / 2.0 - 1.5,
+                                        width: indicator_width,
+                                        height: 3.0,
                                     },
-                                    indicator_color,
-                                );
+                                    border: Border::default(),
+                                    ..Default::default()
+                                },
+                                indicator_color,
+                            );
 
-                                renderer.fill_text(
-                                    iced::advanced::Text {
-                                        content: "→".into(),
-                                        bounds: Size::new(20.0, branch_height),
-                                        size: Pixels(16.0),
-                                        font: iced::Font::default(),
-                                        align_x: Alignment::Center,
-                                        align_y: iced::alignment::Vertical::Center,
-                                        line_height: iced::advanced::text::LineHeight::default(),
-                                        shaping: iced::advanced::text::Shaping::Advanced,
-                                        wrapping: iced::advanced::text::Wrapping::default(),
-                                    },
-                                    Point::new(indicator_x - 20.0, branch_y + (branch_height / 2.0)),
-                                    indicator_color,
-                                    *viewport,
-                                );
-                            }
+                            renderer.fill_text(
+                                iced::advanced::Text {
+                                    content: "→".into(),
+                                    bounds: Size::new(20.0, branch_height),
+                                    size: Pixels(16.0),
+                                    font: iced::Font::default(),
+                                    align_x: Alignment::Center,
+                                    align_y: iced::alignment::Vertical::Center,
+                                    line_height: iced::advanced::text::LineHeight::default(),
+                                    shaping: iced::advanced::text::Shaping::Advanced,
+                                    wrapping: iced::advanced::text::Wrapping::default(),
+                                },
+                                Point::new(indicator_x - 20.0, branch_y + (branch_height / 2.0)),
+                                indicator_color,
+                                *viewport,
+                            );
                         }
+                    }
 
                     // Draw selection background
                     if state.selected.contains(&id) {
@@ -2071,26 +2273,32 @@ where
 
                     // Draw drop-into indicator border
                     if let Some(ref drag) = state.drag_active
-                        && drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into {
-                            let indicator_color = if drop_is_valid { tree_style.accept_drop_indicator_color } else { tree_style.deny_drop_indicator_color };
-                            renderer.fill_quad(
-                                renderer::Quad {
-                                    bounds: Rectangle {
-                                        x: bounds.x,
-                                        y: branch_y,
-                                        width: bounds.width,
-                                        height: branch_height,
-                                    },
-                                    border: Border {
-                                        color: indicator_color,
-                                        width: 2.0,
-                                        radius: Radius::from(4.0),
-                                    },
-                                    ..Default::default()
+                        && drag.drop_target == Some(id)
+                        && drag.drop_position == DropPosition::Into
+                    {
+                        let indicator_color = if drop_is_valid {
+                            tree_style.accept_drop_indicator_color
+                        } else {
+                            tree_style.deny_drop_indicator_color
+                        };
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: bounds.x,
+                                    y: branch_y,
+                                    width: bounds.width,
+                                    height: branch_height,
                                 },
-                                indicator_color.scale_alpha(0.1),
-                            );
-                        }
+                                border: Border {
+                                    color: indicator_color,
+                                    width: 2.0,
+                                    radius: Radius::from(4.0),
+                                },
+                                ..Default::default()
+                            },
+                            indicator_color.scale_alpha(0.1),
+                        );
+                    }
 
                     // Draw hover/focus border
                     if state.focused == Some(id) || state.hovered == Some(id) {
@@ -2116,7 +2324,11 @@ where
                     // Draw expand/collapse arrow
                     if branch.has_children {
                         if self.expand_icon.is_none() && self.collapse_icon.is_none() {
-                            let arrow = if state.expanded.contains(&id) { "🠻" } else { "🠺" };
+                            let arrow = if state.expanded.contains(&id) {
+                                "🠻"
+                            } else {
+                                "🠺"
+                            };
 
                             renderer.fill_text(
                                 iced::advanced::Text {
@@ -2130,7 +2342,10 @@ where
                                     shaping: iced::advanced::text::Shaping::Advanced,
                                     wrapping: iced::advanced::text::Wrapping::default(),
                                 },
-                                Point::new(indent_x + ARROW_X_PAD, branch_y + (branch_height / 2.0)),
+                                Point::new(
+                                    indent_x + ARROW_X_PAD,
+                                    branch_y + (branch_height / 2.0),
+                                ),
                                 tree_style.arrow_color,
                                 *viewport,
                             );
@@ -2149,7 +2364,8 @@ where
                                 iced::Alignment::Center,
                                 Size::new(ARROW_W, branch_height),
                             );
-                            let icon_layout = icon_layout.move_to(Point::new(indent_x, branch_y + (icon_h / 4.0)));
+                            let icon_layout = icon_layout
+                                .move_to(Point::new(indent_x, branch_y + (icon_h / 4.0)));
 
                             icon_element.as_widget().draw(
                                 &tree.children[icon_tree_index],
@@ -2169,14 +2385,26 @@ where
                             let child_state = &tree.children[i + child_layout_index];
                             let child_layout = layout.children().nth(i).unwrap();
                             self.branch_content[i].as_widget().draw(
-                                child_state, renderer, theme, style, child_layout, cursor, viewport,
+                                child_state,
+                                renderer,
+                                theme,
+                                style,
+                                child_layout,
+                                cursor,
+                                viewport,
                             );
                         }
                     } else {
                         let child_state = &tree.children[i + child_layout_index];
                         let child_layout = layout.children().nth(i).unwrap();
                         self.branch_content[i].as_widget().draw(
-                            child_state, renderer, theme, style, child_layout, cursor, viewport,
+                            child_state,
+                            renderer,
+                            theme,
+                            style,
+                            child_layout,
+                            cursor,
+                            viewport,
                         );
                     }
                 };
@@ -2184,7 +2412,10 @@ where
                 // If inside an animating subtree, draw within a clip layer
                 if let Some(clip_parent_id) = clip_parent {
                     if let Some(&(subtree_y_start, _)) = active_clip_subtrees.get(&clip_parent_id) {
-                        let full_h = anim_subtree_heights.get(&clip_parent_id).copied().unwrap_or(0.0);
+                        let full_h = anim_subtree_heights
+                            .get(&clip_parent_id)
+                            .copied()
+                            .unwrap_or(0.0);
                         let progress = anim_parents.get(&clip_parent_id).copied().unwrap_or(1.0);
                         let clip_bounds = Rectangle {
                             x: bounds.x,
@@ -2204,38 +2435,46 @@ where
 
                 // Handle pending_into_adjustment after draw
                 if let Some(ref drag) = state.drag_active
-                    && drag.drop_target == Some(id) && drag.drop_position == DropPosition::Into
-                    && state.expanded.contains(&id) && drop_is_valid {
-                        pending_into_adjustment = true;
-                    }
+                    && drag.drop_target == Some(id)
+                    && drag.drop_position == DropPosition::Into
+                    && state.expanded.contains(&id)
+                    && drop_is_valid
+                {
+                    pending_into_adjustment = true;
+                }
 
                 y += branch_height + self.spacing;
 
                 if let Some(ref drag) = state.drag_active
-                    && drag.drop_target == Some(id) &&
-                    drag.drop_position == DropPosition::Into &&
-                    state.expanded.contains(&id) && drop_is_valid {
-                        let child_preview_y = branch_y + branch_height + self.spacing;
-                        let child_depth = effective_depth + 1;
-                        draw_drop_preview(renderer, child_preview_y, child_depth, bounds.width, false);
-                    }
+                    && drag.drop_target == Some(id)
+                    && drag.drop_position == DropPosition::Into
+                    && state.expanded.contains(&id)
+                    && drop_is_valid
+                {
+                    let child_preview_y = branch_y + branch_height + self.spacing;
+                    let child_depth = effective_depth + 1;
+                    draw_drop_preview(renderer, child_preview_y, child_depth, bounds.width, false);
+                }
 
                 if let Some(ref drag) = state.drag_active
-                    && drag.drop_target == Some(id) && drag.drop_position == DropPosition::After {
-                        let is_last_visible_item = !ordered_indices.iter()
-                            .skip_while(|&&j| j != i)
-                            .skip(1)
-                            .any(|&j| j < self.branches.len() && state.visible_branches[j]);
+                    && drag.drop_target == Some(id)
+                    && drag.drop_position == DropPosition::After
+                {
+                    let is_last_visible_item = !ordered_indices
+                        .iter()
+                        .skip_while(|&&j| j != i)
+                        .skip(1)
+                        .any(|&j| j < self.branches.len() && state.visible_branches[j]);
 
-                        let preview_depth = if parent_id.is_some() && is_last_visible_item {
-                            0
-                        } else {
-                            effective_depth
-                        };
+                    let preview_depth = if parent_id.is_some() && is_last_visible_item {
+                        0
+                    } else {
+                        effective_depth
+                    };
 
-                        draw_drop_preview(renderer, y, preview_depth, bounds.width, !drop_is_valid);
-                        y += LINE_HEIGHT + self.spacing;
-                    }
+                    draw_drop_preview(renderer, y, preview_depth, bounds.width, !drop_is_valid);
+                    y += LINE_HEIGHT + self.spacing;
+                }
 
                 // If this branch is an animating parent, register subtree clip start
                 if anim_parents.contains_key(&id) {
@@ -2254,10 +2493,18 @@ where
             // Draw selection rectangle if active
             if let Some(ref selection_rect) = state.selection_rect {
                 let rect_bounds = Rectangle {
-                    x: selection_rect.start_position.x.min(selection_rect.current_position.x),
-                    y: selection_rect.start_position.y.min(selection_rect.current_position.y),
-                    width: (selection_rect.current_position.x - selection_rect.start_position.x).abs(),
-                    height: (selection_rect.current_position.y - selection_rect.start_position.y).abs(),
+                    x: selection_rect
+                        .start_position
+                        .x
+                        .min(selection_rect.current_position.x),
+                    y: selection_rect
+                        .start_position
+                        .y
+                        .min(selection_rect.current_position.y),
+                    width: (selection_rect.current_position.x - selection_rect.start_position.x)
+                        .abs(),
+                    height: (selection_rect.current_position.y - selection_rect.start_position.y)
+                        .abs(),
                 };
 
                 let tree_style = theme.style(&self.class);
@@ -2286,35 +2533,40 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        let combined_state = tree.state.downcast_ref::<CombinedState<Renderer::Paragraph>>();
+        let combined_state = tree
+            .state
+            .downcast_ref::<CombinedState<Renderer::Paragraph>>();
         let state = &combined_state.tree_state;
-        
+
         let child_layout_index = self.get_child_content_index();
-        let child_interaction = self.branch_content
+        let child_interaction = self
+            .branch_content
             .iter()
             .zip(&tree.children[child_layout_index..])
             .zip(layout.children())
             .enumerate()
-            .filter(|(i, _)| {
-                state.visible_branches.get(*i).copied().unwrap_or(false)
-            })
+            .filter(|(i, _)| state.visible_branches.get(*i).copied().unwrap_or(false))
             .map(|(_, ((branch, child_state), child_layout))| {
                 branch.as_widget().mouse_interaction(
-                    child_state, child_layout, cursor, viewport, renderer,
+                    child_state,
+                    child_layout,
+                    cursor,
+                    viewport,
+                    renderer,
                 )
             })
             .find(|&interaction| interaction != mouse::Interaction::None);
-        
+
         // If a child has a specific interaction, use it
         if let Some(interaction) = child_interaction {
             return interaction;
         }
-        
+
         // Only show grabbing cursor if actively dragging
         if state.drag_active.is_some() {
             return mouse::Interaction::Grabbing;
         }
-        
+
         // Default to child interactions or None
         mouse::Interaction::None
     }
@@ -2327,14 +2579,14 @@ where
         operation: &mut dyn widget::Operation,
     ) {
         let child_layout_index = self.get_child_content_index();
-        
+
         for i in 0..self.branch_content.len() {
             if let Some(child_layout) = layout.children().nth(i) {
                 self.branch_content[i].as_widget_mut().operate(
                     &mut tree.children[i + child_layout_index],
                     child_layout,
                     renderer,
-                    operation
+                    operation,
                 );
             }
         }
@@ -2349,12 +2601,15 @@ where
         translation: iced::Vector,
     ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
         let drag_active_clone = {
-            let combined_state = tree.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+            let combined_state = tree
+                .state
+                .downcast_mut::<CombinedState<Renderer::Paragraph>>();
             combined_state.tree_state.drag_active.clone()
         };
 
         if let Some(ref drag_active) = drag_active_clone {
-            let dragged_indices: Vec<usize> = self.branches
+            let dragged_indices: Vec<usize> = self
+                .branches
                 .iter()
                 .enumerate()
                 .filter(|(_, b)| drag_active.dragged_nodes.contains(&b.id))
@@ -2371,15 +2626,17 @@ where
                 .enumerate()
             {
                 if dragged_indices.contains(&i) {
-                    return Some(iced::advanced::overlay::Element::new(Box::new(DragOverlay {
-                        tree_handle: self,
-                        state: tree,
-                        layout: child_layout,
-                        tree_layout: layout,
-                        viewport: *viewport,
-                        dragged_indices,
-                        translation,
-                    })));
+                    return Some(iced::advanced::overlay::Element::new(Box::new(
+                        DragOverlay {
+                            tree_handle: self,
+                            state: tree,
+                            layout: child_layout,
+                            tree_layout: layout,
+                            viewport: *viewport,
+                            dragged_indices,
+                            translation,
+                        },
+                    )));
                 }
             }
         } else {
@@ -2409,7 +2666,7 @@ where
 
 // Custom overlay for rendering dragged items
 struct DragOverlay<'a, 'b, Message, Theme, Renderer>
-where 
+where
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::text::Renderer,
@@ -2423,7 +2680,7 @@ where
     translation: Vector,
 }
 
-impl<'a, Message, Theme, Renderer> iced::advanced::overlay::Overlay<Message, Theme, Renderer> 
+impl<'a, Message, Theme, Renderer> iced::advanced::overlay::Overlay<Message, Theme, Renderer>
     for DragOverlay<'_, '_, Message, Theme, Renderer>
 where
     Message: Clone,
@@ -2431,7 +2688,10 @@ where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
 {
     fn layout(&mut self, _renderer: &Renderer, _bounds: Size) -> layout::Node {
-        let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+        let combined_state = self
+            .state
+            .state
+            .downcast_mut::<CombinedState<Renderer::Paragraph>>();
 
         let position = if let Some(ref drag) = combined_state.tree_state.drag_active {
             Point::new(
@@ -2440,41 +2700,52 @@ where
             )
         } else {
             Point::ORIGIN
-        };        
+        };
 
         let (width, height) = if let Some(ref _drag) = combined_state.tree_state.drag_active {
             let mut max_width = 0.0f32;
             let mut total_height = 0.0f32;
-            
+
             for &i in &self.dragged_indices {
                 if i < combined_state.tree_state.branch_widths.len() {
-                    let effective_depth = if let Some(ref branch_order) = combined_state.tree_state.branch_order {
-                        branch_order.iter()
-                            .find(|bs| self.tree_handle.branches.get(i).map(|b| b.id == bs.id).unwrap_or(false))
-                            .map(|bs| bs.depth)
-                            .unwrap_or(self.tree_handle.branches[i].depth)
-                    } else {
-                        self.tree_handle.branches[i].depth
-                    };
-                    
+                    let effective_depth =
+                        if let Some(ref branch_order) = combined_state.tree_state.branch_order {
+                            branch_order
+                                .iter()
+                                .find(|bs| {
+                                    self.tree_handle
+                                        .branches
+                                        .get(i)
+                                        .map(|b| b.id == bs.id)
+                                        .unwrap_or(false)
+                                })
+                                .map(|bs| bs.depth)
+                                .unwrap_or(self.tree_handle.branches[i].depth)
+                        } else {
+                            self.tree_handle.branches[i].depth
+                        };
+
                     let indent_x = effective_depth as f32 * self.tree_handle.indent;
-                    let content_width = indent_x + ARROW_W + CONTENT_GAP + combined_state.tree_state.branch_widths[i] + self.tree_handle.padding_x;
+                    let content_width = indent_x
+                        + ARROW_W
+                        + CONTENT_GAP
+                        + combined_state.tree_state.branch_widths[i]
+                        + self.tree_handle.padding_x;
                     max_width = max_width.max(content_width);
-                    
+
                     total_height += combined_state.tree_state.branch_heights[i].max(LINE_HEIGHT);
                     if i < self.dragged_indices.len() - 1 {
                         total_height += self.tree_handle.spacing;
                     }
                 }
             }
-            
+
             (max_width.max(200.0), total_height.max(LINE_HEIGHT))
         } else {
             (310.0, LINE_HEIGHT)
-        };      
+        };
 
-        layout::Node::new(Size::new(width, height))
-            .move_to(position)
+        layout::Node::new(Size::new(width, height)).move_to(position)
     }
 
     fn update(
@@ -2489,31 +2760,41 @@ where
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position() {
-                    let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
-                    let ordered_indices = self.tree_handle.get_ordered_indices(&combined_state.tree_state);
-        
+                    let combined_state = self
+                        .state
+                        .state
+                        .downcast_mut::<CombinedState<Renderer::Paragraph>>();
+                    let ordered_indices = self
+                        .tree_handle
+                        .get_ordered_indices(&combined_state.tree_state);
+
                     let position = Point::new(
                         position.x - self.translation.x,
                         position.y - self.translation.y,
                     );
-                    
-                    let branch_infos: Vec<_> = ordered_indices.iter()
+
+                    let branch_infos: Vec<_> = ordered_indices
+                        .iter()
                         .filter_map(|&i| {
-                            if i >= self.tree_handle.branches.len() || 
-                               i >= combined_state.tree_state.visible_branches.len() || 
-                               !combined_state.tree_state.visible_branches[i] {
+                            if i >= self.tree_handle.branches.len()
+                                || i >= combined_state.tree_state.visible_branches.len()
+                                || !combined_state.tree_state.visible_branches[i]
+                            {
                                 return None;
                             }
-                            
+
                             let branch = &self.tree_handle.branches[i];
-                            let (id, parent_id, depth) = self.tree_handle.get_branch_info(i, &combined_state.tree_state);
-                            
-                            let branch_height = if i < combined_state.tree_state.branch_heights.len() {
-                                combined_state.tree_state.branch_heights[i]
-                            } else {
-                                LINE_HEIGHT
-                            };
-                            
+                            let (id, parent_id, depth) = self
+                                .tree_handle
+                                .get_branch_info(i, &combined_state.tree_state);
+
+                            let branch_height =
+                                if i < combined_state.tree_state.branch_heights.len() {
+                                    combined_state.tree_state.branch_heights[i]
+                                } else {
+                                    LINE_HEIGHT
+                                };
+
                             Some((
                                 id,
                                 parent_id,
@@ -2521,26 +2802,35 @@ where
                                 branch_height,
                                 branch.has_children,
                                 combined_state.tree_state.expanded.contains(&id),
-                                branch.accepts_drops
+                                branch.accepts_drops,
                             ))
                         })
                         .collect();
-                    
+
                     if let Some(ref mut drag) = combined_state.tree_state.drag_active {
                         drag.current_position = position;
-                        
+
                         let tree_bounds = self.tree_layout.bounds();
                         let mut new_drop_target = drag.drop_target;
                         let mut new_drop_position = drag.drop_position.clone();
-                        
+
                         let mut branch_positions = Vec::new();
                         let mut y = tree_bounds.y + self.tree_handle.padding_y;
-                        
-                        for (id, parent_id, depth, branch_height, has_children, is_expanded, accepts_drops) in &branch_infos {
+
+                        for (
+                            id,
+                            parent_id,
+                            depth,
+                            branch_height,
+                            has_children,
+                            is_expanded,
+                            accepts_drops,
+                        ) in &branch_infos
+                        {
                             if drag.dragged_nodes.contains(id) {
                                 continue;
                             }
-                            
+
                             branch_positions.push((
                                 *id,
                                 *parent_id,
@@ -2549,70 +2839,86 @@ where
                                 *branch_height,
                                 *has_children,
                                 *is_expanded,
-                                *accepts_drops
+                                *accepts_drops,
                             ));
-                            
+
                             y += branch_height + self.tree_handle.spacing;
                         }
-                        
+
                         let mut found_target = false;
-                        for (id, _parent_id, _depth, branch_y, height, has_children, is_expanded, accepts_drops) in &branch_positions {
+                        for (
+                            id,
+                            _parent_id,
+                            _depth,
+                            branch_y,
+                            height,
+                            has_children,
+                            is_expanded,
+                            accepts_drops,
+                        ) in &branch_positions
+                        {
                             let row_bounds = Rectangle {
                                 x: tree_bounds.x,
                                 y: *branch_y,
                                 width: tree_bounds.width,
                                 height: *height,
                             };
-                            
+
                             let expanded_bounds = Rectangle {
                                 x: row_bounds.x,
                                 y: row_bounds.y - 2.0,
                                 width: row_bounds.width,
                                 height: row_bounds.height + 4.0,
                             };
-                            
+
                             if expanded_bounds.contains(position) {
                                 found_target = true;
                                 new_drop_target = Some(*id);
-                                
+
                                 new_drop_position = self.tree_handle.calculate_drop_position(
                                     position.y,
                                     row_bounds,
                                     *has_children,
                                     *is_expanded,
-                                    *accepts_drops  // Pass accepts_drops
+                                    *accepts_drops, // Pass accepts_drops
                                 );
                                 break;
                             }
                         }
 
-                        if !found_target && position.y > tree_bounds.y && !branch_positions.is_empty() {
-                            let (last_id, _, _, last_y, last_height, _, _, _) = 
+                        if !found_target
+                            && position.y > tree_bounds.y
+                            && !branch_positions.is_empty()
+                        {
+                            let (last_id, _, _, last_y, last_height, _, _, _) =
                                 branch_positions.last().unwrap();
-                            
+
                             if position.y > last_y + last_height {
                                 new_drop_target = Some(*last_id);
                                 new_drop_position = DropPosition::After;
                             }
                         }
-                        
-                        let changed = new_drop_target != drag.drop_target || 
-                                      new_drop_position != drag.drop_position;
-                        
+
+                        let changed = new_drop_target != drag.drop_target
+                            || new_drop_position != drag.drop_position;
+
                         if changed {
                             drag.drop_target = new_drop_target;
                             drag.drop_position = new_drop_position;
                             shell.invalidate_layout();
                         }
-                        
+
                         shell.request_redraw();
                     }
                 }
             }
-            
+
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let (drop_target, drop_position, dragged_nodes, dragged_external, target_external) = {
-                    let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+                    let combined_state = self
+                        .state
+                        .state
+                        .downcast_mut::<CombinedState<Renderer::Paragraph>>();
 
                     if let Some(ref drag) = combined_state.tree_state.drag_active {
                         // Convert internal IDs to external IDs while we have access to everything
@@ -2621,21 +2927,23 @@ where
                             .iter()
                             .map(|&internal| self.tree_handle.preferred_id(internal))
                             .collect();
-                        
-                        let target_ext = drag.drop_target.map(|internal| self.tree_handle.preferred_id(internal));
-                        
+
+                        let target_ext = drag
+                            .drop_target
+                            .map(|internal| self.tree_handle.preferred_id(internal));
+
                         (
-                            drag.drop_target, 
-                            drag.drop_position.clone(), 
+                            drag.drop_target,
+                            drag.drop_position.clone(),
                             drag.dragged_nodes.clone(),
                             dragged_ext,
-                            target_ext
+                            target_ext,
                         )
                     } else {
                         (None, DropPosition::Before, vec![], vec![], None)
                     }
                 };
-                
+
                 if let Some(target_id) = drop_target {
                     // Check whether the drop is permitted
                     let drop_allowed = if let Some(ref can_drop_fn) = self.tree_handle.on_can_drop {
@@ -2650,25 +2958,32 @@ where
 
                         // Use external IDs for the callback
                         if let Some(ref on_drop) = self.tree_handle.on_drop
-                            && let Some(target_ext) = target_external {
-                                let drop_info = DropInfo {
-                                    dragged_ids: dragged_external,
-                                    target_id: Some(target_ext),
-                                    position: drop_position,
-                                };
-                                shell.publish(on_drop(drop_info));
-                            }
+                            && let Some(target_ext) = target_external
+                        {
+                            let drop_info = DropInfo {
+                                dragged_ids: dragged_external,
+                                target_id: Some(target_ext),
+                                position: drop_position,
+                            };
+                            shell.publish(on_drop(drop_info));
+                        }
                     }
                 }
 
-                let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+                let combined_state = self
+                    .state
+                    .state
+                    .downcast_mut::<CombinedState<Renderer::Paragraph>>();
                 combined_state.tree_state.drag_active = None;
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
-            
+
             Event::Mouse(mouse::Event::CursorLeft) => {
-                let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+                let combined_state = self
+                    .state
+                    .state
+                    .downcast_mut::<CombinedState<Renderer::Paragraph>>();
                 combined_state.tree_state.drag_active = None;
                 shell.invalidate_layout();
                 shell.request_redraw();
@@ -2685,13 +3000,18 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
-        let combined_state = self.state.state.downcast_ref::<CombinedState<Renderer::Paragraph>>();
+        let combined_state = self
+            .state
+            .state
+            .downcast_ref::<CombinedState<Renderer::Paragraph>>();
         let child_layout_index = self.tree_handle.get_child_content_index();
         let drag_bounds = layout.bounds();
         let tree_style = theme.style(&self.tree_handle.class);
-        
+
         renderer.with_layer(self.viewport, |renderer| {
-            let primary_index = self.tree_handle.branches
+            let primary_index = self
+                .tree_handle
+                .branches
                 .iter()
                 .position(|b| {
                     if let Some(ref drag) = combined_state.tree_state.drag_active {
@@ -2701,30 +3021,54 @@ where
                     }
                 })
                 .unwrap_or_else(|| self.dragged_indices.first().copied().unwrap_or(0));
-            
+
             if primary_index >= self.tree_handle.branch_content.len() {
                 return;
             }
-            
+
             let branch_height = if primary_index < combined_state.tree_state.branch_heights.len() {
                 combined_state.tree_state.branch_heights[primary_index].max(LINE_HEIGHT)
             } else {
                 LINE_HEIGHT
             };
 
-            let effective_depth = if let Some(ref branch_order) = combined_state.tree_state.branch_order {
-                branch_order.iter()
-                    .find(|bs| self.tree_handle.branches.get(primary_index).map(|b| b.id == bs.id).unwrap_or(false))
-                    .map(|bs| bs.depth)
-                    .unwrap_or_else(|| self.tree_handle.branches.get(primary_index).map(|b| b.depth).unwrap_or(0))
-            } else {
-                self.tree_handle.branches.get(primary_index).map(|b| b.depth).unwrap_or(0)
-            };
+            let effective_depth =
+                if let Some(ref branch_order) = combined_state.tree_state.branch_order {
+                    branch_order
+                        .iter()
+                        .find(|bs| {
+                            self.tree_handle
+                                .branches
+                                .get(primary_index)
+                                .map(|b| b.id == bs.id)
+                                .unwrap_or(false)
+                        })
+                        .map(|bs| bs.depth)
+                        .unwrap_or_else(|| {
+                            self.tree_handle
+                                .branches
+                                .get(primary_index)
+                                .map(|b| b.depth)
+                                .unwrap_or(0)
+                        })
+                } else {
+                    self.tree_handle
+                        .branches
+                        .get(primary_index)
+                        .map(|b| b.depth)
+                        .unwrap_or(0)
+                };
 
             let branch_bounds = Rectangle {
                 x: drag_bounds.x,
                 y: drag_bounds.y,
-                width: combined_state.tree_state.drag_active.as_ref().unwrap().drag_start_bounds.width,
+                width: combined_state
+                    .tree_state
+                    .drag_active
+                    .as_ref()
+                    .unwrap()
+                    .drag_start_bounds
+                    .width,
                 height: branch_height,
             };
 
@@ -2743,13 +3087,14 @@ where
             );
 
             // Draw the content
-            let indent_x = self.tree_handle.padding_x + (effective_depth as f32 * self.tree_handle.indent);
+            let indent_x =
+                self.tree_handle.padding_x + (effective_depth as f32 * self.tree_handle.indent);
             let content_x = indent_x + ARROW_W + CONTENT_GAP;
             let translation = Vector::new(
                 (drag_bounds.x + content_x) - self.layout.bounds().x,
                 drag_bounds.y - self.layout.bounds().y,
             );
-            
+
             let transparent_style = renderer::Style {
                 text_color: style.text_color.scale_alpha(0.9),
             };
@@ -2767,7 +3112,7 @@ where
                             &transparent_style,
                             child_layout,
                             cursor,
-                            &self.tree_layout.bounds()
+                            &self.tree_layout.bounds(),
                         );
                     }
                 }
@@ -2790,7 +3135,7 @@ where
 }
 
 impl<'a, 'b, Message, Theme, Renderer> DragOverlay<'a, 'b, Message, Theme, Renderer>
-where 
+where
     Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::text::Renderer<Font = iced::Font>,
@@ -2803,40 +3148,44 @@ where
     ) {
         // Get the current order before we borrow state mutably
         let (current_order, branches_copy) = {
-            let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+            let combined_state = self
+                .state
+                .state
+                .downcast_mut::<CombinedState<Renderer::Paragraph>>();
             let order = if let Some(ref branch_order) = combined_state.tree_state.branch_order {
                 branch_order.clone()
             } else {
-                self.tree_handle.branches.iter().map(|b| BranchState {
-                    id: b.id,
-                    parent_id: b.parent_id,
-                    depth: b.depth,
-                }).collect()
+                self.tree_handle
+                    .branches
+                    .iter()
+                    .map(|b| BranchState {
+                        id: b.id,
+                        parent_id: b.parent_id,
+                        depth: b.depth,
+                    })
+                    .collect()
             };
             (order, self.tree_handle.branches.clone())
         };
-        
-        let state_map: HashMap<usize, BranchState> = current_order.iter()
-            .map(|bs| (bs.id, bs.clone()))
-            .collect();
-        
+
+        let state_map: HashMap<usize, BranchState> =
+            current_order.iter().map(|bs| (bs.id, bs.clone())).collect();
+
         // Use standalone function to avoid borrow issues
         let mut items_to_move = HashSet::new();
         for &id in dragged_ids {
             collect_branch_and_descendants(id, &mut items_to_move, &current_order);
         }
-        
-        let target_state = state_map.get(&target_id)
-            .cloned()
-            .unwrap_or(BranchState {
-                id: target_id,
-                parent_id: None,
-                depth: 0,
-            });
-        
+
+        let target_state = state_map.get(&target_id).cloned().unwrap_or(BranchState {
+            id: target_id,
+            parent_id: None,
+            depth: 0,
+        });
+
         let mut new_order: Vec<BranchState> = Vec::new();
         let mut removed_items: Vec<BranchState> = Vec::new();
-        
+
         for bs in current_order {
             if items_to_move.contains(&bs.id) {
                 removed_items.push(bs);
@@ -2844,22 +3193,28 @@ where
                 new_order.push(bs);
             }
         }
-        
+
         let (new_parent_id, new_base_depth) = match drop_position {
             DropPosition::Before => (target_state.parent_id, target_state.depth),
             DropPosition::After => {
-                let is_last_item = new_order.iter()
+                let is_last_item = new_order
+                    .iter()
                     .rposition(|bs| bs.id == target_id)
-                    .map(|idx| idx == new_order.len() - 1 || 
-                        !new_order[idx + 1..].iter().any(|bs| bs.parent_id == target_state.parent_id))
+                    .map(|idx| {
+                        idx == new_order.len() - 1
+                            || !new_order[idx + 1..]
+                                .iter()
+                                .any(|bs| bs.parent_id == target_state.parent_id)
+                    })
                     .unwrap_or(false);
-                
+
                 if is_last_item && target_state.parent_id.is_some() {
-                    let has_root_siblings_after = new_order.iter()
+                    let has_root_siblings_after = new_order
+                        .iter()
                         .skip_while(|bs| bs.id != target_id)
                         .skip(1)
                         .any(|bs| bs.parent_id.is_none());
-                    
+
                     if !has_root_siblings_after {
                         (None, 0)
                     } else {
@@ -2871,22 +3226,26 @@ where
             }
             DropPosition::Into => (Some(target_id), target_state.depth + 1),
         };
-        
+
         let insertion_index = match drop_position {
-            DropPosition::Before => {
-                new_order.iter().position(|bs| bs.id == target_id)
-                    .unwrap_or(new_order.len())
-            }
+            DropPosition::Before => new_order
+                .iter()
+                .position(|bs| bs.id == target_id)
+                .unwrap_or(new_order.len()),
             DropPosition::Into => {
-                let parent_pos = new_order.iter().position(|bs| bs.id == target_id)
+                let parent_pos = new_order
+                    .iter()
+                    .position(|bs| bs.id == target_id)
                     .unwrap_or(new_order.len());
                 parent_pos + 1
             }
             DropPosition::After => {
-                let mut idx = new_order.iter().position(|bs| bs.id == target_id)
+                let mut idx = new_order
+                    .iter()
+                    .position(|bs| bs.id == target_id)
                     .map(|i| i + 1)
                     .unwrap_or(new_order.len());
-                
+
                 while idx < new_order.len() {
                     let current = &new_order[idx];
                     if is_descendant_of(current.id, target_id, &new_order) {
@@ -2898,13 +3257,14 @@ where
                 idx
             }
         };
-        
-        let old_depth = removed_items.iter()
+
+        let old_depth = removed_items
+            .iter()
             .find(|bs| dragged_ids.contains(&bs.id))
             .map(|bs| bs.depth)
             .unwrap_or(0);
         let depth_change = new_base_depth as i32 - old_depth as i32;
-        
+
         let mut insert_offset = 0;
         for mut bs in removed_items {
             if dragged_ids.contains(&bs.id) {
@@ -2916,19 +3276,26 @@ where
             new_order.insert(insertion_index + insert_offset, bs);
             insert_offset += 1;
         }
-        
+
         // Now update the state
-        let combined_state = self.state.state.downcast_mut::<CombinedState<Renderer::Paragraph>>();
+        let combined_state = self
+            .state
+            .state
+            .downcast_mut::<CombinedState<Renderer::Paragraph>>();
         combined_state.tree_state.branch_order = Some(new_order);
-        
+
         self.tree_handle.update_has_children_flags();
     }
 }
 
 // Standalone helper functions to avoid borrow issues
-fn is_descendant_of(potential_child: usize, potential_ancestor: usize, states: &[BranchState]) -> bool {
+fn is_descendant_of(
+    potential_child: usize,
+    potential_ancestor: usize,
+    states: &[BranchState],
+) -> bool {
     let mut current_id = Some(potential_child);
-    
+
     while let Some(id) = current_id {
         if let Some(bs) = states.iter().find(|s| s.id == id) {
             if bs.parent_id == Some(potential_ancestor) {
@@ -2942,36 +3309,46 @@ fn is_descendant_of(potential_child: usize, potential_ancestor: usize, states: &
     false
 }
 
-fn collect_branch_and_descendants(branch_id: usize, result: &mut HashSet<usize>, current_order: &[BranchState]) {
+fn collect_branch_and_descendants(
+    branch_id: usize,
+    result: &mut HashSet<usize>,
+    current_order: &[BranchState],
+) {
     result.insert(branch_id);
-    
-    let children: Vec<usize> = current_order.iter()
+
+    let children: Vec<usize> = current_order
+        .iter()
         .filter(|bs| bs.parent_id == Some(branch_id))
         .map(|bs| bs.id)
         .collect();
-    
+
     for child_id in children {
         collect_branch_and_descendants(child_id, result, current_order);
     }
 }
 
-fn filter_redundant_selections(selected_ids: &[usize], branches: &[Branch_], branch_order: &Option<Vec<BranchState>>) -> Vec<usize> {
+fn filter_redundant_selections(
+    selected_ids: &[usize],
+    branches: &[Branch_],
+    branch_order: &Option<Vec<BranchState>>,
+) -> Vec<usize> {
     let mut filtered = Vec::new();
-    
+
     for &id in selected_ids {
         let mut should_include = true;
-        
+
         // Check if any ancestor is also selected
         let mut current_id = id;
         while let Some(branch) = branches.iter().find(|b| b.id == current_id) {
             let parent_id = if let Some(order) = branch_order {
-                order.iter()
+                order
+                    .iter()
                     .find(|bs| bs.id == current_id)
                     .and_then(|bs| bs.parent_id)
             } else {
                 branch.parent_id
             };
-            
+
             if let Some(parent) = parent_id {
                 if selected_ids.contains(&parent) {
                     should_include = false;
@@ -2982,21 +3359,18 @@ fn filter_redundant_selections(selected_ids: &[usize], branches: &[Branch_], bra
                 break;
             }
         }
-        
+
         if should_include {
             filtered.push(id);
         }
     }
-    
+
     filtered
 }
 
 // helper function for rectangle intersection ( ctrl + click selection )
 fn rectangles_intersect(a: &Rectangle, b: &Rectangle) -> bool {
-    !(a.x + a.width < b.x || 
-      b.x + b.width < a.x || 
-      a.y + a.height < b.y || 
-      b.y + b.height < a.y)
+    !(a.x + a.width < b.x || b.x + b.width < a.x || a.y + a.height < b.y || b.y + b.height < a.y)
 }
 
 impl<'a, Message, Theme, Renderer> From<TreeHandle<'a, Message, Theme, Renderer>>
@@ -3016,16 +3390,14 @@ where
 pub struct Branch<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     pub content: Element<'a, Message, Theme, Renderer>,
     pub children: Vec<Branch<'a, Message, Theme, Renderer>>,
-    pub external_id: usize, 
+    pub external_id: usize,
     pub align_x: iced::Alignment,
     pub align_y: iced::Alignment,
     pub accepts_drops: bool,
-    pub draggable: bool, 
+    pub draggable: bool,
 }
 
-impl<'a, Message, Theme, Renderer> 
-    Branch<'a, Message, Theme, Renderer> {
-
+impl<'a, Message, Theme, Renderer> Branch<'a, Message, Theme, Renderer> {
     /// Adds children to this branch
     pub fn with_children(mut self, children: Vec<Self>) -> Self {
         self.children = children;
@@ -3062,10 +3434,10 @@ impl<'a, Message, Theme, Renderer>
 pub trait Catalog {
     /// The style class
     type Class<'a>;
-    
+
     /// Default style
     fn default<'a>() -> Self::Class<'a>;
-    
+
     /// Get the style for a class
     fn style(&self, class: &Self::Class<'_>) -> Style;
 }
@@ -3114,11 +3486,11 @@ pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> Style + 'a>;
 
 impl Catalog for iced::Theme {
     type Class<'a> = StyleFn<'a, Self>;
-    
+
     fn default<'a>() -> Self::Class<'a> {
         Box::new(|theme| {
             let palette = theme.extended_palette();
-            
+
             Style {
                 text: palette.background.base.text,
                 selection_background: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
@@ -3132,7 +3504,7 @@ impl Catalog for iced::Theme {
             }
         })
     }
-    
+
     fn style(&self, class: &Self::Class<'_>) -> Style {
         class(self)
     }

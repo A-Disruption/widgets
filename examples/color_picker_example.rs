@@ -1,6 +1,9 @@
 use iced::theme::{self, Palette};
-use iced::{clipboard, Color, Element, Length, Task, Theme};
-use iced::widget::{button, checkbox, column, container, pick_list, progress_bar, radio, row, slider, text, text_input, toggler, Space};
+use iced::widget::{
+    Space, button, checkbox, column, container, pick_list, progress_bar, radio, row, slider, text,
+    text_input, toggler,
+};
+use iced::{Color, Element, Length, Task, Theme, clipboard};
 use widgets::color_picker::color_button;
 
 #[derive(Debug, Clone)]
@@ -89,16 +92,18 @@ impl CustomPalette {
     }
 
     pub fn theme_to_rust_code(&self) -> String {
-        "\nlet custom_theme = iced::Theme::custom( \"Custom\".to_string() , custom_palette );".to_string()
+        "\nlet custom_theme = iced::Theme::custom( \"Custom\".to_string() , custom_palette );"
+            .to_string()
     }
 
     pub fn copy_complete_code_to_clipboard(&self) -> Task<Message> {
         // Combine both function outputs
-        let complete_code = format!("{}{}", 
-            self.pallet_to_rust_code(), 
+        let complete_code = format!(
+            "{}{}",
+            self.pallet_to_rust_code(),
             self.theme_to_rust_code()
         );
-        
+
         // Create clipboard instance and set contents
         clipboard::write::<Message>(complete_code)
     }
@@ -119,7 +124,7 @@ impl CustomPalette {
     }
 
     pub fn to_iced_theme_frfr(&self, name: &str) -> iced::Theme {
-        Theme::custom( name.to_string() , self.to_iced_palette() )
+        Theme::custom(name.to_string(), self.to_iced_palette())
     }
 }
 
@@ -148,7 +153,7 @@ fn hex_to_color(hex: &str) -> Result<Color, ()> {
     if !hex.starts_with('#') || hex.len() != 7 {
         return Err(());
     }
-    
+
     let hex = &hex[1..];
     if let Ok(num) = u32::from_str_radix(hex, 16) {
         let r = ((num >> 16) & 0xFF) as f32 / 255.0;
@@ -207,7 +212,7 @@ pub struct PaletteBuilder {
     // Custom Widget Styles
     pub button_style: Option<button::Style>,
     pub check_box_style: Option<checkbox::Style>,
-//    pub combo_box_stle: Option<combo_box::Style>,
+    //    pub combo_box_stle: Option<combo_box::Style>,
     pub container_style: Option<container::Style>,
     pub pick_list_style: Option<pick_list::Style>,
     pub progress_bar_style: Option<progress_bar::Style>,
@@ -216,9 +221,6 @@ pub struct PaletteBuilder {
     pub text_style: Option<text::Style>,
     pub text_input_style: Option<text_input::Style>,
     pub toggler_style: Option<toggler::Style>,
-
-
-
 }
 
 impl Default for PaletteBuilder {
@@ -237,7 +239,7 @@ impl Default for PaletteBuilder {
 
             button_style: None,
             check_box_style: None,
-//            combo_box_stle: None,
+            //            combo_box_stle: None,
             container_style: None,
             pick_list_style: None,
             progress_bar_style: None,
@@ -266,7 +268,7 @@ impl PaletteBuilder {
         Self::default()
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> { 
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SetMode(is_dark) => {
                 self.is_dark_mode = is_dark;
@@ -285,7 +287,7 @@ impl PaletteBuilder {
                 };
 
                 let theme = self.palette.to_iced_theme_frfr("Custom");
-                
+
                 // Keep the current background/text based on mode
                 self.palette.primary = base_palette.primary;
                 self.palette.success = base_palette.success;
@@ -318,9 +320,7 @@ impl PaletteBuilder {
                     }
                 }
             }
-            Message::CopyCode => {
-                    return self.palette.copy_complete_code_to_clipboard()
-            }
+            Message::CopyCode => return self.palette.copy_complete_code_to_clipboard(),
             Message::UpdateTheme(theme) => {
                 self.theme = theme;
             }
@@ -383,7 +383,7 @@ impl PaletteBuilder {
                         self.danger_input = color_to_hex(color);
                     }
                 }
-                
+
                 // Update the text in text_input
                 let display_text = source.unwrap_or_else(|| color_to_hex(color));
                 match field {
@@ -406,21 +406,17 @@ impl PaletteBuilder {
                         self.danger_input = display_text;
                     }
                 }
-                
-
             }
         }
         Task::none()
     }
 
     pub fn view(&self) -> Element<Message> {
-
         let content = row![
             container(
                 column![
                     text("Iced Palette Builder").size(24),
                     Space::new().height(16),
-                    
                     // Presets
                     text("Quick Start").size(16),
                     Space::new().height(8),
@@ -430,123 +426,181 @@ impl PaletteBuilder {
                             .style(|_, _| button_background_color(Color::WHITE)),
                         button("Dark")
                             .on_press(Message::SetMode(true))
-                            .style(|_, _| button_background_color(Color::from_rgb8(0x2B, 0x2D, 0x31))),
+                            .style(|_, _| button_background_color(Color::from_rgb8(
+                                0x2B, 0x2D, 0x31
+                            ))),
                         button("Blue")
                             .on_press(Message::ApplyPreset(PresetType::Blue))
-                            .style(|_, _| button_background_color(Color::from_rgb8(0x3B, 0x82, 0xF6))),
+                            .style(|_, _| button_background_color(Color::from_rgb8(
+                                0x3B, 0x82, 0xF6
+                            ))),
                         button("Purple")
                             .on_press(Message::ApplyPreset(PresetType::Purple))
-                            .style(|_, _| button_background_color(Color::from_rgb8(0x8B, 0x5C, 0xF6))),
+                            .style(|_, _| button_background_color(Color::from_rgb8(
+                                0x8B, 0x5C, 0xF6
+                            ))),
                         button("Green")
                             .on_press(Message::ApplyPreset(PresetType::Green))
-                            .style(|_, _| button_background_color(Color::from_rgb8(0x10, 0xB9, 0x81))),
-                    ].spacing(20),
-
+                            .style(|_, _| button_background_color(Color::from_rgb8(
+                                0x10, 0xB9, 0x81
+                            ))),
+                    ]
+                    .spacing(20),
                     Space::new().height(16),
-
                     // Color Selection
                     row![
                         column![
                             column![
                                 text("Background"),
                                 row![
-                                    color_button(
-                                        self.palette.background,
+                                    color_button(self.palette.background,)
+                                        .on_change_with_source(|color, source| {
+                                            Message::ColorPickerChangedWithSource(
+                                                ColorField::Background,
+                                                color,
+                                                source,
+                                            )
+                                        })
+                                        .title("Background Color")
+                                        .width(30)
+                                        .height(20),
+                                    text_input("Background", &self.background_input).on_input(
+                                        |s| Message::ColorChanged(ColorField::Background, s)
                                     )
-                                    .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Background, color, source))
-                                    .title("Background Color")
-                                    .width(30)
-                                    .height(20),
-                                    text_input("Background", &self.background_input)
-                                        .on_input(|s| Message::ColorChanged(ColorField::Background, s))
-                                ].align_y(iced::Alignment::Center).spacing(5),
-                            ].spacing(5),
-                            
+                                ]
+                                .align_y(iced::Alignment::Center)
+                                .spacing(5),
+                            ]
+                            .spacing(5),
                             column![
                                 text("Primary"),
                                 row![
                                     color_button(self.palette.primary)
-                                        .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Primary, color, source))
+                                        .on_change_with_source(|color, source| {
+                                            Message::ColorPickerChangedWithSource(
+                                                ColorField::Primary,
+                                                color,
+                                                source,
+                                            )
+                                        })
                                         .title("Primary Color")
                                         .width(30)
                                         .height(20),
-                                    text_input("Primary", &self.primary_input)
-                                        .on_input(|s| Message::ColorChanged(ColorField::Primary, s))
-                                ].align_y(iced::Alignment::Center).spacing(5),
-                            ].spacing(5),
-                            
+                                    text_input("Primary", &self.primary_input).on_input(|s| {
+                                        Message::ColorChanged(ColorField::Primary, s)
+                                    })
+                                ]
+                                .align_y(iced::Alignment::Center)
+                                .spacing(5),
+                            ]
+                            .spacing(5),
                             column![
                                 text("Warning"),
                                 row![
                                     color_button(self.palette.warning)
-                                        .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Warning, color, source))
+                                        .on_change_with_source(|color, source| {
+                                            Message::ColorPickerChangedWithSource(
+                                                ColorField::Warning,
+                                                color,
+                                                source,
+                                            )
+                                        })
                                         .title("Warning Color")
                                         .width(30)
                                         .height(20),
-                                    text_input("Warning", &self.warning_input)
-                                        .on_input(|s| Message::ColorChanged(ColorField::Warning, s))
-                                ].align_y(iced::Alignment::Center).spacing(5),
-                            ].spacing(5),
-                        ].spacing(10),
-                        
+                                    text_input("Warning", &self.warning_input).on_input(|s| {
+                                        Message::ColorChanged(ColorField::Warning, s)
+                                    })
+                                ]
+                                .align_y(iced::Alignment::Center)
+                                .spacing(5),
+                            ]
+                            .spacing(5),
+                        ]
+                        .spacing(10),
                         column![
                             column![
                                 text("Text"),
                                 row![
                                     color_button(self.palette.text)
-                                        .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Text, color, source))
+                                        .on_change_with_source(|color, source| {
+                                            Message::ColorPickerChangedWithSource(
+                                                ColorField::Text,
+                                                color,
+                                                source,
+                                            )
+                                        })
                                         .title("Text Color")
                                         .width(30)
                                         .height(20),
                                     text_input("Text", &self.text_input)
                                         .on_input(|s| Message::ColorChanged(ColorField::Text, s))
-                                ].align_y(iced::Alignment::Center).spacing(5),
-                            ].spacing(5),
-                            
+                                ]
+                                .align_y(iced::Alignment::Center)
+                                .spacing(5),
+                            ]
+                            .spacing(5),
                             column![
                                 text("Success"),
                                 row![
                                     color_button(self.palette.success)
-                                        .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Success, color, source))
+                                        .on_change_with_source(|color, source| {
+                                            Message::ColorPickerChangedWithSource(
+                                                ColorField::Success,
+                                                color,
+                                                source,
+                                            )
+                                        })
                                         .title("Success Color")
                                         .width(30)
                                         .height(20),
-                                    text_input("Success", &self.success_input)
-                                        .on_input(|s| Message::ColorChanged(ColorField::Success, s))
-                                ].align_y(iced::Alignment::Center).spacing(5),
-                            ].spacing(5),
-                            
+                                    text_input("Success", &self.success_input).on_input(|s| {
+                                        Message::ColorChanged(ColorField::Success, s)
+                                    })
+                                ]
+                                .align_y(iced::Alignment::Center)
+                                .spacing(5),
+                            ]
+                            .spacing(5),
                             column![
                                 text("Danger"),
                                 row![
                                     color_button(self.palette.danger)
-                                        .on_change_with_source(|color, source| Message::ColorPickerChangedWithSource(ColorField::Danger, color, source))
+                                        .on_change_with_source(|color, source| {
+                                            Message::ColorPickerChangedWithSource(
+                                                ColorField::Danger,
+                                                color,
+                                                source,
+                                            )
+                                        })
                                         .title("Danger Color")
                                         .width(30)
                                         .height(20),
                                     text_input("Danger", &self.danger_input)
                                         .on_input(|s| Message::ColorChanged(ColorField::Danger, s))
-                                ].align_y(iced::Alignment::Center).spacing(5),
-                            ].spacing(5),
-                        ].spacing(10),
-                    ].spacing(20),
-
+                                ]
+                                .align_y(iced::Alignment::Center)
+                                .spacing(5),
+                            ]
+                            .spacing(5),
+                        ]
+                        .spacing(10),
+                    ]
+                    .spacing(20),
                     Space::new().height(16),
-                    
                     // Generated code section
                     row![
-//                        text("Generated Rust Code").size(16),
+                        //                        text("Generated Rust Code").size(16),
                         button("Copy to clipboard")
                             .on_press(Message::CopyCode)
                             .style(button::secondary),
-                    ].align_y(iced::Alignment::Center).spacing(10),
-                    container(
-                        column!(
-                            text(self.palette.pallet_to_rust_code()).size(12),
-                            text(self.palette.theme_to_rust_code()).size(12),
-                        )
-                        
-                    )
+                    ]
+                    .align_y(iced::Alignment::Center)
+                    .spacing(10),
+                    container(column!(
+                        text(self.palette.pallet_to_rust_code()).size(12),
+                        text(self.palette.theme_to_rust_code()).size(12),
+                    ))
                     .width(Length::Fill)
                     .style(container::bordered_box)
                     .padding(12),
@@ -556,10 +610,7 @@ impl PaletteBuilder {
             )
             .style(container::bordered_box)
             .width(Length::FillPortion(1)),
-            
             Space::new().height(24),
-            
-
         ]
         .spacing(0)
         .padding(20);
@@ -615,9 +666,9 @@ fn button_background_color(color: Color) -> button::Style {
         radius: iced::border::Radius::new(5),
     };
 
-    let text = theme::palette::Pair{
+    let text = theme::palette::Pair {
         color,
-        text: Color::BLACK
+        text: Color::BLACK,
     };
 
     button::Style {
@@ -629,7 +680,11 @@ fn button_background_color(color: Color) -> button::Style {
 }
 
 fn main() -> iced::Result {
-    iced::application(PaletteBuilder::new, PaletteBuilder::update, PaletteBuilder::view)
-        .theme(PaletteBuilder::theme)
-        .run()
+    iced::application(
+        PaletteBuilder::new,
+        PaletteBuilder::update,
+        PaletteBuilder::view,
+    )
+    .theme(PaletteBuilder::theme)
+    .run()
 }
