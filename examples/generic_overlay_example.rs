@@ -251,7 +251,7 @@ impl App {
         let opaque_overlay = overlay_button("Open Opaque", "Opaque", opaque_overlay_content)
             .opaque(true)
             .close_on_click_outside()
-            .quick_animation()
+            .slow_animation()
             .on_open(Message::OverlayOpened)
             .on_close(|| Message::OverlayClosed);
 
@@ -302,6 +302,7 @@ impl App {
         .on_hover()
         .hover_position(self.hover_position.unwrap_or(Position::Right))
         .hover_gap(self.hover_gap)
+        .slow_animation()
         .hover_alignment(
             self.hover_alignment
                 .unwrap_or(AlignmentOption::Center)

@@ -237,7 +237,7 @@ where
             interactive_base: false,
             animate: false,
             animation_duration: None,
-            animation_easing: Easing::EaseInOut,
+            animation_easing: Easing::EaseOutCubic,
             safe_triangle: true,
         }
     }
@@ -1016,11 +1016,15 @@ where
             Event::Window(window::Event::RedrawRequested(now)) => {
                 if self.animate && (state.is_open || state.is_closing) {
                     state.open_progress = state.open_animation.interpolate(0.0, 1.0, *now);
-                    if state.open_animation.is_animating(*now) {
+                    // When closing and the progress is visually imperceptible (sub-pixel
+                    // position, <3% backdrop opacity), complete immediately rather than
+                    // leaving the overlay alive for the rest of the animation timer.
+                    let close_done = state.is_closing && state.open_progress < 0.03;
+                    if !close_done && state.open_animation.is_animating(*now) {
                         state.was_animating = true;
                         shell.invalidate_layout();
                         shell.request_redraw();
-                    } else if state.was_animating {
+                    } else if state.was_animating || close_done {
                         state.was_animating = false;
                         shell.invalidate_layout();
                         if state.is_closing {
@@ -1559,23 +1563,27 @@ where
             self.state.position = calculated_position;
         }
 
-        // Apply slide offset for hover-positioned overlays during open/close animation
-        let final_position =
-            if self.animate && (self.hover.enabled || self.hover_positions_on_click) {
-                let slide_dist = 10.0 * (1.0 - self.state.open_progress);
-                let offset = match self.hover.config.position {
+        // Apply slide offset during open/close animation
+        let final_position = if self.animate {
+            let slide_dist = 18.0 * (1.0 - self.state.open_progress);
+            let offset = if self.hover.enabled || self.hover_positions_on_click {
+                match self.hover.config.position {
                     Position::Right => Vector::new(-slide_dist, 0.0),
                     Position::Left => Vector::new(slide_dist, 0.0),
                     Position::Bottom => Vector::new(0.0, -slide_dist),
                     Position::Top => Vector::new(0.0, slide_dist),
-                };
-                Point::new(
-                    self.state.position.x + offset.x,
-                    self.state.position.y + offset.y,
-                )
+                }
             } else {
-                self.state.position
+                // Centered/click-open overlays: slide up from slightly below
+                Vector::new(0.0, slide_dist)
             };
+            Point::new(
+                self.state.position.x + offset.x,
+                self.state.position.y + offset.y,
+            )
+        } else {
+            self.state.position
+        };
 
         Node::new(size).move_to(final_position)
     }
@@ -1591,20 +1599,8 @@ where
         let bounds = layout.bounds();
         let draw_style = <Theme as Catalog>::style(theme, self.class);
 
-        // Animation fade helpers: multiply alpha by open_progress for smooth fade
+        // Alpha used only for backdrop animation — dialog draws at full opacity
         let alpha = self.state.open_progress;
-        let fade = |c: Color| -> Color {
-            Color {
-                a: c.a * alpha,
-                ..c
-            }
-        };
-        let fade_bg = |bg: Background| -> Background {
-            match bg {
-                Background::Color(c) => Background::Color(fade(c)),
-                other => other,
-            }
-        };
 
         // Use layer rendering for proper overlay isolation
         renderer.with_layer(self.state.window_bounds, |renderer| {
@@ -1626,17 +1622,17 @@ where
                 renderer::Quad {
                     bounds,
                     border: Border {
-                        color: fade(draw_style.border_color),
+                        color: draw_style.border_color,
                         width: 1.0,
                         radius: self.radius.into(),
                     },
                     shadow: Shadow {
-                        color: fade(draw_style.shadow.color),
+                        color: draw_style.shadow.color,
                         ..draw_style.shadow
                     },
                     snap: true,
                 },
-                Background::Color(fade(draw_style.background)),
+                Background::Color(draw_style.background),
             );
 
             // Draw header only if not hidden
@@ -1653,7 +1649,7 @@ where
                     renderer::Quad {
                         bounds: header_bounds,
                         border: Border {
-                            color: fade(draw_style.border_color),
+                            color: draw_style.border_color,
                             width: 1.0,
                             radius: Radius {
                                 top_left: self.radius,
@@ -1665,7 +1661,7 @@ where
                         shadow: Shadow::default(),
                         snap: true,
                     },
-                    Background::Color(fade(draw_style.header_background)),
+                    Background::Color(draw_style.header_background),
                 );
 
                 // Draw title
@@ -1688,7 +1684,7 @@ where
                         header_bounds.center_x() - (CLOSE_BUTTON_SIZE / 2.0),
                         header_bounds.center_y(),
                     ),
-                    fade(draw_style.text_color),
+                    draw_style.text_color,
                     header_bounds,
                 );
 
@@ -1712,7 +1708,7 @@ where
                                 shadow: Shadow::default(),
                                 snap: true,
                             },
-                            Color::from_rgba(0.0, 0.0, 0.0, 0.1 * alpha),
+                            Color::from_rgba(0.0, 0.0, 0.0, 0.1),
                         );
                     }
 
@@ -1729,7 +1725,7 @@ where
                             wrapping: iced::advanced::text::Wrapping::default(),
                         },
                         Point::new(close_bounds.center_x(), close_bounds.center_y()),
-                        fade(draw_style.text_color),
+                        draw_style.text_color,
                         close_bounds,
                     );
                 }
@@ -1767,7 +1763,7 @@ where
                             renderer,
                             theme,
                             &renderer::Style {
-                                text_color: fade(draw_style.text_color),
+                                text_color: draw_style.text_color,
                             },
                             Layout::new(&self.content_layout),
                             adjusted_cursor,
@@ -1776,24 +1772,6 @@ where
                     },
                 );
             });
-
-            // Fade mask drawn in PARENT layer after the content layer closes — guaranteed to
-            // composite on top of the entire content layer including any nested layers that
-            // child widgets (buttons, text_input, etc.) create internally.
-            if self.animate && alpha < 1.0 {
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: content_bounds,
-                        border: Border::default(),
-                        shadow: Shadow::default(),
-                        snap: true,
-                    },
-                    Color {
-                        a: 1.0 - alpha,
-                        ..draw_style.background
-                    },
-                );
-            }
 
             // Debug: draw safe triangle outline when Ctrl is held (window coordinate space).
             // Each edge is rendered as a series of 2×2 pixel squares spaced 1.5px apart,
