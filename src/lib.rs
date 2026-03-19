@@ -4,6 +4,9 @@ pub mod tree;
 #[cfg(feature = "color_picker")]
 pub mod color_picker;
 
+#[cfg(feature = "color_picker_two")]
+pub mod color_picker_two;
+
 #[cfg(feature = "collapsible")]
 pub mod collapsible;
 

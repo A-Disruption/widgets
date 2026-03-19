@@ -14,11 +14,12 @@ iced_runtime = "0.14.0"
 default = []
 tree = []
 color_picker = []
+color_picker_two = []
 collapsible = []
 generic_overlay = []
 flow_editor = []
 date_picker = ["dep:chrono"]
-all = ["tree", "color_picker", "collapsible", "generic_overlay", "flow_editor", "date_picker"]
+all = ["tree", "color_picker", "color_picker_two", "collapsible", "generic_overlay", "flow_editor", "date_picker"]
 
 [[example]]
 name = "tree_example"
@@ -34,6 +35,11 @@ required-features = ["tree", "collapsible"]
 name = "color_picker_example"
 path = "examples/color_picker_example.rs"
 required-features = ["color_picker"]
+
+[[example]]
+name = "color_picker_two_example"
+path = "examples/color_picker_two_example.rs"
+required-features = ["color_picker_two"]
 
 [[example]]
 name = "collapsible_example"
