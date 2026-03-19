@@ -7,12 +7,16 @@
 //! # Example
 //! ```no_run
 //! use iced::{Color, Element};
-//! use widgets::color_picker_two::{ColorInfo, ColorModel, color_picker_two};
+//! use widgets::color_picker_two::{
+//!     ColorInfo, ColorModel, ContrastInfo, MagnifierRequest, PickerPage, color_picker_two,
+//! };
 //!
 //! #[derive(Clone)]
 //! enum Message {
 //!     ClosePicker,
 //!     ColorChanged(ColorInfo),
+//!     ContrastChanged(ContrastInfo),
+//!     MagnifierRequested(MagnifierRequest),
 //! }
 //!
 //! let open = true;
@@ -20,7 +24,10 @@
 //!
 //! let _picker: Element<'_, Message> = color_picker_two(open, color)
 //!     .model(ColorModel::Hsl)
+//!     .page(PickerPage::Contrast)
 //!     .on_change_with_info(Message::ColorChanged)
+//!     .on_contrast_change(Message::ContrastChanged)
+//!     .on_magnifier_request(Message::MagnifierRequested)
 //!     .on_close(|| Message::ClosePicker)
 //!     .into();
 //! ```
@@ -41,16 +48,18 @@ use iced::{
 use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
-const PANEL_WIDTH: f32 = 320.0;
+const PANEL_WIDTH: f32 = 336.0;
 const HEADER_HEIGHT: f32 = 42.0;
 const PREVIEW_HEIGHT: f32 = 110.0;
+const CONTRAST_SUMMARY_HEIGHT: f32 = 92.0;
+const CONTRAST_WELLS_HEIGHT: f32 = 58.0;
 const CONTENT_PADDING_X: f32 = 16.0;
 const CONTENT_PADDING_TOP: f32 = 14.0;
 const CONTROL_ROW_HEIGHT: f32 = 28.0;
 const CONTROL_GAP: f32 = 10.0;
 const SLIDER_ROW_HEIGHT: f32 = 18.0;
 const SLIDER_TRACK_HEIGHT: f32 = 16.0;
-const SLIDER_KNOB_SIZE: f32 = 14.0;
+const SLIDER_KNOB_SIZE: f32 = 12.0;
 const SLIDER_KNOB_RADIUS: f32 = SLIDER_KNOB_SIZE / 2.0;
 const SLIDER_GAP: f32 = 6.0;
 const LABEL_WIDTH: f32 = 0.0;
@@ -64,6 +73,7 @@ const SWATCH_TOP_MARGIN: f32 = 14.0;
 const FOOTER_PADDING: f32 = 20.0;
 const ANCHOR_SIZE: f32 = 1.0;
 const COPY_FEEDBACK_DURATION: Duration = Duration::from_millis(1_200);
+const HEADER_PAGE_BUTTON_SIZE: f32 = 28.0;
 /// Creates a [`ColorPickerTwo`] overlay widget.
 pub fn color_picker_two<'a, Message, Theme, Renderer>(
     is_open: bool,
@@ -128,12 +138,100 @@ pub struct ColorInfo {
 }
 
 impl ColorInfo {
-    fn new(color: Color, model: ColorModel) -> Self {
+    pub fn new(color: Color, model: ColorModel) -> Self {
         Self {
             color,
             hex: color_to_hex(color),
             model,
             formatted: format_model_value(model, color),
+        }
+    }
+}
+
+/// The color well or picker section requesting a screen sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MagnifierTarget {
+    CurrentColor,
+    Foreground,
+    Background,
+}
+
+/// Metadata published when the magnifier button is pressed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MagnifierRequest {
+    pub target: MagnifierTarget,
+    pub color: Color,
+}
+
+impl MagnifierRequest {
+    fn new(target: MagnifierTarget, color: Color) -> Self {
+        Self { target, color }
+    }
+}
+
+/// The active panel shown in the overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerPage {
+    Picker,
+    Contrast,
+}
+
+/// The contrast color currently being edited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContrastTarget {
+    Foreground,
+    Background,
+}
+
+/// The current WCAG contrast grade for a color pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContrastGrade {
+    Aaa,
+    Aa,
+    Fail,
+}
+
+impl ContrastGrade {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Aaa => "AAA",
+            Self::Aa => "AA",
+            Self::Fail => "FAIL",
+        }
+    }
+
+    pub fn rating(self) -> &'static str {
+        match self {
+            Self::Aaa => "Excellent",
+            Self::Aa => "Good",
+            Self::Fail => "Needs Work",
+        }
+    }
+}
+
+/// Rich information about the current contrast pair.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContrastInfo {
+    pub foreground: Color,
+    pub background: Color,
+    pub ratio: f32,
+    pub grade: ContrastGrade,
+    pub rating: &'static str,
+    pub active_target: ContrastTarget,
+}
+
+impl ContrastInfo {
+    fn new(foreground: Color, background: Color, active_target: ContrastTarget) -> Self {
+        let ratio = contrast_ratio(foreground, background);
+        let grade = contrast_grade(ratio);
+
+        Self {
+            foreground,
+            background,
+            ratio,
+            grade,
+            rating: grade.rating(),
+            active_target,
         }
     }
 }
@@ -147,10 +245,14 @@ where
     is_open: bool,
     color: Color,
     model: ColorModel,
+    page: PickerPage,
+    contrast_background: Color,
     position: Option<Point>,
     swatch_groups: Vec<SwatchGroup>,
     on_change: Option<Box<dyn Fn(Color) -> Message + 'a>>,
     on_change_with_info: Option<Box<dyn Fn(ColorInfo) -> Message + 'a>>,
+    on_contrast_change: Option<Box<dyn Fn(ContrastInfo) -> Message + 'a>>,
+    on_magnifier_request: Option<Box<dyn Fn(MagnifierRequest) -> Message + 'a>>,
     on_close: Option<Box<dyn Fn() -> Message + 'a>>,
     class: Theme::Class<'a>,
     _renderer: PhantomData<Renderer>,
@@ -166,10 +268,14 @@ where
             is_open,
             color,
             model: ColorModel::Hsl,
+            page: PickerPage::Picker,
+            contrast_background: Color::from_rgb8(0x2B, 0x2D, 0x3A),
             position: None,
             swatch_groups: default_swatch_groups(),
             on_change: None,
             on_change_with_info: None,
+            on_contrast_change: None,
+            on_magnifier_request: None,
             on_close: None,
             class: Theme::default(),
             _renderer: PhantomData,
@@ -179,6 +285,18 @@ where
     /// Sets the initial slider model.
     pub fn model(mut self, model: ColorModel) -> Self {
         self.model = model;
+        self
+    }
+
+    /// Sets the initial page shown by the overlay.
+    pub fn page(mut self, page: PickerPage) -> Self {
+        self.page = page;
+        self
+    }
+
+    /// Sets the contrast background color.
+    pub fn contrast_background(mut self, color: Color) -> Self {
+        self.contrast_background = color;
         self
     }
 
@@ -203,6 +321,18 @@ where
     /// Publishes color changes together with formatted picker metadata.
     pub fn on_change_with_info(mut self, f: impl Fn(ColorInfo) -> Message + 'a) -> Self {
         self.on_change_with_info = Some(Box::new(f));
+        self
+    }
+
+    /// Publishes contrast pair changes together with the current ratio metadata.
+    pub fn on_contrast_change(mut self, f: impl Fn(ContrastInfo) -> Message + 'a) -> Self {
+        self.on_contrast_change = Some(Box::new(f));
+        self
+    }
+
+    /// Publishes a request to sample a color from outside the picker UI.
+    pub fn on_magnifier_request(mut self, f: impl Fn(MagnifierRequest) -> Message + 'a) -> Self {
+        self.on_magnifier_request = Some(Box::new(f));
         self
     }
 
@@ -231,7 +361,11 @@ where
 #[derive(Debug, Clone)]
 struct State {
     color: Color,
+    foreground_color: Color,
+    background_color: Color,
     model: ColorModel,
+    page: PickerPage,
+    contrast_target: ContrastTarget,
     dragging_slider: Option<SliderChannel>,
     is_dragging_overlay: bool,
     drag_offset: Vector,
@@ -240,14 +374,24 @@ struct State {
     swatch_groups: Vec<SwatchGroup>,
     active_swatch_group: usize,
     open_menu: Option<MenuKind>,
-    copied_feedback: Option<(CopyTarget, Instant)>,
+    feedback: Option<(FeedbackKind, Instant)>,
 }
 
 impl State {
-    fn new(color: Color, model: ColorModel, swatches: Vec<SwatchGroup>) -> Self {
+    fn new(
+        color: Color,
+        background_color: Color,
+        model: ColorModel,
+        page: PickerPage,
+        swatches: Vec<SwatchGroup>,
+    ) -> Self {
         Self {
             color,
+            foreground_color: color,
+            background_color,
             model,
+            page,
+            contrast_target: ContrastTarget::Foreground,
             dragging_slider: None,
             is_dragging_overlay: false,
             drag_offset: Vector::ZERO,
@@ -256,17 +400,30 @@ impl State {
             swatch_groups: normalize_swatch_groups(swatches),
             active_swatch_group: 0,
             open_menu: None,
-            copied_feedback: None,
+            feedback: None,
         }
     }
 
-    fn sync_from_external(&mut self, color: Color, model: ColorModel, swatches: &[SwatchGroup]) {
-        self.color = color;
+    fn sync_from_external(
+        &mut self,
+        color: Color,
+        background_color: Color,
+        model: ColorModel,
+        page: PickerPage,
+        swatches: &[SwatchGroup],
+    ) {
+        self.foreground_color = color;
+        self.background_color = background_color;
         self.model = model;
+        self.page = page;
+        if self.page == PickerPage::Picker {
+            self.contrast_target = ContrastTarget::Foreground;
+        }
         self.swatch_groups = normalize_swatch_groups(swatches.to_vec());
         if self.active_swatch_group >= self.swatch_groups.len() {
             self.active_swatch_group = 0;
         }
+        self.sync_active_color();
     }
 
     fn active_group(&self) -> &SwatchGroup {
@@ -278,7 +435,7 @@ impl State {
     }
 
     fn feedback_message(&self) -> Option<&'static str> {
-        let Some((target, at)) = self.copied_feedback else {
+        let Some((kind, at)) = self.feedback else {
             return None;
         };
 
@@ -286,10 +443,22 @@ impl State {
             return None;
         }
 
-        Some(match target {
-            CopyTarget::Hex => "HEX COPIED",
-            CopyTarget::Formatted => "VALUE COPIED",
-        })
+        Some(kind.label())
+    }
+
+    fn sync_active_color(&mut self) {
+        self.color = match self.contrast_target {
+            ContrastTarget::Foreground => self.foreground_color,
+            ContrastTarget::Background => self.background_color,
+        };
+    }
+
+    fn active_contrast_info(&self) -> ContrastInfo {
+        ContrastInfo::new(
+            self.foreground_color,
+            self.background_color,
+            self.contrast_target,
+        )
     }
 }
 
@@ -315,9 +484,22 @@ impl SliderChannel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CopyTarget {
+enum FeedbackKind {
     Hex,
     Formatted,
+    Pasted,
+    InvalidPaste,
+}
+
+impl FeedbackKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Hex => "HEX COPIED",
+            Self::Formatted => "VALUE COPIED",
+            Self::Pasted => "COLOR PASTED",
+            Self::InvalidPaste => "INVALID COLOR",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,7 +522,9 @@ where
     fn state(&self) -> widget::tree::State {
         widget::tree::State::new(State::new(
             self.color,
+            self.contrast_background,
             self.model,
+            self.page,
             self.swatch_groups.clone(),
         ))
     }
@@ -349,7 +533,13 @@ where
         let state = tree.state.downcast_mut::<State>();
 
         if !self.is_open || (state.dragging_slider.is_none() && !state.is_dragging_overlay) {
-            state.color = self.color;
+            state.foreground_color = self.color;
+            state.background_color = self.contrast_background;
+            state.page = self.page;
+            if state.page == PickerPage::Picker {
+                state.contrast_target = ContrastTarget::Foreground;
+            }
+            state.sync_active_color();
         }
 
         if !self.is_open {
@@ -358,6 +548,8 @@ where
             if state.active_swatch_group >= state.swatch_groups.len() {
                 state.active_swatch_group = 0;
             }
+            state.contrast_target = ContrastTarget::Foreground;
+            state.sync_active_color();
         }
     }
 
@@ -421,9 +613,15 @@ where
         }
 
         if state.overlay_position == Point::ORIGIN {
-            state.sync_from_external(self.color, self.model, &self.swatch_groups);
+            state.sync_from_external(
+                self.color,
+                self.contrast_background,
+                self.model,
+                self.page,
+                &self.swatch_groups,
+            );
 
-            let size = overlay_size(state.active_group().colors.len());
+            let size = overlay_size(state.page, state.active_group().colors.len());
             let centered = Point::new(
                 ((viewport.width - size.width) / 2.0).max(0.0),
                 ((viewport.height - size.height) / 2.0).max(0.0),
@@ -438,6 +636,8 @@ where
                 state,
                 on_change: &self.on_change,
                 on_change_with_info: &self.on_change_with_info,
+                on_contrast_change: &self.on_contrast_change,
+                on_magnifier_request: &self.on_magnifier_request,
                 on_close: &self.on_close,
                 class: &self.class,
                 _renderer: PhantomData,
@@ -467,6 +667,8 @@ where
     state: &'r mut State,
     on_change: &'r Option<Box<dyn Fn(Color) -> Message + 'w>>,
     on_change_with_info: &'r Option<Box<dyn Fn(ColorInfo) -> Message + 'w>>,
+    on_contrast_change: &'r Option<Box<dyn Fn(ContrastInfo) -> Message + 'w>>,
+    on_magnifier_request: &'r Option<Box<dyn Fn(MagnifierRequest) -> Message + 'w>>,
     on_close: &'r Option<Box<dyn Fn() -> Message + 'w>>,
     class: &'r Theme::Class<'w>,
     _renderer: PhantomData<Renderer>,
@@ -484,9 +686,29 @@ where
 
     fn publish_change(&self, shell: &mut Shell<'_, Message>) {
         if let Some(callback) = self.on_change_with_info {
-            shell.publish(callback(ColorInfo::new(self.state.color, self.state.model)));
+            shell.publish(callback(ColorInfo::new(
+                self.state.foreground_color,
+                self.state.model,
+            )));
         } else if let Some(callback) = self.on_change {
-            shell.publish(callback(self.state.color));
+            shell.publish(callback(self.state.foreground_color));
+        }
+    }
+
+    fn publish_contrast_change(&self, shell: &mut Shell<'_, Message>) {
+        if let Some(callback) = self.on_contrast_change {
+            shell.publish(callback(self.state.active_contrast_info()));
+        }
+    }
+
+    fn publish_magnifier_request(
+        &self,
+        target: MagnifierTarget,
+        color: Color,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        if let Some(callback) = self.on_magnifier_request {
+            shell.publish(callback(MagnifierRequest::new(target, color)));
         }
     }
 
@@ -496,11 +718,48 @@ where
         }
     }
 
+    fn set_feedback(&mut self, kind: FeedbackKind) {
+        self.state.feedback = Some((kind, Instant::now()));
+    }
+
     fn set_color(&mut self, color: Color, shell: &mut Shell<'_, Message>) {
-        if !same_color(self.state.color, color) {
-            self.state.color = color;
+        if same_color(self.state.color, color) {
+            shell.request_redraw();
+            return;
+        }
+
+        self.state.color = color;
+
+        let foreground_changed = if self.state.contrast_target == ContrastTarget::Foreground {
+            if !same_color(self.state.foreground_color, color) {
+                self.state.foreground_color = color;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        let background_changed = if self.state.contrast_target == ContrastTarget::Background {
+            if !same_color(self.state.background_color, color) {
+                self.state.background_color = color;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if foreground_changed {
             self.publish_change(shell);
         }
+
+        if foreground_changed || background_changed {
+            self.publish_contrast_change(shell);
+        }
+
         shell.request_redraw();
     }
 
@@ -525,6 +784,54 @@ where
         shell.request_redraw();
     }
 
+    fn set_page(&mut self, page: PickerPage, shell: &mut Shell<'_, Message>) {
+        if self.state.page == page {
+            return;
+        }
+
+        self.state.page = page;
+        self.state.open_menu = None;
+
+        if page == PickerPage::Picker {
+            self.state.contrast_target = ContrastTarget::Foreground;
+            self.state.sync_active_color();
+        }
+
+        self.refresh_overlay_layout(shell);
+        shell.request_redraw();
+    }
+
+    fn select_contrast_target(&mut self, target: ContrastTarget, shell: &mut Shell<'_, Message>) {
+        if self.state.contrast_target == target {
+            return;
+        }
+
+        self.state.contrast_target = target;
+        self.state.sync_active_color();
+        shell.request_redraw();
+    }
+
+    fn swap_contrast_colors(&mut self, shell: &mut Shell<'_, Message>) {
+        std::mem::swap(
+            &mut self.state.foreground_color,
+            &mut self.state.background_color,
+        );
+        self.state.sync_active_color();
+        self.publish_change(shell);
+        self.publish_contrast_change(shell);
+        shell.request_redraw();
+    }
+
+    fn fix_contrast_pair(&mut self, shell: &mut Shell<'_, Message>) {
+        let locked = match self.state.contrast_target {
+            ContrastTarget::Foreground => self.state.background_color,
+            ContrastTarget::Background => self.state.foreground_color,
+        };
+
+        let fixed = best_contrast_fix(self.state.color, locked);
+        self.set_color(fixed, shell);
+    }
+
     fn select_swatch_group(&mut self, index: usize, shell: &mut Shell<'_, Message>) {
         if index < self.state.swatch_groups.len() {
             self.state.active_swatch_group = index;
@@ -539,7 +846,7 @@ where
             iced::advanced::clipboard::Kind::Standard,
             color_to_hex(self.state.color),
         );
-        self.state.copied_feedback = Some((CopyTarget::Hex, Instant::now()));
+        self.set_feedback(FeedbackKind::Hex);
         shell.request_redraw();
     }
 
@@ -548,7 +855,36 @@ where
             iced::advanced::clipboard::Kind::Standard,
             format_model_value(self.state.model, self.state.color),
         );
-        self.state.copied_feedback = Some((CopyTarget::Formatted, Instant::now()));
+        self.set_feedback(FeedbackKind::Formatted);
+        shell.request_redraw();
+    }
+
+    fn request_magnifier(&mut self, target: MagnifierTarget, shell: &mut Shell<'_, Message>) {
+        let color = match target {
+            MagnifierTarget::CurrentColor => self.state.color,
+            MagnifierTarget::Foreground => self.state.foreground_color,
+            MagnifierTarget::Background => self.state.background_color,
+        };
+
+        self.publish_magnifier_request(target, color, shell);
+        shell.request_redraw();
+    }
+
+    fn paste_clipboard_color(&mut self, clipboard: &dyn Clipboard, shell: &mut Shell<'_, Message>) {
+        let Some(contents) = clipboard.read(iced::advanced::clipboard::Kind::Standard) else {
+            self.set_feedback(FeedbackKind::InvalidPaste);
+            shell.request_redraw();
+            return;
+        };
+
+        let Some(color) = parse_color_string(&contents) else {
+            self.set_feedback(FeedbackKind::InvalidPaste);
+            shell.request_redraw();
+            return;
+        };
+
+        self.set_color(color, shell);
+        self.set_feedback(FeedbackKind::Pasted);
         shell.request_redraw();
     }
 
@@ -573,7 +909,7 @@ where
         self.state.overlay_position = clamp_overlay_position(
             self.state.overlay_position,
             self.state.viewport_size,
-            overlay_size(self.state.active_group().colors.len()),
+            overlay_size(self.state.page, self.state.active_group().colors.len()),
         );
         shell.invalidate_layout();
     }
@@ -594,7 +930,7 @@ where
         self.state.overlay_position = clamp_overlay_position(
             next,
             self.state.viewport_size,
-            overlay_size(self.state.active_group().colors.len()),
+            overlay_size(self.state.page, self.state.active_group().colors.len()),
         );
         shell.invalidate_layout();
         shell.request_redraw();
@@ -607,7 +943,7 @@ where
         shell: &mut Shell<'_, Message>,
     ) -> bool {
         for channel in SliderChannel::ALL {
-            let track = slider_track_rect(bounds, channel);
+            let track = slider_track_rect(bounds, self.state.page, channel);
             if track.contains(cursor_pos) {
                 self.state.dragging_slider = Some(channel);
                 self.update_slider_drag(bounds, cursor_pos, shell);
@@ -628,7 +964,7 @@ where
             return;
         };
 
-        let track = slider_track_rect(bounds, channel);
+        let track = slider_track_rect(bounds, self.state.page, channel);
         let value = slider_value_from_cursor(track, cursor_pos.x);
         let mut color = self.state.color;
 
@@ -689,7 +1025,7 @@ where
         let visible = visible_swatches(self.state.active_group()).to_vec();
 
         for (index, color) in visible.into_iter().enumerate() {
-            if swatch_rect(bounds, index).contains(cursor_pos) {
+            if swatch_rect(bounds, self.state.page, index).contains(cursor_pos) {
                 self.set_color(color, shell);
                 return true;
             }
@@ -708,7 +1044,12 @@ where
             return false;
         };
 
-        let menu_bounds = menu_rect(bounds, menu, self.state.swatch_groups.len());
+        let menu_bounds = menu_rect(
+            bounds,
+            self.state.page,
+            menu,
+            self.state.swatch_groups.len(),
+        );
         if !menu_bounds.contains(cursor_pos) {
             return false;
         }
@@ -734,7 +1075,13 @@ where
 
     fn cursor_is_over_open_menu(&self, bounds: Rectangle, cursor_pos: Point) -> bool {
         self.state.open_menu.is_some_and(|menu| {
-            menu_rect(bounds, menu, self.state.swatch_groups.len()).contains(cursor_pos)
+            menu_rect(
+                bounds,
+                self.state.page,
+                menu,
+                self.state.swatch_groups.len(),
+            )
+            .contains(cursor_pos)
         })
     }
 }
@@ -748,8 +1095,11 @@ where
 {
     fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> Node {
         self.state.viewport_size = bounds;
-        Node::new(overlay_size(self.state.active_group().colors.len()))
-            .move_to(self.state.overlay_position)
+        Node::new(overlay_size(
+            self.state.page,
+            self.state.active_group().colors.len(),
+        ))
+        .move_to(self.state.overlay_position)
     }
 
     fn draw(
@@ -773,10 +1123,38 @@ where
             renderer,
             bounds,
             style,
+            self.state.page,
             self.state.feedback_message(),
             cursor,
         );
-        draw_preview(renderer, preview_rect(bounds), self.state.color, style);
+        match self.state.page {
+            PickerPage::Picker => {
+                draw_preview(
+                    renderer,
+                    preview_rect(bounds, self.state.page),
+                    self.state.color,
+                    style,
+                );
+            }
+            PickerPage::Contrast => {
+                draw_contrast_summary(
+                    renderer,
+                    contrast_summary_rect(bounds),
+                    self.state.foreground_color,
+                    self.state.background_color,
+                    style,
+                );
+                draw_contrast_wells(
+                    renderer,
+                    bounds,
+                    style,
+                    self.state.foreground_color,
+                    self.state.background_color,
+                    self.state.contrast_target,
+                    cursor,
+                );
+            }
+        }
         draw_controls(
             renderer,
             bounds,
@@ -784,6 +1162,7 @@ where
             self.state.color,
             self.state.model,
             cursor,
+            self.state.page,
         );
         draw_sliders(
             renderer,
@@ -792,6 +1171,7 @@ where
             self.state.color,
             self.state.model,
             cursor,
+            self.state.page,
         );
         draw_swatches(
             renderer,
@@ -801,12 +1181,14 @@ where
             self.state.active_swatch_group,
             self.state.color,
             cursor,
+            self.state.page,
         );
         if let Some(menu) = self.state.open_menu {
             draw_menu(
                 renderer,
                 bounds,
                 style,
+                self.state.page,
                 menu,
                 self.state.model,
                 &self.state.swatch_groups,
@@ -842,9 +1224,23 @@ where
 
                 let header = header_rect(bounds);
                 let close = close_button_rect(header);
+                let picker_tab = page_button_rect(header, PickerPage::Picker);
+                let contrast_tab = page_button_rect(header, PickerPage::Contrast);
 
                 if close.contains(cursor_pos) {
                     self.publish_close(shell);
+                    shell.capture_event();
+                    return;
+                }
+
+                if picker_tab.contains(cursor_pos) {
+                    self.set_page(PickerPage::Picker, shell);
+                    shell.capture_event();
+                    return;
+                }
+
+                if contrast_tab.contains(cursor_pos) {
+                    self.set_page(PickerPage::Contrast, shell);
                     shell.capture_event();
                     return;
                 }
@@ -861,24 +1257,74 @@ where
                     return;
                 }
 
-                if hex_value_rect(bounds).contains(cursor_pos) {
+                if hex_value_rect(bounds, self.state.page).contains(cursor_pos) {
                     self.close_menu(shell);
                     self.copy_hex(clipboard, shell);
                     shell.capture_event();
                     return;
                 }
 
-                if copy_button_rect(bounds).contains(cursor_pos) {
+                if copy_button_rect(bounds, self.state.page).contains(cursor_pos) {
                     self.close_menu(shell);
                     self.copy_formatted(clipboard, shell);
                     shell.capture_event();
                     return;
                 }
 
-                if model_button_rect(bounds).contains(cursor_pos) {
+                if model_button_rect(bounds, self.state.page).contains(cursor_pos) {
                     self.toggle_menu(MenuKind::Model, shell);
                     shell.capture_event();
                     return;
+                }
+
+                if self.state.page == PickerPage::Contrast {
+                    if contrast_well_magnifier_rect(bounds, ContrastTarget::Foreground)
+                        .contains(cursor_pos)
+                    {
+                        self.close_menu(shell);
+                        self.select_contrast_target(ContrastTarget::Foreground, shell);
+                        self.request_magnifier(MagnifierTarget::Foreground, shell);
+                        shell.capture_event();
+                        return;
+                    }
+
+                    if contrast_well_magnifier_rect(bounds, ContrastTarget::Background)
+                        .contains(cursor_pos)
+                    {
+                        self.close_menu(shell);
+                        self.select_contrast_target(ContrastTarget::Background, shell);
+                        self.request_magnifier(MagnifierTarget::Background, shell);
+                        shell.capture_event();
+                        return;
+                    }
+
+                    if contrast_well_rect(bounds, ContrastTarget::Foreground).contains(cursor_pos) {
+                        self.close_menu(shell);
+                        self.select_contrast_target(ContrastTarget::Foreground, shell);
+                        shell.capture_event();
+                        return;
+                    }
+
+                    if contrast_well_rect(bounds, ContrastTarget::Background).contains(cursor_pos) {
+                        self.close_menu(shell);
+                        self.select_contrast_target(ContrastTarget::Background, shell);
+                        shell.capture_event();
+                        return;
+                    }
+
+                    if contrast_swap_rect(bounds).contains(cursor_pos) {
+                        self.close_menu(shell);
+                        self.swap_contrast_colors(shell);
+                        shell.capture_event();
+                        return;
+                    }
+
+                    if contrast_fix_rect(bounds).contains(cursor_pos) {
+                        self.close_menu(shell);
+                        self.fix_contrast_pair(shell);
+                        shell.capture_event();
+                        return;
+                    }
                 }
 
                 if self.handle_slider_press(bounds, cursor_pos, shell) {
@@ -887,7 +1333,7 @@ where
                     return;
                 }
 
-                if swatch_group_label_rect(bounds).contains(cursor_pos) {
+                if swatch_group_label_rect(bounds, self.state.page).contains(cursor_pos) {
                     self.toggle_menu(MenuKind::SwatchGroup, shell);
                     shell.capture_event();
                     return;
@@ -899,8 +1345,12 @@ where
                     return;
                 }
 
-                if add_swatch_rect(bounds, visible_swatch_count(self.state.active_group()))
-                    .contains(cursor_pos)
+                if add_swatch_rect(
+                    bounds,
+                    self.state.page,
+                    visible_swatch_count(self.state.active_group()),
+                )
+                .contains(cursor_pos)
                 {
                     self.close_menu(shell);
                     self.add_current_swatch(shell);
@@ -936,15 +1386,32 @@ where
                 }
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
-                key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                key,
+                physical_key,
+                modifiers,
                 ..
             }) => {
-                if self.state.open_menu.is_some() {
-                    self.close_menu(shell);
-                } else {
-                    self.publish_close(shell);
+                if matches!(
+                    key.as_ref(),
+                    keyboard::Key::Named(keyboard::key::Named::Escape)
+                ) {
+                    if self.state.open_menu.is_some() {
+                        self.close_menu(shell);
+                    } else {
+                        self.publish_close(shell);
+                    }
+                    shell.capture_event();
+                    return;
                 }
-                shell.capture_event();
+
+                if key.to_latin(*physical_key) == Some('v')
+                    && modifiers.command()
+                    && !modifiers.alt()
+                {
+                    self.close_menu(shell);
+                    self.paste_clipboard_color(clipboard, shell);
+                    shell.capture_event();
+                }
             }
             _ => {}
         }
@@ -972,19 +1439,33 @@ where
         }
 
         let header = header_rect(bounds);
+        let picker_tab = page_button_rect(header, PickerPage::Picker);
+        let contrast_tab = page_button_rect(header, PickerPage::Contrast);
         if close_button_rect(header).contains(cursor_pos) {
+            return mouse::Interaction::Pointer;
+        }
+        if picker_tab.contains(cursor_pos) || contrast_tab.contains(cursor_pos) {
             return mouse::Interaction::Pointer;
         }
         if header.contains(cursor_pos) {
             return mouse::Interaction::Grab;
         }
 
-        if hex_value_rect(bounds).contains(cursor_pos)
-            || model_button_rect(bounds).contains(cursor_pos)
-            || copy_button_rect(bounds).contains(cursor_pos)
-            || swatch_group_label_rect(bounds).contains(cursor_pos)
-            || add_swatch_rect(bounds, visible_swatch_count(self.state.active_group()))
-                .contains(cursor_pos)
+        if hex_value_rect(bounds, self.state.page).contains(cursor_pos)
+            || model_button_rect(bounds, self.state.page).contains(cursor_pos)
+            || copy_button_rect(bounds, self.state.page).contains(cursor_pos)
+            || (self.state.page == PickerPage::Contrast
+                && (contrast_well_rect(bounds, ContrastTarget::Foreground).contains(cursor_pos)
+                    || contrast_well_rect(bounds, ContrastTarget::Background).contains(cursor_pos)
+                    || contrast_swap_rect(bounds).contains(cursor_pos)
+                    || contrast_fix_rect(bounds).contains(cursor_pos)))
+            || swatch_group_label_rect(bounds, self.state.page).contains(cursor_pos)
+            || add_swatch_rect(
+                bounds,
+                self.state.page,
+                visible_swatch_count(self.state.active_group()),
+            )
+            .contains(cursor_pos)
         {
             return mouse::Interaction::Pointer;
         }
@@ -995,13 +1476,13 @@ where
 
         if SliderChannel::ALL
             .into_iter()
-            .any(|channel| slider_track_rect(bounds, channel).contains(cursor_pos))
+            .any(|channel| slider_track_rect(bounds, self.state.page, channel).contains(cursor_pos))
         {
             return mouse::Interaction::Pointer;
         }
 
         if (0..visible_swatch_count(self.state.active_group()))
-            .any(|index| swatch_rect(bounds, index).contains(cursor_pos))
+            .any(|index| swatch_rect(bounds, self.state.page, index).contains(cursor_pos))
         {
             return mouse::Interaction::Pointer;
         }
@@ -1029,6 +1510,7 @@ fn draw_header<Renderer>(
     renderer: &mut Renderer,
     bounds: Rectangle,
     style: Style,
+    page: PickerPage,
     feedback: Option<&'static str>,
     cursor: mouse::Cursor,
 ) where
@@ -1071,6 +1553,47 @@ fn draw_header<Renderer>(
     );
 
     let close_bounds = close_button_rect(header);
+    let picker_tab = page_button_rect(header, PickerPage::Picker);
+    let contrast_tab = page_button_rect(header, PickerPage::Contrast);
+
+    for (tab_page, rect) in [
+        (PickerPage::Picker, picker_tab),
+        (PickerPage::Contrast, contrast_tab),
+    ] {
+        let active = page == tab_page;
+        let hovered = cursor.is_over(rect);
+
+        if active || hovered {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: rect,
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 9.0.into(),
+                    },
+                    shadow: Shadow::default(),
+                    snap: true,
+                },
+                if active {
+                    style.control_hover_background
+                } else {
+                    Color::from_rgba(
+                        style.control_hover_background.r,
+                        style.control_hover_background.g,
+                        style.control_hover_background.b,
+                        0.55,
+                    )
+                },
+            );
+        }
+
+        match tab_page {
+            PickerPage::Picker => draw_picker_page_icon(renderer, rect, style.text_color),
+            PickerPage::Contrast => draw_contrast_page_icon(renderer, rect, style.text_color),
+        }
+    }
+
     if cursor.is_over(close_bounds) {
         renderer.fill_quad(
             renderer::Quad {
@@ -1100,7 +1623,7 @@ fn draw_header<Renderer>(
         let text_bounds = Rectangle {
             x: header.x + 18.0,
             y: header.y,
-            width: header.width - close_bounds.width - 36.0,
+            width: picker_tab.x - header.x - 26.0,
             height: header.height,
         };
         draw_text(
@@ -1129,6 +1652,257 @@ where
     );
 }
 
+fn draw_contrast_summary<Renderer>(
+    renderer: &mut Renderer,
+    bounds: Rectangle,
+    foreground: Color,
+    background: Color,
+    style: Style,
+) where
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+{
+    let info = ContrastInfo::new(foreground, background, ContrastTarget::Foreground);
+
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds,
+            border: style.preview_border,
+            shadow: Shadow::default(),
+            snap: true,
+        },
+        background,
+    );
+
+    draw_text_with_font(
+        renderer,
+        Rectangle {
+            x: bounds.x + 24.0,
+            y: bounds.y + 10.0,
+            width: bounds.width * 0.45,
+            height: 38.0,
+        },
+        &format!("{:.1}", info.ratio),
+        21.0,
+        foreground,
+        text::Alignment::Left,
+        bold_font(),
+    );
+    draw_text_with_font(
+        renderer,
+        Rectangle {
+            x: bounds.x + 24.0,
+            y: bounds.y + 42.0,
+            width: bounds.width * 0.45,
+            height: 24.0,
+        },
+        info.rating,
+        11.0,
+        foreground,
+        text::Alignment::Left,
+        bold_font(),
+    );
+    draw_text_with_font(
+        renderer,
+        Rectangle {
+            x: bounds.x + bounds.width * 0.55,
+            y: bounds.y + 16.0,
+            width: bounds.width * 0.25,
+            height: 34.0,
+        },
+        info.grade.label(),
+        18.0,
+        foreground,
+        text::Alignment::Right,
+        bold_font(),
+    );
+}
+
+fn draw_contrast_wells<Renderer>(
+    renderer: &mut Renderer,
+    bounds: Rectangle,
+    style: Style,
+    foreground: Color,
+    background: Color,
+    active_target: ContrastTarget,
+    cursor: mouse::Cursor,
+) where
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+{
+    for (target, color) in [
+        (ContrastTarget::Foreground, foreground),
+        (ContrastTarget::Background, background),
+    ] {
+        let rect = contrast_well_rect(bounds, target);
+        let magnifier = contrast_well_magnifier_rect(bounds, target);
+        let active = active_target == target;
+        let hovered = cursor.is_over(rect);
+        let magnifier_hovered = cursor.is_over(magnifier);
+
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: rect,
+                border: Border {
+                    color: if active {
+                        style.selection_ring
+                    } else {
+                        style.control_border.color
+                    },
+                    width: if active { 2.0 } else { 1.0 },
+                    radius: 10.0.into(),
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            if hovered {
+                style.control_hover_background
+            } else {
+                style.control_background
+            },
+        );
+
+        let swatch = Rectangle {
+            x: rect.x + 4.0,
+            y: rect.y + 4.0,
+            width: (magnifier.x - rect.x - 6.0).max(0.0),
+            height: rect.height - 8.0,
+        };
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: swatch,
+                border: Border {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.14),
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            color,
+        );
+        draw_text_with_font(
+            renderer,
+            Rectangle {
+                x: swatch.x + 10.0,
+                y: swatch.y,
+                width: swatch.width - 16.0,
+                height: swatch.height,
+            },
+            match target {
+                ContrastTarget::Foreground => "FG",
+                ContrastTarget::Background => "BG",
+            },
+            11.0,
+            contrasting_text_color(color),
+            text::Alignment::Left,
+            bold_font(),
+        );
+
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: magnifier,
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 9.0.into(),
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            if magnifier_hovered {
+                style.control_hover_background
+            } else {
+                Color::TRANSPARENT
+            },
+        );
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: Rectangle {
+                    x: magnifier.x,
+                    y: magnifier.y + 7.0,
+                    width: 1.0,
+                    height: (magnifier.height - 14.0).max(0.0),
+                },
+                border: Border::default(),
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            Color::from_rgba(0.0, 0.0, 0.0, 0.10),
+        );
+        draw_magnifier_icon(
+            renderer,
+            Rectangle {
+                x: magnifier.x + (magnifier.width - 18.0) / 2.0,
+                y: magnifier.y + (magnifier.height - 18.0) / 2.0,
+                width: 18.0,
+                height: 18.0,
+            },
+            if magnifier_hovered {
+                style.text_color
+            } else {
+                style.muted_text_color
+            },
+        );
+    }
+
+    let swap_rect = contrast_swap_rect(bounds);
+    if cursor.is_over(swap_rect) {
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: swap_rect,
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 8.0.into(),
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            style.control_hover_background,
+        );
+    }
+    draw_text(
+        renderer,
+        swap_rect,
+        "<>",
+        13.0,
+        style.muted_text_color,
+        text::Alignment::Center,
+    );
+
+    let fix_rect = contrast_fix_rect(bounds);
+    let fix_enabled = contrast_grade(contrast_ratio(foreground, background)) == ContrastGrade::Fail;
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: fix_rect,
+            border: style.control_border,
+            shadow: Shadow::default(),
+            snap: true,
+        },
+        if fix_enabled && cursor.is_over(fix_rect) {
+            style.control_hover_background
+        } else {
+            style.control_background
+        },
+    );
+    draw_text_with_font(
+        renderer,
+        fix_rect,
+        "Fix",
+        12.0,
+        if fix_enabled {
+            style.text_color
+        } else {
+            style.muted_text_color
+        },
+        text::Alignment::Center,
+        if fix_enabled {
+            bold_font()
+        } else {
+            iced::Font::default()
+        },
+    );
+}
+
 fn draw_controls<Renderer>(
     renderer: &mut Renderer,
     bounds: Rectangle,
@@ -1136,12 +1910,13 @@ fn draw_controls<Renderer>(
     color: Color,
     model: ColorModel,
     cursor: mouse::Cursor,
+    page: PickerPage,
 ) where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
 {
-    let hex_rect = hex_value_rect(bounds);
-    let model_rect = model_button_rect(bounds);
-    let copy_rect = copy_button_rect(bounds);
+    let hex_rect = hex_value_rect(bounds, page);
+    let model_rect = model_button_rect(bounds, page);
+    let copy_rect = copy_button_rect(bounds, page);
 
     draw_text_with_font(
         renderer,
@@ -1207,17 +1982,19 @@ fn draw_sliders<Renderer>(
     color: Color,
     model: ColorModel,
     cursor: mouse::Cursor,
+    page: PickerPage,
 ) where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
 {
     for channel in SliderChannel::ALL {
-        let row = slider_row_rect(bounds, channel);
-        let track_rect = slider_track_rect(bounds, channel);
-        let value_rect = slider_value_rect(bounds, channel);
+        let row = slider_row_rect(bounds, page, channel);
+        let track_rect = slider_track_rect(bounds, page, channel);
+        let value_rect = slider_value_rect(bounds, page, channel);
 
         draw_slider_track(renderer, track_rect, style, color, model, channel);
 
         let knob_x = slider_knob_center_x(track_rect, slider_value(model, color, channel));
+        let knob_color = Color { a: 1.0, ..color };
         let knob_bounds = Rectangle {
             x: knob_x - SLIDER_KNOB_RADIUS,
             y: row.center_y() - SLIDER_KNOB_RADIUS,
@@ -1229,9 +2006,9 @@ fn draw_sliders<Renderer>(
             renderer::Quad {
                 bounds: knob_bounds,
                 border: Border {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.18),
-                    width: 1.0,
-                    radius: 7.0.into(),
+                    color: Color::WHITE,
+                    width: 2.0,
+                    radius: SLIDER_KNOB_RADIUS.into(),
                 },
                 shadow: Shadow {
                     color: Color::from_rgba(0.0, 0.0, 0.0, 0.18),
@@ -1240,7 +2017,7 @@ fn draw_sliders<Renderer>(
                 },
                 snap: true,
             },
-            Color::WHITE,
+            knob_color,
         );
 
         draw_text(
@@ -1300,7 +2077,7 @@ fn draw_checkerboard<Renderer>(renderer: &mut Renderer, bounds: Rectangle)
 where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
 {
-    let inset = 2.0;
+    let inset = 1.0;
     let bounds = Rectangle {
         x: bounds.x + inset,
         y: bounds.y + inset,
@@ -1324,8 +2101,8 @@ where
                     bounds: Rectangle {
                         x: bounds.x + col as f32 * cell,
                         y: bounds.y + row as f32 * cell,
-                        width: cell.min(bounds.width),
-                        height: cell.min(bounds.height),
+                        width: (bounds.width - col as f32 * cell).min(cell).max(0.0),
+                        height: (bounds.height - row as f32 * cell).min(cell).max(0.0),
                     },
                     border: Border::default(),
                     shadow: Shadow::default(),
@@ -1345,13 +2122,14 @@ fn draw_swatches<Renderer>(
     active_group: usize,
     color: Color,
     cursor: mouse::Cursor,
+    page: PickerPage,
 ) where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
 {
-    let label_rect = swatch_group_label_rect(bounds);
+    let label_rect = swatch_group_label_rect(bounds, page);
     let active = &groups[active_group];
     let visible = visible_swatches(active);
-    let add_rect = add_swatch_rect(bounds, visible.len());
+    let add_rect = add_swatch_rect(bounds, page, visible.len());
 
     draw_text_with_font(
         renderer,
@@ -1382,7 +2160,7 @@ fn draw_swatches<Renderer>(
     );
 
     for (index, swatch) in visible.iter().enumerate() {
-        let rect = swatch_rect(bounds, index);
+        let rect = swatch_rect(bounds, page, index);
         let selected = same_color(*swatch, color);
         let hovered = cursor.is_over(rect);
 
@@ -1435,6 +2213,7 @@ fn draw_menu<Renderer>(
     renderer: &mut Renderer,
     bounds: Rectangle,
     style: Style,
+    page: PickerPage,
     menu: MenuKind,
     active_model: ColorModel,
     swatch_groups: &[SwatchGroup],
@@ -1443,7 +2222,7 @@ fn draw_menu<Renderer>(
 ) where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
 {
-    let menu_bounds = menu_rect(bounds, menu, swatch_groups.len());
+    let menu_bounds = menu_rect(bounds, page, menu, swatch_groups.len());
     renderer.fill_quad(
         renderer::Quad {
             bounds: menu_bounds,
@@ -1621,6 +2400,184 @@ where
     }
 }
 
+fn draw_magnifier_icon<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color)
+where
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+{
+    // A compact, pixel-stepped eyedropper silhouette that stays readable at small sizes.
+    let pixels = [
+        Rectangle {
+            x: bounds.x + 10.0,
+            y: bounds.y + 2.0,
+            width: 4.0,
+            height: 4.0,
+        },
+        Rectangle {
+            x: bounds.x + 8.0,
+            y: bounds.y + 5.0,
+            width: 3.0,
+            height: 3.0,
+        },
+        Rectangle {
+            x: bounds.x + 6.0,
+            y: bounds.y + 8.0,
+            width: 3.0,
+            height: 3.0,
+        },
+        Rectangle {
+            x: bounds.x + 4.0,
+            y: bounds.y + 10.0,
+            width: 3.0,
+            height: 3.0,
+        },
+        Rectangle {
+            x: bounds.x + 3.0,
+            y: bounds.y + 12.0,
+            width: 4.0,
+            height: 3.0,
+        },
+        Rectangle {
+            x: bounds.x + 2.0,
+            y: bounds.y + 15.0,
+            width: 2.0,
+            height: 2.0,
+        },
+    ];
+
+    for pixel in pixels {
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: pixel,
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 1.5.into(),
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            color,
+        );
+    }
+}
+
+fn draw_picker_page_icon<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color)
+where
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+{
+    let tracks = [
+        (
+            bounds.y + 7.0,
+            bounds.x + 5.0,
+            bounds.width - 10.0,
+            bounds.x + 9.0,
+        ),
+        (
+            bounds.y + 14.0,
+            bounds.x + 5.0,
+            bounds.width - 10.0,
+            bounds.x + 15.0,
+        ),
+        (
+            bounds.y + 21.0,
+            bounds.x + 5.0,
+            bounds.width - 10.0,
+            bounds.x + 11.0,
+        ),
+    ];
+
+    for (y, x, width, knob_x) in tracks {
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: Rectangle {
+                    x,
+                    y,
+                    width,
+                    height: 1.5,
+                },
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 1.0.into(),
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            color,
+        );
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: Rectangle {
+                    x: knob_x,
+                    y: y - 2.0,
+                    width: 5.0,
+                    height: 5.0,
+                },
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 2.5.into(),
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            color,
+        );
+    }
+}
+
+fn draw_contrast_page_icon<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color)
+where
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+{
+    let pill = Rectangle {
+        x: bounds.x + 6.0,
+        y: bounds.y + 5.0,
+        width: bounds.width - 12.0,
+        height: bounds.height - 10.0,
+    };
+
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: pill,
+            border: Border {
+                color,
+                width: 1.0,
+                radius: (pill.height / 2.0).into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        },
+        Color::WHITE,
+    );
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: Rectangle {
+                x: pill.x,
+                y: pill.y,
+                width: pill.width / 2.0,
+                height: pill.height,
+            },
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: (pill.height / 2.0).into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        },
+        color,
+    );
+}
+
+fn contrasting_text_color(color: Color) -> Color {
+    if relative_luminance(color) > 0.45 {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.78)
+    } else {
+        Color::WHITE
+    }
+}
+
 fn bold_font() -> iced::Font {
     iced::Font {
         weight: iced::font::Weight::Bold,
@@ -1674,13 +2631,20 @@ fn swatch_grid_height(color_count: usize) -> f32 {
     rows * SWATCH_SIZE + (rows - 1.0).max(0.0) * SWATCH_GAP
 }
 
-fn overlay_size(color_count: usize) -> Size {
-    Size::new(PANEL_WIDTH, overlay_height(color_count))
+fn top_section_height(page: PickerPage) -> f32 {
+    match page {
+        PickerPage::Picker => PREVIEW_HEIGHT,
+        PickerPage::Contrast => CONTRAST_SUMMARY_HEIGHT + CONTRAST_WELLS_HEIGHT + 12.0,
+    }
 }
 
-fn overlay_height(color_count: usize) -> f32 {
+fn overlay_size(page: PickerPage, color_count: usize) -> Size {
+    Size::new(PANEL_WIDTH, overlay_height(page, color_count))
+}
+
+fn overlay_height(page: PickerPage, color_count: usize) -> f32 {
     HEADER_HEIGHT
-        + PREVIEW_HEIGHT
+        + top_section_height(page)
         + CONTENT_PADDING_TOP
         + CONTROL_ROW_HEIGHT
         + 18.0
@@ -1708,17 +2672,35 @@ fn header_rect(bounds: Rectangle) -> Rectangle {
     }
 }
 
-fn preview_rect(bounds: Rectangle) -> Rectangle {
+fn preview_rect(bounds: Rectangle, page: PickerPage) -> Rectangle {
     Rectangle {
         x: bounds.x + 1.0,
         y: bounds.y + HEADER_HEIGHT,
         width: (bounds.width - 2.0).max(0.0),
-        height: PREVIEW_HEIGHT,
+        height: top_section_height(page),
     }
 }
 
-fn content_rect(bounds: Rectangle) -> Rectangle {
-    let top = bounds.y + HEADER_HEIGHT + PREVIEW_HEIGHT + CONTENT_PADDING_TOP;
+fn contrast_summary_rect(bounds: Rectangle) -> Rectangle {
+    Rectangle {
+        x: bounds.x + 1.0,
+        y: bounds.y + HEADER_HEIGHT,
+        width: (bounds.width - 2.0).max(0.0),
+        height: CONTRAST_SUMMARY_HEIGHT,
+    }
+}
+
+fn contrast_wells_row_rect(bounds: Rectangle) -> Rectangle {
+    Rectangle {
+        x: bounds.x + CONTENT_PADDING_X,
+        y: bounds.y + HEADER_HEIGHT + CONTRAST_SUMMARY_HEIGHT + 12.0,
+        width: bounds.width - CONTENT_PADDING_X * 2.0,
+        height: CONTRAST_WELLS_HEIGHT,
+    }
+}
+
+fn content_rect(bounds: Rectangle, page: PickerPage) -> Rectangle {
+    let top = bounds.y + HEADER_HEIGHT + top_section_height(page) + CONTENT_PADDING_TOP;
     Rectangle {
         x: bounds.x + CONTENT_PADDING_X,
         y: top,
@@ -1736,8 +2718,81 @@ fn close_button_rect(header: Rectangle) -> Rectangle {
     }
 }
 
-fn control_row_rect(bounds: Rectangle) -> Rectangle {
-    let content = content_rect(bounds);
+fn page_button_rect(header: Rectangle, page: PickerPage) -> Rectangle {
+    let close = close_button_rect(header);
+    let offset = match page {
+        PickerPage::Contrast => 1.0,
+        PickerPage::Picker => 2.0,
+    };
+
+    Rectangle {
+        x: close.x - offset * (HEADER_PAGE_BUTTON_SIZE + 8.0),
+        y: header.y + (header.height - HEADER_PAGE_BUTTON_SIZE) / 2.0,
+        width: HEADER_PAGE_BUTTON_SIZE,
+        height: HEADER_PAGE_BUTTON_SIZE,
+    }
+}
+
+fn contrast_well_rect(bounds: Rectangle, target: ContrastTarget) -> Rectangle {
+    let row = contrast_wells_row_rect(bounds);
+    let gap = 8.0;
+    let swap_w = 28.0;
+    let fix_w = 46.0;
+    let well_w = (row.width - swap_w - fix_w - gap * 3.0) / 2.0;
+
+    match target {
+        ContrastTarget::Foreground => Rectangle {
+            x: row.x,
+            y: row.y,
+            width: well_w,
+            height: row.height,
+        },
+        ContrastTarget::Background => Rectangle {
+            x: row.x + well_w + gap + swap_w + gap,
+            y: row.y,
+            width: well_w,
+            height: row.height,
+        },
+    }
+}
+
+fn contrast_well_magnifier_rect(bounds: Rectangle, target: ContrastTarget) -> Rectangle {
+    let rect = contrast_well_rect(bounds, target);
+
+    Rectangle {
+        x: rect.x + rect.width - 34.0,
+        y: rect.y + 2.0,
+        width: 30.0,
+        height: rect.height - 4.0,
+    }
+}
+
+fn contrast_swap_rect(bounds: Rectangle) -> Rectangle {
+    let fg = contrast_well_rect(bounds, ContrastTarget::Foreground);
+    let bg = contrast_well_rect(bounds, ContrastTarget::Background);
+
+    Rectangle {
+        x: fg.x + fg.width + 8.0,
+        y: fg.y + (fg.height - 24.0) / 2.0,
+        width: bg.x - (fg.x + fg.width) - 16.0,
+        height: 24.0,
+    }
+}
+
+fn contrast_fix_rect(bounds: Rectangle) -> Rectangle {
+    let bg = contrast_well_rect(bounds, ContrastTarget::Background);
+    let row = contrast_wells_row_rect(bounds);
+
+    Rectangle {
+        x: bg.x + bg.width + 8.0,
+        y: row.y + (row.height - 28.0) / 2.0,
+        width: row.x + row.width - (bg.x + bg.width + 8.0),
+        height: 28.0,
+    }
+}
+
+fn control_row_rect(bounds: Rectangle, page: PickerPage) -> Rectangle {
+    let content = content_rect(bounds, page);
     Rectangle {
         x: content.x,
         y: content.y,
@@ -1746,8 +2801,8 @@ fn control_row_rect(bounds: Rectangle) -> Rectangle {
     }
 }
 
-fn hex_value_rect(bounds: Rectangle) -> Rectangle {
-    let row = control_row_rect(bounds);
+fn hex_value_rect(bounds: Rectangle, page: PickerPage) -> Rectangle {
+    let row = control_row_rect(bounds, page);
     let model_w = 58.0;
     let copy_w = 28.0;
     Rectangle {
@@ -1758,9 +2813,9 @@ fn hex_value_rect(bounds: Rectangle) -> Rectangle {
     }
 }
 
-fn model_button_rect(bounds: Rectangle) -> Rectangle {
-    let row = control_row_rect(bounds);
-    let hex = hex_value_rect(bounds);
+fn model_button_rect(bounds: Rectangle, page: PickerPage) -> Rectangle {
+    let row = control_row_rect(bounds, page);
+    let hex = hex_value_rect(bounds, page);
     Rectangle {
         x: hex.x + hex.width + CONTROL_GAP,
         y: row.y,
@@ -1769,8 +2824,8 @@ fn model_button_rect(bounds: Rectangle) -> Rectangle {
     }
 }
 
-fn copy_button_rect(bounds: Rectangle) -> Rectangle {
-    let model = model_button_rect(bounds);
+fn copy_button_rect(bounds: Rectangle, page: PickerPage) -> Rectangle {
+    let model = model_button_rect(bounds, page);
     Rectangle {
         x: model.x + model.width + CONTROL_GAP,
         y: model.y,
@@ -1779,22 +2834,22 @@ fn copy_button_rect(bounds: Rectangle) -> Rectangle {
     }
 }
 
-fn sliders_top(bounds: Rectangle) -> f32 {
-    control_row_rect(bounds).y + CONTROL_ROW_HEIGHT + 18.0
+fn sliders_top(bounds: Rectangle, page: PickerPage) -> f32 {
+    control_row_rect(bounds, page).y + CONTROL_ROW_HEIGHT + 18.0
 }
 
-fn slider_row_rect(bounds: Rectangle, channel: SliderChannel) -> Rectangle {
-    let content = content_rect(bounds);
+fn slider_row_rect(bounds: Rectangle, page: PickerPage, channel: SliderChannel) -> Rectangle {
+    let content = content_rect(bounds, page);
     Rectangle {
         x: content.x,
-        y: sliders_top(bounds) + channel.index() as f32 * (SLIDER_ROW_HEIGHT + SLIDER_GAP),
+        y: sliders_top(bounds, page) + channel.index() as f32 * (SLIDER_ROW_HEIGHT + SLIDER_GAP),
         width: content.width,
         height: SLIDER_ROW_HEIGHT,
     }
 }
 
-fn slider_track_rect(bounds: Rectangle, channel: SliderChannel) -> Rectangle {
-    let row = slider_row_rect(bounds, channel);
+fn slider_track_rect(bounds: Rectangle, page: PickerPage, channel: SliderChannel) -> Rectangle {
+    let row = slider_row_rect(bounds, page, channel);
     Rectangle {
         x: row.x + LABEL_WIDTH,
         y: row.y + (row.height - SLIDER_TRACK_HEIGHT) / 2.0,
@@ -1803,8 +2858,8 @@ fn slider_track_rect(bounds: Rectangle, channel: SliderChannel) -> Rectangle {
     }
 }
 
-fn slider_value_rect(bounds: Rectangle, channel: SliderChannel) -> Rectangle {
-    let row = slider_row_rect(bounds, channel);
+fn slider_value_rect(bounds: Rectangle, page: PickerPage, channel: SliderChannel) -> Rectangle {
+    let row = slider_row_rect(bounds, page, channel);
     Rectangle {
         x: row.x + row.width - VALUE_WIDTH,
         y: row.y,
@@ -1813,9 +2868,9 @@ fn slider_value_rect(bounds: Rectangle, channel: SliderChannel) -> Rectangle {
     }
 }
 
-fn swatch_group_label_rect(bounds: Rectangle) -> Rectangle {
-    let content = content_rect(bounds);
-    let last_slider = slider_row_rect(bounds, SliderChannel::Alpha);
+fn swatch_group_label_rect(bounds: Rectangle, page: PickerPage) -> Rectangle {
+    let content = content_rect(bounds, page);
+    let last_slider = slider_row_rect(bounds, page, SliderChannel::Alpha);
     Rectangle {
         x: content.x,
         y: last_slider.y + last_slider.height + 18.0,
@@ -1824,33 +2879,38 @@ fn swatch_group_label_rect(bounds: Rectangle) -> Rectangle {
     }
 }
 
-fn swatch_row_y(bounds: Rectangle) -> f32 {
-    swatch_group_label_rect(bounds).y + SWATCH_HEADER_HEIGHT + SWATCH_TOP_MARGIN
+fn swatch_row_y(bounds: Rectangle, page: PickerPage) -> f32 {
+    swatch_group_label_rect(bounds, page).y + SWATCH_HEADER_HEIGHT + SWATCH_TOP_MARGIN
 }
 
-fn swatch_rect(bounds: Rectangle, index: usize) -> Rectangle {
-    let content = content_rect(bounds);
+fn swatch_rect(bounds: Rectangle, page: PickerPage, index: usize) -> Rectangle {
+    let content = content_rect(bounds, page);
     let columns = swatch_columns();
     let column = index % columns;
     let row = index / columns;
 
     Rectangle {
         x: content.x + column as f32 * (SWATCH_SIZE + SWATCH_GAP),
-        y: swatch_row_y(bounds) + row as f32 * (SWATCH_SIZE + SWATCH_GAP),
+        y: swatch_row_y(bounds, page) + row as f32 * (SWATCH_SIZE + SWATCH_GAP),
         width: SWATCH_SIZE,
         height: SWATCH_SIZE,
     }
 }
 
-fn add_swatch_rect(bounds: Rectangle, visible_count: usize) -> Rectangle {
-    swatch_rect(bounds, visible_count)
+fn add_swatch_rect(bounds: Rectangle, page: PickerPage, visible_count: usize) -> Rectangle {
+    swatch_rect(bounds, page, visible_count)
 }
 
-fn menu_rect(bounds: Rectangle, menu: MenuKind, swatch_group_count: usize) -> Rectangle {
+fn menu_rect(
+    bounds: Rectangle,
+    page: PickerPage,
+    menu: MenuKind,
+    swatch_group_count: usize,
+) -> Rectangle {
     let item_height = 28.0;
     match menu {
         MenuKind::Model => {
-            let trigger = model_button_rect(bounds);
+            let trigger = model_button_rect(bounds, page);
             let width = 92.0;
             Rectangle {
                 x: trigger.x + trigger.width - width - 6.0,
@@ -1860,7 +2920,7 @@ fn menu_rect(bounds: Rectangle, menu: MenuKind, swatch_group_count: usize) -> Re
             }
         }
         MenuKind::SwatchGroup => {
-            let trigger = swatch_group_label_rect(bounds);
+            let trigger = swatch_group_label_rect(bounds, page);
             let height = item_height * swatch_group_count as f32 + 8.0;
             Rectangle {
                 x: trigger.x - 10.0,
@@ -1878,6 +2938,52 @@ fn menu_item_rect(menu_bounds: Rectangle, index: usize) -> Rectangle {
         y: menu_bounds.y + 4.0 + index as f32 * 28.0,
         width: menu_bounds.width - 8.0,
         height: 24.0,
+    }
+}
+
+fn contrast_ratio(foreground: Color, background: Color) -> f32 {
+    let lighter = relative_luminance(foreground).max(relative_luminance(background));
+    let darker = relative_luminance(foreground).min(relative_luminance(background));
+
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+fn contrast_grade(ratio: f32) -> ContrastGrade {
+    if ratio >= 7.0 {
+        ContrastGrade::Aaa
+    } else if ratio >= 4.5 {
+        ContrastGrade::Aa
+    } else {
+        ContrastGrade::Fail
+    }
+}
+
+fn relative_luminance(color: Color) -> f32 {
+    fn channel(value: f32) -> f32 {
+        if value <= 0.03928 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    (0.2126 * channel(color.r)) + (0.7152 * channel(color.g)) + (0.0722 * channel(color.b))
+}
+
+fn best_contrast_fix(current: Color, locked: Color) -> Color {
+    if contrast_grade(contrast_ratio(current, locked)) != ContrastGrade::Fail {
+        return current;
+    }
+
+    let black = Color::BLACK;
+    let white = Color::WHITE;
+    let black_ratio = contrast_ratio(black, locked);
+    let white_ratio = contrast_ratio(white, locked);
+
+    if black_ratio > white_ratio {
+        black
+    } else {
+        white
     }
 }
 
@@ -2003,6 +3109,174 @@ fn color_to_hex(color: Color) -> String {
     } else {
         format!("#{r:02X}{g:02X}{b:02X}{a:02X}")
     }
+}
+
+/// Parses a pasted color string into an [`iced::Color`].
+///
+/// Supported formats include hex (`#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`),
+/// `rgb/rgba`, `hsl/hsla`, and `hsv/hsva`/`hsb/hsba`.
+pub fn parse_color_string(input: &str) -> Option<Color> {
+    let trimmed = input.trim();
+
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    parse_hex_color(trimmed).or_else(|| parse_function_color(trimmed))
+}
+
+fn parse_hex_color(input: &str) -> Option<Color> {
+    let hex = input
+        .strip_prefix('#')
+        .or_else(|| input.strip_prefix("0x"))
+        .or_else(|| input.strip_prefix("0X"))
+        .unwrap_or(input)
+        .trim();
+
+    let expanded = match hex.len() {
+        3 => {
+            let mut out = String::with_capacity(6);
+            for ch in hex.chars() {
+                out.push(ch);
+                out.push(ch);
+            }
+            out
+        }
+        4 => {
+            let mut out = String::with_capacity(8);
+            for ch in hex.chars() {
+                out.push(ch);
+                out.push(ch);
+            }
+            out
+        }
+        6 | 8 => hex.to_string(),
+        _ => return None,
+    };
+
+    let value = u32::from_str_radix(&expanded, 16).ok()?;
+
+    let (r, g, b, a) = match expanded.len() {
+        6 => (
+            ((value >> 16) & 0xFF) as u8,
+            ((value >> 8) & 0xFF) as u8,
+            (value & 0xFF) as u8,
+            0xFF,
+        ),
+        8 => (
+            ((value >> 24) & 0xFF) as u8,
+            ((value >> 16) & 0xFF) as u8,
+            ((value >> 8) & 0xFF) as u8,
+            (value & 0xFF) as u8,
+        ),
+        _ => return None,
+    };
+
+    Some(Color::from_rgba(
+        r as f32 / 255.0,
+        g as f32 / 255.0,
+        b as f32 / 255.0,
+        a as f32 / 255.0,
+    ))
+}
+
+fn parse_function_color(input: &str) -> Option<Color> {
+    let open = input.find('(')?;
+    let close = input.rfind(')')?;
+
+    if close <= open || !input[close + 1..].trim().is_empty() {
+        return None;
+    }
+
+    let name = input[..open].trim().to_ascii_lowercase();
+    let args: Vec<_> = input[open + 1..close]
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+
+    match name.as_str() {
+        "rgb" if args.len() == 3 => Some(Color::from_rgba(
+            parse_rgb_component(args[0])?,
+            parse_rgb_component(args[1])?,
+            parse_rgb_component(args[2])?,
+            1.0,
+        )),
+        "rgba" if args.len() == 4 => Some(Color::from_rgba(
+            parse_rgb_component(args[0])?,
+            parse_rgb_component(args[1])?,
+            parse_rgb_component(args[2])?,
+            parse_alpha_component(args[3])?,
+        )),
+        "hsl" if args.len() == 3 => Some(hsl_to_color(
+            parse_hue_component(args[0])?,
+            parse_percentage_component(args[1])?,
+            parse_percentage_component(args[2])?,
+            1.0,
+        )),
+        "hsla" if args.len() == 4 => Some(hsl_to_color(
+            parse_hue_component(args[0])?,
+            parse_percentage_component(args[1])?,
+            parse_percentage_component(args[2])?,
+            parse_alpha_component(args[3])?,
+        )),
+        "hsv" | "hsb" if args.len() == 3 => Some(hsv_to_color(
+            parse_hue_component(args[0])?,
+            parse_percentage_component(args[1])?,
+            parse_percentage_component(args[2])?,
+            1.0,
+        )),
+        "hsva" | "hsba" if args.len() == 4 => Some(hsv_to_color(
+            parse_hue_component(args[0])?,
+            parse_percentage_component(args[1])?,
+            parse_percentage_component(args[2])?,
+            parse_alpha_component(args[3])?,
+        )),
+        _ => None,
+    }
+}
+
+fn parse_rgb_component(input: &str) -> Option<f32> {
+    if let Some(percent) = input.strip_suffix('%') {
+        return parse_clamped(percent, 0.0, 100.0).map(|value| value / 100.0);
+    }
+
+    parse_clamped(input, 0.0, 255.0).map(|value| value / 255.0)
+}
+
+fn parse_percentage_component(input: &str) -> Option<f32> {
+    if let Some(percent) = input.strip_suffix('%') {
+        return parse_clamped(percent, 0.0, 100.0).map(|value| value / 100.0);
+    }
+
+    parse_clamped(input, 0.0, 1.0)
+}
+
+fn parse_alpha_component(input: &str) -> Option<f32> {
+    if let Some(percent) = input.strip_suffix('%') {
+        return parse_clamped(percent, 0.0, 100.0).map(|value| value / 100.0);
+    }
+
+    parse_clamped(input, 0.0, 1.0)
+}
+
+fn parse_hue_component(input: &str) -> Option<f32> {
+    let normalized = input
+        .strip_suffix("deg")
+        .or_else(|| input.strip_suffix("DEG"))
+        .unwrap_or(input);
+
+    Some(normalized.trim().parse::<f32>().ok()?.rem_euclid(360.0))
+}
+
+fn parse_clamped(input: &str, min: f32, max: f32) -> Option<f32> {
+    let value = input.trim().parse::<f32>().ok()?;
+
+    if !(min..=max).contains(&value) {
+        return None;
+    }
+
+    Some(value)
 }
 
 fn format_model_value(model: ColorModel, color: Color) -> String {
@@ -2370,9 +3644,62 @@ mod tests {
     }
 
     #[test]
+    fn parse_color_string_supports_hex_and_rgb_forms() {
+        let hex = parse_color_string("#9CAA33").expect("hex should parse");
+        let bare = parse_color_string("9CAA33").expect("bare hex should parse");
+        let rgb = parse_color_string("rgb(156, 170, 51)").expect("rgb should parse");
+        let rgba = parse_color_string("rgba(156, 170, 51, 0.5)").expect("rgba should parse");
+
+        assert_color_close(hex, Color::from_rgb8(0x9C, 0xAA, 0x33));
+        assert_color_close(bare, Color::from_rgb8(0x9C, 0xAA, 0x33));
+        assert_color_close(rgb, Color::from_rgb8(0x9C, 0xAA, 0x33));
+        assert_color_close(rgba, Color::from_rgba8(0x9C, 0xAA, 0x33, 0.5));
+    }
+
+    #[test]
+    fn parse_color_string_supports_hsl_and_hsb_aliases() {
+        let hsl = parse_color_string("hsl(67, 54%, 43%)").expect("hsl output should round-trip");
+        let hsla =
+            parse_color_string("hsla(67, 54%, 43%, 0.5)").expect("hsla output should round-trip");
+        let hsb = parse_color_string("hsb(67, 70%, 67%)").expect("hsb alias should parse");
+
+        assert_color_close(hsl, Color::from_rgb8(0x9C, 0xAA, 0x33));
+        assert_color_close(hsla, Color::from_rgba8(0x9C, 0xAA, 0x33, 0.5));
+        assert!(hsb.a > 0.99);
+    }
+
+    #[test]
+    fn parse_color_string_rejects_invalid_input() {
+        assert!(parse_color_string("not-a-color").is_none());
+        assert!(parse_color_string("rgb(400, 0, 0)").is_none());
+        assert!(parse_color_string("#12").is_none());
+    }
+
+    #[test]
     fn normalizing_empty_swatches_uses_defaults() {
         let groups = normalize_swatch_groups(Vec::new());
         assert!(!groups.is_empty());
         assert_eq!(groups[0].name, "Grass");
+    }
+
+    #[test]
+    fn contrast_ratio_matches_black_white_reference() {
+        let ratio = contrast_ratio(Color::WHITE, Color::BLACK);
+
+        assert!((ratio - 21.0).abs() < 0.01);
+        assert_eq!(contrast_grade(ratio), ContrastGrade::Aaa);
+    }
+
+    #[test]
+    fn contrast_fix_chooses_high_contrast_endpoint() {
+        let fixed = best_contrast_fix(
+            Color::from_rgb8(0x77, 0x77, 0x77),
+            Color::from_rgb8(0x88, 0x88, 0x88),
+        );
+
+        assert!(
+            same_color(fixed, Color::BLACK) || same_color(fixed, Color::WHITE),
+            "expected black or white fix"
+        );
     }
 }
