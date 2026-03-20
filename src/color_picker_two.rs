@@ -34,7 +34,7 @@
 
 use iced::{
     Background, Border, Color, Degrees, Element, Event, Length, Point, Rectangle, Shadow, Size,
-    Vector,
+    Task, Vector,
     advanced::{
         Clipboard, Layout, Overlay, Shell, Widget,
         layout::{Limits, Node},
@@ -167,6 +167,56 @@ impl MagnifierRequest {
     fn new(target: MagnifierTarget, color: Color) -> Self {
         Self { target, color }
     }
+}
+
+/// Errors that can occur while running the native magnifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MagnifierError {
+    Cancelled,
+    PermissionDenied,
+    UnsupportedPlatform,
+    CaptureUnavailable(&'static str),
+    PlatformFailure(String),
+    WorkerClosed,
+}
+
+impl std::fmt::Display for MagnifierError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cancelled => f.write_str("magnifier cancelled"),
+            Self::PermissionDenied => f.write_str("screen capture permission denied"),
+            Self::UnsupportedPlatform => {
+                f.write_str("native magnifier is only implemented on Windows and macOS")
+            }
+            Self::CaptureUnavailable(reason) => write!(f, "screen capture unavailable: {reason}"),
+            Self::PlatformFailure(reason) => write!(f, "native magnifier failed: {reason}"),
+            Self::WorkerClosed => f.write_str("native magnifier worker closed unexpectedly"),
+        }
+    }
+}
+
+impl std::error::Error for MagnifierError {}
+
+/// Returns whether a native magnifier implementation is available for this platform.
+pub fn native_magnifier_supported() -> bool {
+    cfg!(any(target_os = "windows", target_os = "macos"))
+}
+
+/// Launches the native magnifier on a worker thread and resolves with the sampled color.
+pub fn pick_color_task() -> Task<Result<Color, MagnifierError>> {
+    if !native_magnifier_supported() {
+        return Task::done(Err(MagnifierError::UnsupportedPlatform));
+    }
+
+    Task::future(async {
+        let (sender, receiver) = iced::futures::channel::oneshot::channel();
+
+        std::thread::spawn(move || {
+            let _ = sender.send(native_magnifier::pick_color_blocking());
+        });
+
+        receiver.await.unwrap_or(Err(MagnifierError::WorkerClosed))
+    })
 }
 
 /// The active panel shown in the overlay.
@@ -3596,6 +3646,1598 @@ pub fn default_style(theme: &iced::Theme, _status: Status) -> Style {
         swatch_add_background: Color::from_rgb8(0xFC, 0xFC, 0xFA),
         swatch_add_text_color: Color::from_rgba8(0x2E, 0x2D, 0x29, 0.65),
         selection_ring: accent,
+    }
+}
+
+mod native_magnifier {
+    use super::MagnifierError;
+    use iced::Color;
+    #[cfg(target_os = "macos")]
+    use std::time::Duration;
+
+    #[cfg(target_os = "macos")]
+    const POLL_INTERVAL: Duration = Duration::from_millis(8);
+
+    pub(super) fn pick_color_blocking() -> Result<Color, MagnifierError> {
+        platform::pick_color_blocking()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn wait_for_pick(
+        is_left_down: impl Fn() -> bool,
+        is_cancelled: impl Fn() -> bool,
+        sample: impl Fn() -> Result<Color, MagnifierError>,
+    ) -> Result<Color, MagnifierError> {
+        let mut armed = !is_left_down();
+        let mut was_down = is_left_down();
+
+        loop {
+            if is_cancelled() {
+                return Err(MagnifierError::Cancelled);
+            }
+
+            let is_down = is_left_down();
+
+            if !is_down {
+                armed = true;
+            } else if armed && !was_down {
+                return sample();
+            }
+
+            was_down = is_down;
+            std::thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    mod platform {
+        use super::MagnifierError;
+        use crate::color_picker_two::color_to_hex;
+        use iced::Color;
+        use std::ffi::c_void;
+        use std::mem::MaybeUninit;
+        use std::ptr::{null, null_mut};
+        use std::sync::atomic::{AtomicI32, Ordering};
+        use std::time::Duration;
+
+        type Bool = i32;
+        type Hbitmap = *mut c_void;
+        type Hbrush = *mut c_void;
+        type Hdc = *mut c_void;
+        type Hfont = *mut c_void;
+        type HgdObj = *mut c_void;
+        type Hhook = *mut c_void;
+        type Hinstance = *mut c_void;
+        type Hmodule = *mut c_void;
+        type Hwnd = *mut c_void;
+        type Hpen = *mut c_void;
+        type Hrgn = *mut c_void;
+        type Lparam = isize;
+        type Lresult = isize;
+        type Uint = u32;
+        type Wparam = usize;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy)]
+        struct Rect {
+            left: i32,
+            top: i32,
+            right: i32,
+            bottom: i32,
+        }
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy)]
+        struct Msg {
+            hwnd: Hwnd,
+            message: Uint,
+            w_param: Wparam,
+            l_param: Lparam,
+            time: u32,
+            pt: Point,
+            l_private: u32,
+        }
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy)]
+        struct MouseLowLevelHookStruct {
+            pt: Point,
+            mouse_data: u32,
+            flags: u32,
+            time: u32,
+            dw_extra_info: usize,
+        }
+
+        #[repr(C)]
+        struct WndClassW {
+            style: u32,
+            wnd_proc: Option<unsafe extern "system" fn(Hwnd, Uint, Wparam, Lparam) -> Lresult>,
+            cls_extra: i32,
+            wnd_extra: i32,
+            instance: Hinstance,
+            icon: *mut c_void,
+            cursor: *mut c_void,
+            background: Hbrush,
+            menu_name: *const u16,
+            class_name: *const u16,
+        }
+
+        const VK_ESCAPE: i32 = 0x1B;
+        const VK_LBUTTON: i32 = 0x01;
+        const SW_HIDE: i32 = 0;
+        const SW_SHOWNOACTIVATE: i32 = 4;
+        const WS_POPUP: u32 = 0x8000_0000;
+        const WS_EX_LAYERED: u32 = 0x0008_0000;
+        const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
+        const WS_EX_TOPMOST: u32 = 0x0000_0008;
+        const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
+        const LWA_COLORKEY: u32 = 0x0000_0001;
+        const PM_REMOVE: u32 = 0x0001;
+        const WH_MOUSE_LL: i32 = 14;
+        const WM_ERASEBKGND: u32 = 0x0014;
+        const WM_MOUSEWHEEL: u32 = 0x020A;
+        const WM_NCHITTEST: u32 = 0x0084;
+        const WM_QUIT: u32 = 0x0012;
+        const TRANSPARENT_BKMODE: i32 = 1;
+        const PS_SOLID: i32 = 0;
+        const DEFAULT_CHARSET: u32 = 1;
+        const OUT_DEFAULT_PRECIS: u32 = 0;
+        const CLIP_DEFAULT_PRECIS: u32 = 0;
+        const CLEARTYPE_QUALITY: u32 = 5;
+        const DEFAULT_PITCH: u32 = 0;
+        const FF_DONTCARE: u32 = 0;
+        const HWND_TOPMOST: Hwnd = -1isize as Hwnd;
+        const SWP_NOACTIVATE: u32 = 0x0010;
+        const SM_XVIRTUALSCREEN: i32 = 76;
+        const SM_YVIRTUALSCREEN: i32 = 77;
+        const SM_CXVIRTUALSCREEN: i32 = 78;
+        const SM_CYVIRTUALSCREEN: i32 = 79;
+        const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+
+        const WINDOW_WIDTH: i32 = 214;
+        const WINDOW_HEIGHT: i32 = 230;
+        const LOUPE_DIAMETER: i32 = 166;
+        const LOUPE_TOP: i32 = 8;
+        const LOUPE_LEFT: i32 = (WINDOW_WIDTH - LOUPE_DIAMETER) / 2;
+        const TEXT_TOP: i32 = LOUPE_TOP + LOUPE_DIAMETER + 14;
+        const TEXT_HEIGHT: i32 = 28;
+        const MIN_ZOOM: i32 = 1;
+        const MAX_ZOOM: i32 = 64;
+        const DEFAULT_ZOOM: i32 = 12;
+        const TRANSPARENT_KEY: u32 = 0x00FF_00FF;
+        const LABEL_WIDTH: i32 = 110;
+        const TARGET_SIZE: i32 = 12;
+        const GRID_THRESHOLD: f32 = 6.0;
+        const SRCCOPY: u32 = 0x00CC_0020;
+        const CAPTUREBLT: u32 = 0x4000_0000;
+        const BI_RGB: u32 = 0;
+        const DIB_RGB_COLORS: u32 = 0;
+        const COLORONCOLOR: i32 = 3;
+        const HTTRANSPARENT: isize = -1;
+        const WDA_EXCLUDEFROMCAPTURE: u32 = 17;
+        const CURSOR_VISIBILITY_ATTEMPTS: i32 = 32;
+        const CAPTURE_BITMAP_SIZE: i32 = LOUPE_DIAMETER + 1;
+
+        static WHEEL_DELTA_ACCUM: AtomicI32 = AtomicI32::new(0);
+
+        unsafe extern "system" fn magnifier_window_proc(
+            window: Hwnd,
+            message: Uint,
+            w_param: Wparam,
+            l_param: Lparam,
+        ) -> Lresult {
+            match message {
+                WM_ERASEBKGND => 1,
+                WM_NCHITTEST => HTTRANSPARENT,
+                _ => unsafe { DefWindowProcW(window, message, w_param, l_param) },
+            }
+        }
+
+        unsafe extern "system" {
+            fn GetAsyncKeyState(vkey: i32) -> i16;
+            fn GetCursorPos(point: *mut Point) -> Bool;
+            fn GetPhysicalCursorPos(point: *mut Point) -> Bool;
+            fn GetDC(window: Hwnd) -> Hdc;
+            fn ReleaseDC(window: Hwnd, dc: Hdc) -> i32;
+            fn PeekMessageW(
+                msg: *mut Msg,
+                window: Hwnd,
+                min_filter: u32,
+                max_filter: u32,
+                remove_msg: u32,
+            ) -> Bool;
+            fn TranslateMessage(msg: *const Msg) -> Bool;
+            fn DispatchMessageW(msg: *const Msg) -> Lresult;
+            fn CreateWindowExW(
+                ex_style: u32,
+                class_name: *const u16,
+                window_name: *const u16,
+                style: u32,
+                x: i32,
+                y: i32,
+                width: i32,
+                height: i32,
+                parent: Hwnd,
+                menu: *mut c_void,
+                instance: Hinstance,
+                param: *mut c_void,
+            ) -> Hwnd;
+            fn DestroyWindow(window: Hwnd) -> Bool;
+            fn ShowWindow(window: Hwnd, cmd_show: i32) -> Bool;
+            fn SetWindowPos(
+                window: Hwnd,
+                insert_after: Hwnd,
+                x: i32,
+                y: i32,
+                width: i32,
+                height: i32,
+                flags: u32,
+            ) -> Bool;
+            fn SetLayeredWindowAttributes(
+                window: Hwnd,
+                color_key: u32,
+                alpha: u8,
+                flags: u32,
+            ) -> Bool;
+            fn SetWindowRgn(window: Hwnd, region: Hrgn, redraw: Bool) -> i32;
+            fn RegisterClassW(class: *const WndClassW) -> u16;
+            fn DefWindowProcW(
+                window: Hwnd,
+                message: Uint,
+                w_param: Wparam,
+                l_param: Lparam,
+            ) -> Lresult;
+            fn GetModuleHandleW(module_name: *const u16) -> Hmodule;
+            fn SetWindowsHookExW(
+                id_hook: i32,
+                hook_proc: Option<unsafe extern "system" fn(i32, Wparam, Lparam) -> Lresult>,
+                module: Hinstance,
+                thread_id: u32,
+            ) -> Hhook;
+            fn UnhookWindowsHookEx(hook: Hhook) -> Bool;
+            fn CallNextHookEx(hook: Hhook, code: i32, w_param: Wparam, l_param: Lparam) -> Lresult;
+            fn GetSystemMetrics(index: i32) -> i32;
+            fn CreateSolidBrush(color: u32) -> Hbrush;
+            fn DeleteObject(object: HgdObj) -> Bool;
+            fn FillRect(dc: Hdc, rect: *const Rect, brush: Hbrush) -> i32;
+            fn CreatePen(style: i32, width: i32, color: u32) -> Hpen;
+            fn SelectObject(dc: Hdc, object: HgdObj) -> HgdObj;
+            fn Ellipse(dc: Hdc, left: i32, top: i32, right: i32, bottom: i32) -> Bool;
+            fn Rectangle(dc: Hdc, left: i32, top: i32, right: i32, bottom: i32) -> Bool;
+            fn CreateEllipticRgn(left: i32, top: i32, right: i32, bottom: i32) -> Hrgn;
+            fn SetBkMode(dc: Hdc, mode: i32) -> i32;
+            fn SetTextColor(dc: Hdc, color: u32) -> u32;
+            fn TextOutW(dc: Hdc, x: i32, y: i32, string: *const u16, count: i32) -> Bool;
+            fn CreateFontW(
+                height: i32,
+                width: i32,
+                escapement: i32,
+                orientation: i32,
+                weight: i32,
+                italic: u32,
+                underline: u32,
+                strike_out: u32,
+                char_set: u32,
+                output_precision: u32,
+                clip_precision: u32,
+                quality: u32,
+                pitch_and_family: u32,
+                face_name: *const u16,
+            ) -> Hfont;
+            fn RoundRect(
+                dc: Hdc,
+                left: i32,
+                top: i32,
+                right: i32,
+                bottom: i32,
+                width: i32,
+                height: i32,
+            ) -> Bool;
+        }
+
+        unsafe extern "system" {
+            fn SetWindowDisplayAffinity(window: Hwnd, affinity: u32) -> Bool;
+            fn ShowCursor(show: Bool) -> i32;
+            fn CreateCompatibleDC(dc: Hdc) -> Hdc;
+            fn DeleteDC(dc: Hdc) -> Bool;
+            fn CreateDIBSection(
+                dc: Hdc,
+                info: *const BitmapInfo,
+                usage: Uint,
+                bits: *mut *mut c_void,
+                section: *mut c_void,
+                offset: u32,
+            ) -> Hbitmap;
+            fn BitBlt(
+                dc: Hdc,
+                x: i32,
+                y: i32,
+                width: i32,
+                height: i32,
+                source_dc: Hdc,
+                source_x: i32,
+                source_y: i32,
+                rop: u32,
+            ) -> Bool;
+            fn StretchDIBits(
+                dc: Hdc,
+                dest_x: i32,
+                dest_y: i32,
+                dest_width: i32,
+                dest_height: i32,
+                source_x: i32,
+                source_y: i32,
+                source_width: i32,
+                source_height: i32,
+                bits: *const c_void,
+                info: *const BitmapInfo,
+                usage: Uint,
+                rop: u32,
+            ) -> i32;
+            fn SetStretchBltMode(dc: Hdc, mode: i32) -> i32;
+            fn MoveToEx(dc: Hdc, x: i32, y: i32, previous: *mut Point) -> Bool;
+            fn LineTo(dc: Hdc, x: i32, y: i32) -> Bool;
+        }
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, Default)]
+        struct BitmapInfoHeader {
+            size: u32,
+            width: i32,
+            height: i32,
+            planes: u16,
+            bit_count: u16,
+            compression: u32,
+            size_image: u32,
+            x_pels_per_meter: i32,
+            y_pels_per_meter: i32,
+            clr_used: u32,
+            clr_important: u32,
+        }
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, Default)]
+        struct RgbQuad {
+            blue: u8,
+            green: u8,
+            red: u8,
+            reserved: u8,
+        }
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy)]
+        struct BitmapInfo {
+            header: BitmapInfoHeader,
+            colors: [RgbQuad; 1],
+        }
+
+        #[derive(Debug, Clone, Copy)]
+        struct CaptureFrame {
+            span: i32,
+            cursor_offset: Point,
+            color: Color,
+        }
+
+        pub(super) fn pick_color_blocking() -> Result<Color, MagnifierError> {
+            WHEEL_DELTA_ACCUM.store(0, Ordering::Relaxed);
+
+            let _cursor_guard = SystemCursorGuard::hide()?;
+            let hook = install_mouse_hook()?;
+            let _hook_guard = HookGuard(hook);
+            let mut window = NativeMagnifierWindow::create()?;
+
+            let mut armed = !left_button_down();
+            let mut was_down = left_button_down();
+            let mut zoom = DEFAULT_ZOOM;
+            let mut last_cursor = None;
+            let mut last_zoom = zoom;
+            let mut last_color = None;
+
+            loop {
+                pump_messages()?;
+
+                if escape_down() {
+                    return Err(MagnifierError::Cancelled);
+                }
+
+                let cursor = cursor_position()?;
+                let wheel = WHEEL_DELTA_ACCUM.swap(0, Ordering::Relaxed);
+                if wheel != 0 {
+                    zoom = adjust_zoom(zoom, wheel);
+                }
+
+                if last_cursor != Some(cursor) || last_zoom != zoom || last_color.is_none() {
+                    let color = window.refresh(cursor, zoom)?;
+                    last_cursor = Some(cursor);
+                    last_zoom = zoom;
+                    last_color = Some(color);
+                }
+
+                let is_down = left_button_down();
+                if !is_down {
+                    armed = true;
+                } else if armed && !was_down {
+                    return last_color.ok_or_else(|| {
+                        MagnifierError::CaptureUnavailable(
+                            "no sampled color was available when selection completed",
+                        )
+                    });
+                }
+
+                was_down = is_down;
+                std::thread::sleep(FRAME_INTERVAL);
+            }
+        }
+
+        fn left_button_down() -> bool {
+            unsafe { GetAsyncKeyState(VK_LBUTTON) < 0 }
+        }
+
+        fn escape_down() -> bool {
+            unsafe { GetAsyncKeyState(VK_ESCAPE) < 0 }
+        }
+
+        fn cursor_position() -> Result<Point, MagnifierError> {
+            let mut point = Point { x: 0, y: 0 };
+
+            let ok = unsafe {
+                if GetPhysicalCursorPos(&mut point) != 0 {
+                    true
+                } else {
+                    GetCursorPos(&mut point) != 0
+                }
+            };
+
+            if ok {
+                Ok(point)
+            } else {
+                Err(MagnifierError::PlatformFailure(
+                    "failed to read the current cursor position".to_string(),
+                ))
+            }
+        }
+
+        fn pump_messages() -> Result<(), MagnifierError> {
+            loop {
+                let mut msg = MaybeUninit::<Msg>::zeroed();
+                let has_message =
+                    unsafe { PeekMessageW(msg.as_mut_ptr(), null_mut(), 0, 0, PM_REMOVE) };
+
+                if has_message == 0 {
+                    return Ok(());
+                }
+
+                let msg = unsafe { msg.assume_init() };
+
+                if msg.message == WM_QUIT {
+                    return Err(MagnifierError::Cancelled);
+                }
+
+                unsafe {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+        }
+
+        fn adjust_zoom(current: i32, wheel_delta: i32) -> i32 {
+            let steps = wheel_delta / 120;
+
+            if steps == 0 {
+                current
+            } else {
+                (current + steps).clamp(MIN_ZOOM, MAX_ZOOM)
+            }
+        }
+
+        fn pixel_size(span: i32) -> f32 {
+            LOUPE_DIAMETER as f32 / span.max(1) as f32
+        }
+
+        fn popup_position_for_frame(cursor: Point, frame: CaptureFrame) -> Point {
+            let scale = pixel_size(frame.span);
+            let selected_center_x =
+                LOUPE_LEFT + (((frame.cursor_offset.x as f32) + 0.5) * scale).round() as i32;
+            let selected_center_y =
+                LOUPE_TOP + (((frame.cursor_offset.y as f32) + 0.5) * scale).round() as i32;
+
+            Point {
+                x: cursor.x - selected_center_x,
+                y: cursor.y - selected_center_y,
+            }
+        }
+
+        fn loupe_position(overlay: Point) -> Point {
+            Point {
+                x: overlay.x + LOUPE_LEFT,
+                y: overlay.y + LOUPE_TOP,
+            }
+        }
+
+        fn selection_rect(frame: CaptureFrame) -> Rect {
+            let scale = pixel_size(frame.span);
+
+            if scale >= 4.0 {
+                let left = LOUPE_LEFT + (frame.cursor_offset.x as f32 * scale).round() as i32;
+                let top = LOUPE_TOP + (frame.cursor_offset.y as f32 * scale).round() as i32;
+                let size = scale.ceil() as i32;
+
+                Rect {
+                    left,
+                    top,
+                    right: left + size,
+                    bottom: top + size,
+                }
+            } else {
+                let center_x =
+                    LOUPE_LEFT + (((frame.cursor_offset.x as f32) + 0.5) * scale).round() as i32;
+                let center_y =
+                    LOUPE_TOP + (((frame.cursor_offset.y as f32) + 0.5) * scale).round() as i32;
+
+                Rect {
+                    left: center_x - (TARGET_SIZE / 2),
+                    top: center_y - (TARGET_SIZE / 2),
+                    right: center_x + ((TARGET_SIZE + 1) / 2),
+                    bottom: center_y + ((TARGET_SIZE + 1) / 2),
+                }
+            }
+        }
+
+        fn source_span(zoom: i32) -> i32 {
+            let mut span = ((LOUPE_DIAMETER as f32) / (zoom as f32)).ceil() as i32;
+            span = span.max(1);
+
+            if span % 2 == 0 {
+                span += 1;
+            }
+
+            span
+        }
+
+        fn source_rect(cursor: Point, zoom: i32) -> Rect {
+            let span = source_span(zoom);
+            let virtual_left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+            let virtual_top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+            let virtual_right = virtual_left + unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+            let virtual_bottom = virtual_top + unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+            let half = span / 2;
+
+            let left = (cursor.x - half).clamp(virtual_left, virtual_right - span);
+            let top = (cursor.y - half).clamp(virtual_top, virtual_bottom - span);
+
+            Rect {
+                left,
+                top,
+                right: left + span,
+                bottom: top + span,
+            }
+        }
+
+        fn rgb(r: u8, g: u8, b: u8) -> u32 {
+            (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
+        }
+
+        fn encode_wide(text: &str) -> Vec<u16> {
+            text.encode_utf16().chain(std::iter::once(0)).collect()
+        }
+
+        unsafe extern "system" fn mouse_hook_proc(
+            code: i32,
+            w_param: Wparam,
+            l_param: Lparam,
+        ) -> Lresult {
+            if code >= 0 && w_param as u32 == WM_MOUSEWHEEL {
+                let info = unsafe { &*(l_param as *const MouseLowLevelHookStruct) };
+                let delta = ((info.mouse_data >> 16) as i16) as i32;
+                WHEEL_DELTA_ACCUM.fetch_add(delta, Ordering::Relaxed);
+            }
+
+            unsafe { CallNextHookEx(null_mut(), code, w_param, l_param) }
+        }
+
+        fn install_mouse_hook() -> Result<Hhook, MagnifierError> {
+            let module = unsafe { GetModuleHandleW(null()) };
+            let hook = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), module, 0) };
+
+            if hook.is_null() {
+                Err(MagnifierError::PlatformFailure(
+                    "SetWindowsHookExW failed".to_string(),
+                ))
+            } else {
+                Ok(hook)
+            }
+        }
+
+        struct HookGuard(Hhook);
+
+        impl Drop for HookGuard {
+            fn drop(&mut self) {
+                if !self.0.is_null() {
+                    let _ = unsafe { UnhookWindowsHookEx(self.0) };
+                }
+            }
+        }
+
+        struct SystemCursorGuard {
+            adjustments: i32,
+        }
+
+        impl SystemCursorGuard {
+            fn hide() -> Result<Self, MagnifierError> {
+                let mut adjustments = 0;
+
+                while adjustments < CURSOR_VISIBILITY_ATTEMPTS {
+                    adjustments += 1;
+
+                    if unsafe { ShowCursor(0) } < 0 {
+                        break;
+                    }
+                }
+
+                Ok(Self { adjustments })
+            }
+        }
+
+        impl Drop for SystemCursorGuard {
+            fn drop(&mut self) {
+                for _ in 0..self.adjustments {
+                    let _ = unsafe { ShowCursor(1) };
+                }
+            }
+        }
+
+        struct CaptureSurface {
+            screen_dc: Hdc,
+            capture_dc: Hdc,
+            bitmap: Hbitmap,
+            stock_bitmap: HgdObj,
+            pixels: *mut u8,
+            bitmap_info: BitmapInfo,
+            side: i32,
+        }
+
+        impl CaptureSurface {
+            fn new() -> Result<Self, MagnifierError> {
+                let screen_dc = unsafe { GetDC(null_mut()) };
+
+                if screen_dc.is_null() {
+                    return Err(MagnifierError::CaptureUnavailable(
+                        "GetDC returned a null screen device context",
+                    ));
+                }
+
+                let capture_dc = unsafe { CreateCompatibleDC(screen_dc) };
+                if capture_dc.is_null() {
+                    let _ = unsafe { ReleaseDC(null_mut(), screen_dc) };
+                    return Err(MagnifierError::PlatformFailure(
+                        "CreateCompatibleDC failed".to_string(),
+                    ));
+                }
+
+                let bitmap_info = Self::bitmap_info_for_side(CAPTURE_BITMAP_SIZE);
+
+                let mut bits = null_mut();
+                let bitmap = unsafe {
+                    CreateDIBSection(
+                        screen_dc,
+                        &bitmap_info,
+                        DIB_RGB_COLORS,
+                        &mut bits,
+                        null_mut(),
+                        0,
+                    )
+                };
+
+                if bitmap.is_null() || bits.is_null() {
+                    let _ = unsafe { DeleteDC(capture_dc) };
+                    let _ = unsafe { ReleaseDC(null_mut(), screen_dc) };
+                    return Err(MagnifierError::PlatformFailure(
+                        "CreateDIBSection failed".to_string(),
+                    ));
+                }
+
+                let stock_bitmap = unsafe { SelectObject(capture_dc, bitmap as HgdObj) };
+                if stock_bitmap.is_null() {
+                    let _ = unsafe { DeleteObject(bitmap as HgdObj) };
+                    let _ = unsafe { DeleteDC(capture_dc) };
+                    let _ = unsafe { ReleaseDC(null_mut(), screen_dc) };
+                    return Err(MagnifierError::PlatformFailure(
+                        "SelectObject failed for the capture bitmap".to_string(),
+                    ));
+                }
+
+                Ok(Self {
+                    screen_dc,
+                    capture_dc,
+                    bitmap,
+                    stock_bitmap,
+                    pixels: bits as *mut u8,
+                    bitmap_info,
+                    side: CAPTURE_BITMAP_SIZE,
+                })
+            }
+
+            fn bitmap_info_for_side(side: i32) -> BitmapInfo {
+                BitmapInfo {
+                    header: BitmapInfoHeader {
+                        size: std::mem::size_of::<BitmapInfoHeader>() as u32,
+                        width: side,
+                        height: -side,
+                        planes: 1,
+                        bit_count: 32,
+                        compression: BI_RGB,
+                        size_image: (side * side * 4) as u32,
+                        x_pels_per_meter: 0,
+                        y_pels_per_meter: 0,
+                        clr_used: 0,
+                        clr_important: 0,
+                    },
+                    colors: [RgbQuad::default()],
+                }
+            }
+
+            fn resize_if_needed(&mut self, side: i32) -> Result<(), MagnifierError> {
+                if self.side == side {
+                    return Ok(());
+                }
+
+                unsafe {
+                    SelectObject(self.capture_dc, self.stock_bitmap);
+                }
+
+                if !self.bitmap.is_null() {
+                    let _ = unsafe { DeleteObject(self.bitmap as HgdObj) };
+                }
+
+                let bitmap_info = Self::bitmap_info_for_side(side);
+                let mut bits = null_mut();
+                let bitmap = unsafe {
+                    CreateDIBSection(
+                        self.screen_dc,
+                        &bitmap_info,
+                        DIB_RGB_COLORS,
+                        &mut bits,
+                        null_mut(),
+                        0,
+                    )
+                };
+
+                if bitmap.is_null() || bits.is_null() {
+                    self.bitmap = null_mut();
+                    self.pixels = null_mut();
+                    return Err(MagnifierError::PlatformFailure(
+                        "CreateDIBSection failed while resizing the capture bitmap".to_string(),
+                    ));
+                }
+
+                let replaced = unsafe { SelectObject(self.capture_dc, bitmap as HgdObj) };
+                if replaced.is_null() {
+                    let _ = unsafe { DeleteObject(bitmap as HgdObj) };
+                    self.bitmap = null_mut();
+                    self.pixels = null_mut();
+                    return Err(MagnifierError::PlatformFailure(
+                        "SelectObject failed while resizing the capture bitmap".to_string(),
+                    ));
+                }
+
+                self.bitmap = bitmap;
+                self.pixels = bits as *mut u8;
+                self.bitmap_info = bitmap_info;
+                self.side = side;
+
+                Ok(())
+            }
+
+            fn capture(
+                &mut self,
+                source: Rect,
+                cursor: Point,
+            ) -> Result<CaptureFrame, MagnifierError> {
+                let span = (source.right - source.left).max(1);
+                self.resize_if_needed(span)?;
+                let copied = unsafe {
+                    BitBlt(
+                        self.capture_dc,
+                        0,
+                        0,
+                        span,
+                        span,
+                        self.screen_dc,
+                        source.left,
+                        source.top,
+                        SRCCOPY | CAPTUREBLT,
+                    )
+                };
+
+                if copied == 0 {
+                    return Err(MagnifierError::CaptureUnavailable(
+                        "BitBlt failed while copying the screen region",
+                    ));
+                }
+
+                let cursor_offset = Point {
+                    x: (cursor.x - source.left).clamp(0, span - 1),
+                    y: (cursor.y - source.top).clamp(0, span - 1),
+                };
+                let color = self.color_at(cursor_offset)?;
+
+                Ok(CaptureFrame {
+                    span,
+                    cursor_offset,
+                    color,
+                })
+            }
+
+            fn color_at(&self, point: Point) -> Result<Color, MagnifierError> {
+                let stride = self.side as usize * 4;
+                let offset = point.y as usize * stride + point.x as usize * 4;
+                let pixel = unsafe { self.pixels.add(offset) };
+
+                let b = unsafe { *pixel };
+                let g = unsafe { *pixel.add(1) };
+                let r = unsafe { *pixel.add(2) };
+
+                Ok(Color::from_rgb8(r, g, b))
+            }
+        }
+
+        impl Drop for CaptureSurface {
+            fn drop(&mut self) {
+                if !self.capture_dc.is_null() && !self.stock_bitmap.is_null() {
+                    let _ = unsafe { SelectObject(self.capture_dc, self.stock_bitmap) };
+                }
+
+                if !self.bitmap.is_null() {
+                    let _ = unsafe { DeleteObject(self.bitmap as HgdObj) };
+                }
+
+                if !self.capture_dc.is_null() {
+                    let _ = unsafe { DeleteDC(self.capture_dc) };
+                }
+
+                if !self.screen_dc.is_null() {
+                    let _ = unsafe { ReleaseDC(null_mut(), self.screen_dc) };
+                }
+            }
+        }
+
+        struct NativeMagnifierWindow {
+            loupe_hwnd: Hwnd,
+            overlay_hwnd: Hwnd,
+            text_font: Hfont,
+            capture: CaptureSurface,
+        }
+
+        impl NativeMagnifierWindow {
+            fn create() -> Result<Self, MagnifierError> {
+                let window_class_name = encode_wide("color_picker_two_magnifier_window");
+                let loupe_title = encode_wide("color_picker_two_loupe_window");
+                let overlay_title = encode_wide("color_picker_two_magnifier_overlay");
+                let face_name = encode_wide("Segoe UI");
+                let module = unsafe { GetModuleHandleW(null()) };
+                let mut loupe_hwnd = null_mut();
+                let mut overlay_hwnd = null_mut();
+                let mut text_font = null_mut();
+
+                let build = (|| -> Result<CaptureSurface, MagnifierError> {
+                    let window_class = WndClassW {
+                        style: 0,
+                        wnd_proc: Some(magnifier_window_proc),
+                        cls_extra: 0,
+                        wnd_extra: 0,
+                        instance: module,
+                        icon: null_mut(),
+                        cursor: null_mut(),
+                        background: null_mut(),
+                        menu_name: null(),
+                        class_name: window_class_name.as_ptr(),
+                    };
+
+                    let _ = unsafe { RegisterClassW(&window_class) };
+
+                    loupe_hwnd = unsafe {
+                        CreateWindowExW(
+                            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                            window_class_name.as_ptr(),
+                            loupe_title.as_ptr(),
+                            WS_POPUP,
+                            0,
+                            0,
+                            LOUPE_DIAMETER,
+                            LOUPE_DIAMETER,
+                            null_mut(),
+                            null_mut(),
+                            module,
+                            null_mut(),
+                        )
+                    };
+
+                    if loupe_hwnd.is_null() {
+                        return Err(MagnifierError::PlatformFailure(
+                            "CreateWindowExW failed for the loupe window".to_string(),
+                        ));
+                    }
+
+                    let loupe_region = Region::ellipse(Rect {
+                        left: 0,
+                        top: 0,
+                        right: LOUPE_DIAMETER,
+                        bottom: LOUPE_DIAMETER,
+                    })?;
+                    let region = loupe_region.into_raw();
+
+                    if unsafe { SetWindowRgn(loupe_hwnd, region, 1) } == 0 {
+                        return Err(MagnifierError::PlatformFailure(
+                            "SetWindowRgn failed for the loupe window".to_string(),
+                        ));
+                    }
+
+                    overlay_hwnd = unsafe {
+                        CreateWindowExW(
+                            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+                            window_class_name.as_ptr(),
+                            overlay_title.as_ptr(),
+                            WS_POPUP,
+                            0,
+                            0,
+                            WINDOW_WIDTH,
+                            WINDOW_HEIGHT,
+                            null_mut(),
+                            null_mut(),
+                            module,
+                            null_mut(),
+                        )
+                    };
+
+                    if overlay_hwnd.is_null() {
+                        return Err(MagnifierError::PlatformFailure(
+                            "CreateWindowExW failed for magnifier overlay".to_string(),
+                        ));
+                    }
+
+                    if unsafe {
+                        SetLayeredWindowAttributes(overlay_hwnd, TRANSPARENT_KEY, 0, LWA_COLORKEY)
+                    } == 0
+                    {
+                        return Err(MagnifierError::PlatformFailure(
+                            "SetLayeredWindowAttributes failed for magnifier overlay".to_string(),
+                        ));
+                    }
+
+                    text_font = unsafe {
+                        CreateFontW(
+                            -18,
+                            0,
+                            0,
+                            0,
+                            600,
+                            0,
+                            0,
+                            0,
+                            DEFAULT_CHARSET,
+                            OUT_DEFAULT_PRECIS,
+                            CLIP_DEFAULT_PRECIS,
+                            CLEARTYPE_QUALITY,
+                            DEFAULT_PITCH | FF_DONTCARE,
+                            face_name.as_ptr(),
+                        )
+                    };
+
+                    let _ = unsafe { SetWindowDisplayAffinity(loupe_hwnd, WDA_EXCLUDEFROMCAPTURE) };
+                    let _ =
+                        unsafe { SetWindowDisplayAffinity(overlay_hwnd, WDA_EXCLUDEFROMCAPTURE) };
+
+                    CaptureSurface::new()
+                })();
+
+                let capture = match build {
+                    Ok(capture) => capture,
+                    Err(error) => {
+                        if !overlay_hwnd.is_null() {
+                            let _ = unsafe { DestroyWindow(overlay_hwnd) };
+                        }
+                        if !loupe_hwnd.is_null() {
+                            let _ = unsafe { DestroyWindow(loupe_hwnd) };
+                        }
+                        if !text_font.is_null() {
+                            let _ = unsafe { DeleteObject(text_font as HgdObj) };
+                        }
+                        return Err(error);
+                    }
+                };
+
+                Ok(Self {
+                    loupe_hwnd,
+                    overlay_hwnd,
+                    text_font,
+                    capture,
+                })
+            }
+
+            fn refresh(&mut self, cursor: Point, zoom: i32) -> Result<Color, MagnifierError> {
+                let source = source_rect(cursor, zoom);
+                self.hide_windows();
+                let frame = self.capture.capture(source, cursor)?;
+                let overlay = popup_position_for_frame(cursor, frame);
+                let loupe = loupe_position(overlay);
+
+                self.move_windows(overlay, loupe)?;
+                self.show_windows();
+                self.draw_loupe(frame)?;
+                self.draw_overlay(frame)?;
+
+                Ok(frame.color)
+            }
+
+            fn hide_windows(&self) {
+                unsafe {
+                    ShowWindow(self.loupe_hwnd, SW_HIDE);
+                    ShowWindow(self.overlay_hwnd, SW_HIDE);
+                }
+            }
+
+            fn show_windows(&self) {
+                unsafe {
+                    ShowWindow(self.loupe_hwnd, SW_SHOWNOACTIVATE);
+                    ShowWindow(self.overlay_hwnd, SW_SHOWNOACTIVATE);
+                }
+            }
+
+            fn move_windows(&self, overlay: Point, loupe: Point) -> Result<(), MagnifierError> {
+                let loupe_ok = unsafe {
+                    SetWindowPos(
+                        self.loupe_hwnd,
+                        HWND_TOPMOST,
+                        loupe.x,
+                        loupe.y,
+                        LOUPE_DIAMETER,
+                        LOUPE_DIAMETER,
+                        SWP_NOACTIVATE,
+                    )
+                };
+
+                if loupe_ok == 0 {
+                    return Err(MagnifierError::PlatformFailure(
+                        "SetWindowPos failed for the loupe window".to_string(),
+                    ));
+                }
+
+                let overlay_ok = unsafe {
+                    SetWindowPos(
+                        self.overlay_hwnd,
+                        HWND_TOPMOST,
+                        overlay.x,
+                        overlay.y,
+                        WINDOW_WIDTH,
+                        WINDOW_HEIGHT,
+                        SWP_NOACTIVATE,
+                    )
+                };
+
+                if overlay_ok == 0 {
+                    Err(MagnifierError::PlatformFailure(
+                        "SetWindowPos failed for magnifier overlay".to_string(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+
+            fn draw_loupe(&self, frame: CaptureFrame) -> Result<(), MagnifierError> {
+                let dc = unsafe { GetDC(self.loupe_hwnd) };
+
+                if dc.is_null() {
+                    return Err(MagnifierError::PlatformFailure(
+                        "GetDC failed for the loupe window".to_string(),
+                    ));
+                }
+
+                let result = self.draw_loupe_into_dc(dc, frame);
+                let _ = unsafe { ReleaseDC(self.loupe_hwnd, dc) };
+                result
+            }
+
+            fn draw_loupe_into_dc(
+                &self,
+                dc: Hdc,
+                frame: CaptureFrame,
+            ) -> Result<(), MagnifierError> {
+                unsafe {
+                    SetStretchBltMode(dc, COLORONCOLOR);
+                }
+
+                let drawn = unsafe {
+                    StretchDIBits(
+                        dc,
+                        0,
+                        0,
+                        LOUPE_DIAMETER,
+                        LOUPE_DIAMETER,
+                        0,
+                        0,
+                        frame.span,
+                        frame.span,
+                        self.capture.pixels as *const c_void,
+                        &self.capture.bitmap_info,
+                        DIB_RGB_COLORS,
+                        SRCCOPY,
+                    )
+                };
+
+                if drawn == 0 {
+                    return Err(MagnifierError::CaptureUnavailable(
+                        "StretchDIBits failed while rendering the loupe",
+                    ));
+                }
+
+                self.draw_grid(dc, frame)
+            }
+
+            fn draw_grid(&self, dc: Hdc, frame: CaptureFrame) -> Result<(), MagnifierError> {
+                let scale = pixel_size(frame.span);
+                if scale < GRID_THRESHOLD {
+                    return Ok(());
+                }
+
+                let grid_pen = Pen::solid(rgb(255, 255, 255), 1)?;
+                let previous_pen = unsafe { SelectObject(dc, grid_pen.0 as HgdObj) };
+
+                for index in 1..frame.span {
+                    let offset = (index as f32 * scale).round() as i32;
+
+                    unsafe {
+                        MoveToEx(dc, offset, 0, null_mut());
+                        LineTo(dc, offset, LOUPE_DIAMETER);
+                        MoveToEx(dc, 0, offset, null_mut());
+                        LineTo(dc, LOUPE_DIAMETER, offset);
+                    }
+                }
+
+                unsafe {
+                    SelectObject(dc, previous_pen);
+                }
+
+                Ok(())
+            }
+
+            fn draw_overlay(&self, frame: CaptureFrame) -> Result<(), MagnifierError> {
+                let dc = unsafe { GetDC(self.overlay_hwnd) };
+
+                if dc.is_null() {
+                    return Err(MagnifierError::PlatformFailure(
+                        "GetDC failed for magnifier overlay".to_string(),
+                    ));
+                }
+
+                let result = self.draw_overlay_into_dc(dc, frame);
+                let _ = unsafe { ReleaseDC(self.overlay_hwnd, dc) };
+                result
+            }
+
+            fn draw_overlay_into_dc(
+                &self,
+                dc: Hdc,
+                frame: CaptureFrame,
+            ) -> Result<(), MagnifierError> {
+                let transparent_brush = Brush::solid(TRANSPARENT_KEY)?;
+                let line = rgb(250, 250, 250);
+                let pill = rgb(24, 26, 31);
+
+                unsafe {
+                    FillRect(
+                        dc,
+                        &Rect {
+                            left: 0,
+                            top: 0,
+                            right: WINDOW_WIDTH,
+                            bottom: WINDOW_HEIGHT,
+                        },
+                        transparent_brush.0,
+                    );
+                }
+
+                let circle = Rect {
+                    left: LOUPE_LEFT,
+                    top: LOUPE_TOP,
+                    right: LOUPE_LEFT + LOUPE_DIAMETER,
+                    bottom: LOUPE_TOP + LOUPE_DIAMETER,
+                };
+                let outline_pen = Pen::solid(line, 2)?;
+                let previous_pen = unsafe { SelectObject(dc, outline_pen.0 as HgdObj) };
+                let previous_brush = unsafe { SelectObject(dc, transparent_brush.0 as HgdObj) };
+
+                unsafe {
+                    Ellipse(dc, circle.left, circle.top, circle.right, circle.bottom);
+                }
+
+                let selected = selection_rect(frame);
+                let target_pen = Pen::solid(line, 2)?;
+                let previous_target_pen = unsafe { SelectObject(dc, target_pen.0 as HgdObj) };
+
+                unsafe {
+                    Rectangle(
+                        dc,
+                        selected.left,
+                        selected.top,
+                        selected.right,
+                        selected.bottom,
+                    );
+                    SelectObject(dc, previous_target_pen);
+                    SelectObject(dc, previous_pen);
+                    SelectObject(dc, previous_brush);
+                }
+
+                let label_rect = Rect {
+                    left: (WINDOW_WIDTH - LABEL_WIDTH) / 2,
+                    top: TEXT_TOP,
+                    right: (WINDOW_WIDTH + LABEL_WIDTH) / 2,
+                    bottom: TEXT_TOP + TEXT_HEIGHT,
+                };
+                let pill_brush = Brush::solid(pill)?;
+                let pill_pen = Pen::solid(line, 1)?;
+                let previous_pen = unsafe { SelectObject(dc, pill_pen.0 as HgdObj) };
+                let previous_brush = unsafe { SelectObject(dc, pill_brush.0 as HgdObj) };
+
+                unsafe {
+                    RoundRect(
+                        dc,
+                        label_rect.left,
+                        label_rect.top,
+                        label_rect.right,
+                        label_rect.bottom,
+                        14,
+                        14,
+                    );
+                    SelectObject(dc, previous_pen);
+                    SelectObject(dc, previous_brush);
+                }
+
+                if !self.text_font.is_null() {
+                    unsafe {
+                        SelectObject(dc, self.text_font as HgdObj);
+                    }
+                }
+
+                unsafe {
+                    SetBkMode(dc, TRANSPARENT_BKMODE);
+                    SetTextColor(dc, line);
+                }
+
+                let label = color_to_hex(frame.color)
+                    .trim_start_matches('#')
+                    .to_string();
+                let wide = encode_wide(&label);
+                let text_x = (WINDOW_WIDTH - (label.len() as i32 * 10)) / 2;
+
+                unsafe {
+                    TextOutW(dc, text_x, TEXT_TOP + 5, wide.as_ptr(), label.len() as i32);
+                }
+
+                Ok(())
+            }
+        }
+
+        impl Drop for NativeMagnifierWindow {
+            fn drop(&mut self) {
+                if !self.overlay_hwnd.is_null() {
+                    let _ = unsafe { DestroyWindow(self.overlay_hwnd) };
+                }
+
+                if !self.loupe_hwnd.is_null() {
+                    let _ = unsafe { DestroyWindow(self.loupe_hwnd) };
+                }
+
+                if !self.text_font.is_null() {
+                    let _ = unsafe { DeleteObject(self.text_font as HgdObj) };
+                }
+            }
+        }
+
+        struct Brush(Hbrush);
+
+        impl Brush {
+            fn solid(color: u32) -> Result<Self, MagnifierError> {
+                let brush = unsafe { CreateSolidBrush(color) };
+
+                if brush.is_null() {
+                    Err(MagnifierError::PlatformFailure(
+                        "CreateSolidBrush failed".to_string(),
+                    ))
+                } else {
+                    Ok(Self(brush))
+                }
+            }
+        }
+
+        impl Drop for Brush {
+            fn drop(&mut self) {
+                if !self.0.is_null() {
+                    let _ = unsafe { DeleteObject(self.0 as HgdObj) };
+                }
+            }
+        }
+
+        struct Pen(Hpen);
+
+        impl Pen {
+            fn solid(color: u32, width: i32) -> Result<Self, MagnifierError> {
+                let pen = unsafe { CreatePen(PS_SOLID, width, color) };
+
+                if pen.is_null() {
+                    Err(MagnifierError::PlatformFailure(
+                        "CreatePen failed".to_string(),
+                    ))
+                } else {
+                    Ok(Self(pen))
+                }
+            }
+        }
+
+        impl Drop for Pen {
+            fn drop(&mut self) {
+                if !self.0.is_null() {
+                    let _ = unsafe { DeleteObject(self.0 as HgdObj) };
+                }
+            }
+        }
+
+        struct Region(Hrgn);
+
+        impl Region {
+            fn ellipse(rect: Rect) -> Result<Self, MagnifierError> {
+                let region =
+                    unsafe { CreateEllipticRgn(rect.left, rect.top, rect.right, rect.bottom) };
+
+                if region.is_null() {
+                    Err(MagnifierError::PlatformFailure(
+                        "CreateEllipticRgn failed".to_string(),
+                    ))
+                } else {
+                    Ok(Self(region))
+                }
+            }
+
+            fn into_raw(self) -> Hrgn {
+                let raw = self.0;
+                std::mem::forget(self);
+                raw
+            }
+        }
+
+        impl Drop for Region {
+            fn drop(&mut self) {
+                if !self.0.is_null() {
+                    let _ = unsafe { DeleteObject(self.0 as HgdObj) };
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    mod platform {
+        use super::{MagnifierError, wait_for_pick};
+        use iced::Color;
+        use std::ffi::c_void;
+
+        type CfTypeRef = *const c_void;
+        type CgImageRef = *mut c_void;
+        type CgContextRef = *mut c_void;
+        type CgColorSpaceRef = *mut c_void;
+        type CgEventRef = *mut c_void;
+
+        const KCG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: u32 = 1;
+        const KCG_NULL_WINDOW_ID: u32 = 0;
+        const KCG_WINDOW_IMAGE_DEFAULT: u32 = 0;
+        const KCG_EVENT_SOURCE_STATE_COMBINED_SESSION_STATE: i32 = 0;
+        const KCG_MOUSE_BUTTON_LEFT: u32 = 0;
+        const ESCAPE_KEY_CODE: u16 = 53;
+        const KCG_IMAGE_ALPHA_PREMULTIPLIED_LAST: u32 = 1;
+        const KCG_BITMAP_BYTE_ORDER_32_BIG: u32 = 4 << 12;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy)]
+        struct CGPoint {
+            x: f64,
+            y: f64,
+        }
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy)]
+        struct CGSize {
+            width: f64,
+            height: f64,
+        }
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy)]
+        struct CGRect {
+            origin: CGPoint,
+            size: CGSize,
+        }
+
+        #[link(name = "ApplicationServices", kind = "framework")]
+        unsafe extern "C" {
+            fn CGPreflightScreenCaptureAccess() -> bool;
+            fn CGRequestScreenCaptureAccess() -> bool;
+            fn CGEventCreate(source: *const c_void) -> CgEventRef;
+            fn CGEventGetLocation(event: CgEventRef) -> CGPoint;
+            fn CGEventSourceButtonState(state_id: i32, button: u32) -> bool;
+            fn CGEventSourceKeyState(state_id: i32, key: u16) -> bool;
+            fn CGWindowListCreateImage(
+                screen_bounds: CGRect,
+                list_option: u32,
+                window_id: u32,
+                image_option: u32,
+            ) -> CgImageRef;
+            fn CGColorSpaceCreateDeviceRGB() -> CgColorSpaceRef;
+            fn CGBitmapContextCreate(
+                data: *mut c_void,
+                width: usize,
+                height: usize,
+                bits_per_component: usize,
+                bytes_per_row: usize,
+                space: CgColorSpaceRef,
+                bitmap_info: u32,
+            ) -> CgContextRef;
+            fn CGContextDrawImage(context: CgContextRef, rect: CGRect, image: CgImageRef);
+        }
+
+        #[link(name = "CoreFoundation", kind = "framework")]
+        unsafe extern "C" {
+            fn CFRelease(value: CfTypeRef);
+        }
+
+        pub(super) fn pick_color_blocking() -> Result<Color, MagnifierError> {
+            ensure_screen_capture_access()?;
+            wait_for_pick(left_button_down, escape_down, sample_color_at_cursor)
+        }
+
+        fn ensure_screen_capture_access() -> Result<(), MagnifierError> {
+            let granted = unsafe {
+                if CGPreflightScreenCaptureAccess() {
+                    true
+                } else {
+                    CGRequestScreenCaptureAccess()
+                }
+            };
+
+            if granted {
+                Ok(())
+            } else {
+                Err(MagnifierError::PermissionDenied)
+            }
+        }
+
+        fn left_button_down() -> bool {
+            unsafe {
+                CGEventSourceButtonState(
+                    KCG_EVENT_SOURCE_STATE_COMBINED_SESSION_STATE,
+                    KCG_MOUSE_BUTTON_LEFT,
+                )
+            }
+        }
+
+        fn escape_down() -> bool {
+            unsafe {
+                CGEventSourceKeyState(
+                    KCG_EVENT_SOURCE_STATE_COMBINED_SESSION_STATE,
+                    ESCAPE_KEY_CODE,
+                )
+            }
+        }
+
+        fn sample_color_at_cursor() -> Result<Color, MagnifierError> {
+            let point = cursor_position()?;
+            let image = unsafe {
+                CGWindowListCreateImage(
+                    CGRect {
+                        origin: point,
+                        size: CGSize {
+                            width: 1.0,
+                            height: 1.0,
+                        },
+                    },
+                    KCG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY,
+                    KCG_NULL_WINDOW_ID,
+                    KCG_WINDOW_IMAGE_DEFAULT,
+                )
+            };
+
+            if image.is_null() {
+                return Err(MagnifierError::CaptureUnavailable(
+                    "CGWindowListCreateImage returned null",
+                ));
+            }
+
+            let color = render_image_pixel(image);
+            unsafe { CFRelease(image as CfTypeRef) };
+            color
+        }
+
+        fn render_image_pixel(image: CgImageRef) -> Result<Color, MagnifierError> {
+            let color_space = unsafe { CGColorSpaceCreateDeviceRGB() };
+
+            if color_space.is_null() {
+                return Err(MagnifierError::CaptureUnavailable(
+                    "CGColorSpaceCreateDeviceRGB returned null",
+                ));
+            }
+
+            let mut pixel = [0u8; 4];
+            let context = unsafe {
+                CGBitmapContextCreate(
+                    pixel.as_mut_ptr().cast(),
+                    1,
+                    1,
+                    8,
+                    4,
+                    color_space,
+                    KCG_IMAGE_ALPHA_PREMULTIPLIED_LAST | KCG_BITMAP_BYTE_ORDER_32_BIG,
+                )
+            };
+
+            if context.is_null() {
+                unsafe { CFRelease(color_space as CfTypeRef) };
+                return Err(MagnifierError::CaptureUnavailable(
+                    "CGBitmapContextCreate returned null",
+                ));
+            }
+
+            unsafe {
+                CGContextDrawImage(
+                    context,
+                    CGRect {
+                        origin: CGPoint { x: 0.0, y: 0.0 },
+                        size: CGSize {
+                            width: 1.0,
+                            height: 1.0,
+                        },
+                    },
+                    image,
+                );
+                CFRelease(context as CfTypeRef);
+                CFRelease(color_space as CfTypeRef);
+            }
+
+            Ok(Color::from_rgba(
+                pixel[0] as f32 / 255.0,
+                pixel[1] as f32 / 255.0,
+                pixel[2] as f32 / 255.0,
+                pixel[3] as f32 / 255.0,
+            ))
+        }
+
+        fn cursor_position() -> Result<CGPoint, MagnifierError> {
+            let event = unsafe { CGEventCreate(std::ptr::null()) };
+
+            if event.is_null() {
+                return Err(MagnifierError::PlatformFailure(
+                    "CGEventCreate returned null".to_string(),
+                ));
+            }
+
+            let position = unsafe { CGEventGetLocation(event) };
+            unsafe { CFRelease(event as CfTypeRef) };
+
+            Ok(position)
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    mod platform {
+        use super::MagnifierError;
+        use iced::Color;
+
+        pub(super) fn pick_color_blocking() -> Result<Color, MagnifierError> {
+            Err(MagnifierError::UnsupportedPlatform)
+        }
     }
 }
 

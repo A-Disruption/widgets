@@ -1,10 +1,11 @@
 use iced::{
-    Background, Border, Color, Element, Task, Theme, clipboard,
+    Background, Border, Color, Element, Task, Theme,
     widget::{Space, button, column, container, text},
+    window,
 };
 use widgets::color_picker_two::{
-    ColorInfo, ColorModel, ContrastInfo, MagnifierRequest, MagnifierTarget, PickerPage,
-    color_picker_two, parse_color_string,
+    ColorInfo, ColorModel, ContrastInfo, MagnifierError, MagnifierRequest, MagnifierTarget,
+    PickerPage, color_picker_two, native_magnifier_supported, pick_color_task,
 };
 
 fn main() -> iced::Result {
@@ -16,6 +17,7 @@ fn main() -> iced::Result {
 
 struct App {
     picker_open: bool,
+    window_id: Option<window::Id>,
     color: Color,
     background: Color,
     hex: String,
@@ -23,16 +25,18 @@ struct App {
     model: ColorModel,
     contrast_ratio: f32,
     contrast_grade: String,
+    magnifier_status: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
+    WindowReady(Option<window::Id>),
     OpenPicker,
     ClosePicker,
     PickerChanged(ColorInfo),
     ContrastChanged(ContrastInfo),
     MagnifierRequested(MagnifierRequest),
-    MagnifierClipboardLoaded(MagnifierRequest, Option<String>),
+    MagnifierFinished(MagnifierRequest, Result<Color, MagnifierError>),
 }
 
 impl App {
@@ -44,6 +48,7 @@ impl App {
         (
             Self {
                 picker_open: true,
+                window_id: None,
                 color,
                 background,
                 hex: "#9CAA33".to_string(),
@@ -51,8 +56,9 @@ impl App {
                 model: ColorModel::Hsl,
                 contrast_ratio: ratio,
                 contrast_grade: contrast_grade_label(ratio).to_string(),
+                magnifier_status: None,
             },
-            Task::none(),
+            window::latest().map(Message::WindowReady),
         )
     }
 
@@ -66,6 +72,7 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::WindowReady(id) => self.window_id = id,
             Message::OpenPicker => self.picker_open = true,
             Message::ClosePicker => self.picker_open = false,
             Message::PickerChanged(info) => {
@@ -73,38 +80,71 @@ impl App {
                 self.hex = info.hex;
                 self.formatted = info.formatted;
                 self.model = info.model;
+                self.magnifier_status = None;
             }
             Message::ContrastChanged(info) => {
                 self.color = info.foreground;
                 self.background = info.background;
                 self.contrast_ratio = info.ratio;
                 self.contrast_grade = info.grade.label().to_string();
+                self.magnifier_status = None;
             }
             Message::MagnifierRequested(request) => {
-                return clipboard::read().map(move |contents| {
-                    Message::MagnifierClipboardLoaded(request.clone(), contents)
+                self.picker_open = false;
+                self.magnifier_status = Some(if native_magnifier_supported() {
+                    "Click anywhere to sample a color. Press Escape to cancel.".to_string()
+                } else {
+                    "Native magnifier is only implemented on Windows and macOS.".to_string()
                 });
-            }
-            Message::MagnifierClipboardLoaded(request, contents) => {
-                let Some(color) = contents.as_deref().and_then(parse_color_string) else {
-                    return Task::none();
-                };
 
-                match request.target {
-                    MagnifierTarget::CurrentColor | MagnifierTarget::Foreground => {
-                        let info = ColorInfo::new(color, self.model);
-                        self.color = color;
-                        self.hex = info.hex;
-                        self.formatted = info.formatted;
+                let pick = pick_color_task()
+                    .map(move |result| Message::MagnifierFinished(request.clone(), result));
+
+                if let Some(id) = self.window_id {
+                    return Task::batch([window::minimize::<Message>(id, true), pick]);
+                }
+
+                return pick;
+            }
+            Message::MagnifierFinished(request, result) => {
+                self.picker_open = true;
+
+                match result {
+                    Ok(color) => {
+                        match request.target {
+                            MagnifierTarget::CurrentColor | MagnifierTarget::Foreground => {
+                                let info = ColorInfo::new(color, self.model);
+                                self.color = color;
+                                self.hex = info.hex;
+                                self.formatted = info.formatted;
+                            }
+                            MagnifierTarget::Background => {
+                                self.background = color;
+                            }
+                        }
+
+                        let ratio = contrast_ratio(self.color, self.background);
+                        self.contrast_ratio = ratio;
+                        self.contrast_grade = contrast_grade_label(ratio).to_string();
+                        self.magnifier_status = Some(format!(
+                            "Sampled {} from the screen.",
+                            ColorInfo::new(color, self.model).hex
+                        ));
                     }
-                    MagnifierTarget::Background => {
-                        self.background = color;
+                    Err(MagnifierError::Cancelled) => {
+                        self.magnifier_status = Some("Magnifier cancelled.".to_string());
+                    }
+                    Err(error) => {
+                        self.magnifier_status = Some(error.to_string());
                     }
                 }
 
-                let ratio = contrast_ratio(self.color, self.background);
-                self.contrast_ratio = ratio;
-                self.contrast_grade = contrast_grade_label(ratio).to_string();
+                if let Some(id) = self.window_id {
+                    return Task::batch([
+                        window::minimize::<Message>(id, false),
+                        window::gain_focus::<Message>(id),
+                    ]);
+                }
             }
         }
 
@@ -142,6 +182,10 @@ impl App {
                 "Contrast: {:.1}:1 ({})",
                 self.contrast_ratio, self.contrast_grade
             )),
+            text(self.magnifier_status.as_deref().unwrap_or(
+                "Magnifier icons now use the native screen picker on supported platforms."
+            ),)
+            .size(14),
         ]
         .spacing(6)
         .padding(32);
