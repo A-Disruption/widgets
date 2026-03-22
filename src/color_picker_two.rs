@@ -476,6 +476,12 @@ impl State {
         self.sync_active_color();
     }
 
+    fn sync_live_colors(&mut self, color: Color, background_color: Color) {
+        self.foreground_color = color;
+        self.background_color = background_color;
+        self.sync_active_color();
+    }
+
     fn active_group(&self) -> &SwatchGroup {
         &self.swatch_groups[self.active_swatch_group]
     }
@@ -583,13 +589,13 @@ where
         let state = tree.state.downcast_mut::<State>();
 
         if !self.is_open || (state.dragging_slider.is_none() && !state.is_dragging_overlay) {
-            state.foreground_color = self.color;
-            state.background_color = self.contrast_background;
-            state.page = self.page;
+            state.sync_live_colors(self.color, self.contrast_background);
+            if !self.is_open {
+                state.page = self.page;
+            }
             if state.page == PickerPage::Picker {
                 state.contrast_target = ContrastTarget::Foreground;
             }
-            state.sync_active_color();
         }
 
         if !self.is_open {
@@ -1612,6 +1618,18 @@ fn draw_header<Renderer>(
     ] {
         let active = page == tab_page;
         let hovered = cursor.is_over(rect);
+        let tab_background = if active {
+            style.control_hover_background
+        } else if hovered {
+            Color::from_rgba(
+                style.control_hover_background.r,
+                style.control_hover_background.g,
+                style.control_hover_background.b,
+                0.55,
+            )
+        } else {
+            style.header_background
+        };
 
         if active || hovered {
             renderer.fill_quad(
@@ -1625,22 +1643,15 @@ fn draw_header<Renderer>(
                     shadow: Shadow::default(),
                     snap: true,
                 },
-                if active {
-                    style.control_hover_background
-                } else {
-                    Color::from_rgba(
-                        style.control_hover_background.r,
-                        style.control_hover_background.g,
-                        style.control_hover_background.b,
-                        0.55,
-                    )
-                },
+                tab_background,
             );
         }
 
         match tab_page {
             PickerPage::Picker => draw_picker_page_icon(renderer, rect, style.text_color),
-            PickerPage::Contrast => draw_contrast_page_icon(renderer, rect, style.text_color),
+            PickerPage::Contrast => {
+                draw_contrast_page_icon(renderer, rect, style.text_color, tab_background)
+            }
         }
     }
 
@@ -1910,13 +1921,15 @@ fn draw_contrast_wells<Renderer>(
             style.control_hover_background,
         );
     }
-    draw_text(
+    draw_swap_icon(
         renderer,
-        swap_rect,
-        "<>",
-        13.0,
+        Rectangle {
+            x: swap_rect.x + (swap_rect.width - 18.0) / 2.0,
+            y: swap_rect.y + (swap_rect.height - 16.0) / 2.0,
+            width: 18.0,
+            height: 16.0,
+        },
         style.muted_text_color,
-        text::Alignment::Center,
     );
 
     let fix_rect = contrast_fix_rect(bounds);
@@ -2420,22 +2433,22 @@ where
 {
     let stroke = Border {
         color,
-        width: 1.0,
-        radius: 2.5.into(),
+        width: 1.5,
+        radius: 2.0.into(),
     };
 
     for rect in [
         Rectangle {
-            x: bounds.x + 5.0,
-            y: bounds.y + 2.0,
-            width: 8.5,
-            height: 9.5,
+            x: bounds.x + 5.5,
+            y: bounds.y + 2.5,
+            width: 8.0,
+            height: 8.0,
         },
         Rectangle {
             x: bounds.x + 2.5,
-            y: bounds.y + 4.5,
-            width: 8.5,
-            height: 9.5,
+            y: bounds.y + 5.5,
+            width: 8.0,
+            height: 8.0,
         },
     ] {
         renderer.fill_quad(
@@ -2454,54 +2467,132 @@ fn draw_magnifier_icon<Renderer>(renderer: &mut Renderer, bounds: Rectangle, col
 where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
 {
-    // A compact, pixel-stepped eyedropper silhouette that stays readable at small sizes.
-    let pixels = [
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: Rectangle {
+                x: bounds.x + 2.0,
+                y: bounds.y + 2.0,
+                width: 9.0,
+                height: 9.0,
+            },
+            border: Border {
+                color,
+                width: 1.5,
+                radius: 4.5.into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        },
+        Color::TRANSPARENT,
+    );
+
+    let handle = [
         Rectangle {
-            x: bounds.x + 10.0,
-            y: bounds.y + 2.0,
-            width: 4.0,
-            height: 4.0,
+            x: bounds.x + 9.0,
+            y: bounds.y + 9.0,
+            width: 2.5,
+            height: 2.5,
         },
         Rectangle {
-            x: bounds.x + 8.0,
-            y: bounds.y + 5.0,
-            width: 3.0,
-            height: 3.0,
+            x: bounds.x + 11.2,
+            y: bounds.y + 11.2,
+            width: 2.5,
+            height: 2.5,
         },
         Rectangle {
-            x: bounds.x + 6.0,
-            y: bounds.y + 8.0,
-            width: 3.0,
-            height: 3.0,
+            x: bounds.x + 13.4,
+            y: bounds.y + 13.4,
+            width: 2.5,
+            height: 2.5,
         },
         Rectangle {
-            x: bounds.x + 4.0,
-            y: bounds.y + 10.0,
-            width: 3.0,
-            height: 3.0,
-        },
-        Rectangle {
-            x: bounds.x + 3.0,
-            y: bounds.y + 12.0,
-            width: 4.0,
-            height: 3.0,
-        },
-        Rectangle {
-            x: bounds.x + 2.0,
-            y: bounds.y + 15.0,
+            x: bounds.x + 12.1,
+            y: bounds.y + 12.1,
             width: 2.0,
             height: 2.0,
         },
     ];
 
-    for pixel in pixels {
+    for segment in handle {
         renderer.fill_quad(
             renderer::Quad {
-                bounds: pixel,
+                bounds: segment,
                 border: Border {
                     color: Color::TRANSPARENT,
                     width: 0.0,
                     radius: 1.5.into(),
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            color,
+        );
+    }
+}
+
+fn draw_swap_icon<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color)
+where
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+{
+    let segments = [
+        Rectangle {
+            x: bounds.x + 2.0,
+            y: bounds.y + 3.0,
+            width: 9.0,
+            height: 2.0,
+        },
+        Rectangle {
+            x: bounds.x + 10.0,
+            y: bounds.y + 1.0,
+            width: 2.0,
+            height: 2.0,
+        },
+        Rectangle {
+            x: bounds.x + 12.0,
+            y: bounds.y + 3.0,
+            width: 2.0,
+            height: 2.0,
+        },
+        Rectangle {
+            x: bounds.x + 10.0,
+            y: bounds.y + 5.0,
+            width: 2.0,
+            height: 2.0,
+        },
+        Rectangle {
+            x: bounds.x + 7.0,
+            y: bounds.y + 11.0,
+            width: 9.0,
+            height: 2.0,
+        },
+        Rectangle {
+            x: bounds.x + 5.0,
+            y: bounds.y + 9.0,
+            width: 2.0,
+            height: 2.0,
+        },
+        Rectangle {
+            x: bounds.x + 3.0,
+            y: bounds.y + 11.0,
+            width: 2.0,
+            height: 2.0,
+        },
+        Rectangle {
+            x: bounds.x + 5.0,
+            y: bounds.y + 13.0,
+            width: 2.0,
+            height: 2.0,
+        },
+    ];
+
+    for segment in segments {
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: segment,
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 1.0.into(),
                 },
                 shadow: Shadow::default(),
                 snap: true,
@@ -2576,47 +2667,85 @@ where
     }
 }
 
-fn draw_contrast_page_icon<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color)
-where
+fn draw_contrast_page_icon<Renderer>(
+    renderer: &mut Renderer,
+    bounds: Rectangle,
+    color: Color,
+    background: Color,
+) where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
 {
-    let pill = Rectangle {
-        x: bounds.x + 6.0,
-        y: bounds.y + 5.0,
-        width: bounds.width - 12.0,
-        height: bounds.height - 10.0,
+    let diameter = (bounds.width.min(bounds.height) - 10.0).max(12.0);
+    let circle = Rectangle {
+        x: bounds.x + (bounds.width - diameter) / 2.0,
+        y: bounds.y + (bounds.height - diameter) / 2.0,
+        width: diameter,
+        height: diameter,
+    };
+    let inner = Rectangle {
+        x: circle.x + 2.2,
+        y: circle.y + 2.2,
+        width: (circle.width - 4.4).max(0.0),
+        height: (circle.height - 4.4).max(0.0),
     };
 
     renderer.fill_quad(
         renderer::Quad {
-            bounds: pill,
-            border: Border {
-                color,
-                width: 1.0,
-                radius: (pill.height / 2.0).into(),
-            },
-            shadow: Shadow::default(),
-            snap: true,
-        },
-        Color::WHITE,
-    );
-    renderer.fill_quad(
-        renderer::Quad {
-            bounds: Rectangle {
-                x: pill.x,
-                y: pill.y,
-                width: pill.width / 2.0,
-                height: pill.height,
-            },
+            bounds: inner,
             border: Border {
                 color: Color::TRANSPARENT,
                 width: 0.0,
-                radius: (pill.height / 2.0).into(),
+                radius: (inner.height / 2.0).into(),
             },
             shadow: Shadow::default(),
             snap: true,
         },
         color,
+    );
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: Rectangle {
+                x: inner.x + inner.width / 2.0,
+                y: inner.y,
+                width: inner.width / 2.0,
+                height: inner.height,
+            },
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: (inner.height / 2.0).into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        },
+        background,
+    );
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: Rectangle {
+                x: circle.x + (circle.width / 2.0) - 0.6,
+                y: inner.y + 0.8,
+                width: 1.2,
+                height: (inner.height - 1.6).max(0.0),
+            },
+            border: Border::default(),
+            shadow: Shadow::default(),
+            snap: true,
+        },
+        color,
+    );
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: circle,
+            border: Border {
+                color,
+                width: 1.3,
+                radius: (circle.height / 2.0).into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        },
+        Color::TRANSPARENT,
     );
 }
 
@@ -3810,11 +3939,11 @@ mod native_magnifier {
         const TEXT_HEIGHT: i32 = 28;
         const MIN_ZOOM: i32 = 1;
         const MAX_ZOOM: i32 = 64;
-        const DEFAULT_ZOOM: i32 = 12;
+        const DEFAULT_ZOOM: i32 = 10;
         const TRANSPARENT_KEY: u32 = 0x00FF_00FF;
         const LABEL_WIDTH: i32 = 110;
-        const TARGET_SIZE: i32 = 12;
-        const GRID_THRESHOLD: f32 = 6.0;
+        const TARGET_SIZE: i32 = 10;
+        const GRID_THRESHOLD: f32 = 12.0;
         const SRCCOPY: u32 = 0x00CC_0020;
         const CAPTUREBLT: u32 = 0x4000_0000;
         const BI_RGB: u32 = 0;
@@ -4163,30 +4292,21 @@ mod native_magnifier {
 
         fn selection_rect(frame: CaptureFrame) -> Rect {
             let scale = pixel_size(frame.span);
-
-            if scale >= 4.0 {
-                let left = LOUPE_LEFT + (frame.cursor_offset.x as f32 * scale).round() as i32;
-                let top = LOUPE_TOP + (frame.cursor_offset.y as f32 * scale).round() as i32;
-                let size = scale.ceil() as i32;
-
-                Rect {
-                    left,
-                    top,
-                    right: left + size,
-                    bottom: top + size,
-                }
+            let center_x =
+                LOUPE_LEFT + (((frame.cursor_offset.x as f32) + 0.5) * scale).round() as i32;
+            let center_y =
+                LOUPE_TOP + (((frame.cursor_offset.y as f32) + 0.5) * scale).round() as i32;
+            let size = if scale >= GRID_THRESHOLD {
+                scale.ceil() as i32
             } else {
-                let center_x =
-                    LOUPE_LEFT + (((frame.cursor_offset.x as f32) + 0.5) * scale).round() as i32;
-                let center_y =
-                    LOUPE_TOP + (((frame.cursor_offset.y as f32) + 0.5) * scale).round() as i32;
+                TARGET_SIZE
+            };
 
-                Rect {
-                    left: center_x - (TARGET_SIZE / 2),
-                    top: center_y - (TARGET_SIZE / 2),
-                    right: center_x + ((TARGET_SIZE + 1) / 2),
-                    bottom: center_y + ((TARGET_SIZE + 1) / 2),
-                }
+            Rect {
+                left: center_x - (size / 2),
+                top: center_y - (size / 2),
+                right: center_x + ((size + 1) / 2),
+                bottom: center_y + ((size + 1) / 2),
             }
         }
 
@@ -4513,6 +4633,7 @@ mod native_magnifier {
             overlay_hwnd: Hwnd,
             text_font: Hfont,
             capture: CaptureSurface,
+            capture_exclusion_active: bool,
         }
 
         impl NativeMagnifierWindow {
@@ -4526,7 +4647,7 @@ mod native_magnifier {
                 let mut overlay_hwnd = null_mut();
                 let mut text_font = null_mut();
 
-                let build = (|| -> Result<CaptureSurface, MagnifierError> {
+                let build = (|| -> Result<(CaptureSurface, bool), MagnifierError> {
                     let window_class = WndClassW {
                         style: 0,
                         wnd_proc: Some(magnifier_window_proc),
@@ -4630,15 +4751,18 @@ mod native_magnifier {
                         )
                     };
 
-                    let _ = unsafe { SetWindowDisplayAffinity(loupe_hwnd, WDA_EXCLUDEFROMCAPTURE) };
-                    let _ =
-                        unsafe { SetWindowDisplayAffinity(overlay_hwnd, WDA_EXCLUDEFROMCAPTURE) };
+                    let loupe_excluded =
+                        unsafe { SetWindowDisplayAffinity(loupe_hwnd, WDA_EXCLUDEFROMCAPTURE) }
+                            != 0;
+                    let overlay_excluded =
+                        unsafe { SetWindowDisplayAffinity(overlay_hwnd, WDA_EXCLUDEFROMCAPTURE) }
+                            != 0;
 
-                    CaptureSurface::new()
+                    Ok((CaptureSurface::new()?, loupe_excluded && overlay_excluded))
                 })();
 
-                let capture = match build {
-                    Ok(capture) => capture,
+                let (capture, capture_exclusion_active) = match build {
+                    Ok(result) => result,
                     Err(error) => {
                         if !overlay_hwnd.is_null() {
                             let _ = unsafe { DestroyWindow(overlay_hwnd) };
@@ -4658,20 +4782,29 @@ mod native_magnifier {
                     overlay_hwnd,
                     text_font,
                     capture,
+                    capture_exclusion_active,
                 })
             }
 
             fn refresh(&mut self, cursor: Point, zoom: i32) -> Result<Color, MagnifierError> {
                 let source = source_rect(cursor, zoom);
-                self.hide_windows();
+                if !self.capture_exclusion_active {
+                    self.hide_windows();
+                }
                 let frame = self.capture.capture(source, cursor)?;
                 let overlay = popup_position_for_frame(cursor, frame);
                 let loupe = loupe_position(overlay);
 
-                self.move_windows(overlay, loupe)?;
+                if self.capture_exclusion_active {
+                    self.draw_loupe(frame)?;
+                    self.draw_overlay(frame)?;
+                    self.move_windows(overlay, loupe)?;
+                } else {
+                    self.move_windows(overlay, loupe)?;
+                    self.draw_loupe(frame)?;
+                    self.draw_overlay(frame)?;
+                }
                 self.show_windows();
-                self.draw_loupe(frame)?;
-                self.draw_overlay(frame)?;
 
                 Ok(frame.color)
             }
@@ -4786,7 +4919,7 @@ mod native_magnifier {
                     return Ok(());
                 }
 
-                let grid_pen = Pen::solid(rgb(255, 255, 255), 1)?;
+                let grid_pen = Pen::solid(rgb(232, 232, 232), 1)?;
                 let previous_pen = unsafe { SelectObject(dc, grid_pen.0 as HgdObj) };
 
                 for index in 1..frame.span {
@@ -4849,7 +4982,7 @@ mod native_magnifier {
                     right: LOUPE_LEFT + LOUPE_DIAMETER,
                     bottom: LOUPE_TOP + LOUPE_DIAMETER,
                 };
-                let outline_pen = Pen::solid(line, 2)?;
+                let outline_pen = Pen::solid(line, 1)?;
                 let previous_pen = unsafe { SelectObject(dc, outline_pen.0 as HgdObj) };
                 let previous_brush = unsafe { SelectObject(dc, transparent_brush.0 as HgdObj) };
 
@@ -4858,7 +4991,7 @@ mod native_magnifier {
                 }
 
                 let selected = selection_rect(frame);
-                let target_pen = Pen::solid(line, 2)?;
+                let target_pen = Pen::solid(line, 1)?;
                 let previous_target_pen = unsafe { SelectObject(dc, target_pen.0 as HgdObj) };
 
                 unsafe {
@@ -5322,6 +5455,50 @@ mod tests {
         let groups = normalize_swatch_groups(Vec::new());
         assert!(!groups.is_empty());
         assert_eq!(groups[0].name, "Grass");
+    }
+
+    #[test]
+    fn live_color_sync_preserves_current_page() {
+        let mut state = State::new(
+            Color::from_rgb8(0x22, 0x33, 0x44),
+            Color::from_rgb8(0x11, 0x11, 0x11),
+            ColorModel::Hsl,
+            PickerPage::Contrast,
+            Vec::new(),
+        );
+
+        state.page = PickerPage::Picker;
+        state.contrast_target = ContrastTarget::Foreground;
+        state.sync_live_colors(
+            Color::from_rgb8(0x9C, 0xAA, 0x33),
+            Color::from_rgb8(0x0A, 0x0A, 0x0A),
+        );
+
+        assert_eq!(state.page, PickerPage::Picker);
+        assert_color_close(state.color, Color::from_rgb8(0x9C, 0xAA, 0x33));
+    }
+
+    #[test]
+    fn external_sync_updates_page_when_reopened() {
+        let mut state = State::new(
+            Color::from_rgb8(0x22, 0x33, 0x44),
+            Color::from_rgb8(0x11, 0x11, 0x11),
+            ColorModel::Hsl,
+            PickerPage::Picker,
+            Vec::new(),
+        );
+
+        state.sync_from_external(
+            Color::from_rgb8(0x9C, 0xAA, 0x33),
+            Color::from_rgb8(0xF7, 0xF7, 0xF7),
+            ColorModel::Rgb,
+            PickerPage::Contrast,
+            &[],
+        );
+
+        assert_eq!(state.page, PickerPage::Contrast);
+        assert_eq!(state.model, ColorModel::Rgb);
+        assert_color_close(state.color, Color::from_rgb8(0x9C, 0xAA, 0x33));
     }
 
     #[test]
