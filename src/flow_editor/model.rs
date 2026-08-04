@@ -73,7 +73,7 @@ impl Style {
 
     /// Derive a default flow-editor palette from the active Iced theme.
     pub fn from_theme(theme: &Theme) -> Self {
-        let palette = theme.extended_palette();
+        let palette = theme.palette();
 
         Self {
             canvas_bg: palette.background.base.color,

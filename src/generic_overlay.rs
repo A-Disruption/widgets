@@ -1,11 +1,11 @@
-use iced::animation::{Animation, Easing};
+﻿use iced::animation::{Animation, Easing};
 use iced::time::{Duration, Instant};
 use iced::window;
 use iced::{
     Alignment, Background, Border, Color, Element, Event, Length, Padding, Pixels, Point,
     Rectangle, Shadow, Size, Vector,
     advanced::{
-        Clipboard, Layout, Overlay as _, Renderer as _, Shell, Widget,
+        Layout, Overlay as _, Renderer as _, Shell, Widget,
         layout::{self, Limits, Node},
         overlay, renderer, text,
         text::Renderer as _,
@@ -17,6 +17,7 @@ use iced::{
     keyboard, mouse, touch,
     widget::button,
 };
+use iced::advanced::graphics::core::length::{Bounds, Constraint, Sizing};
 
 const HEADER_HEIGHT: f32 = 32.0;
 const CLOSE_BUTTON_SIZE: f32 = 30.0;
@@ -24,6 +25,52 @@ const CLOSE_BUTTON_OFFSET: f32 = 1.0;
 const CONTENT_PADDING: f32 = 15.0;
 const RESIZE_HANDLE_SIZE: f32 = 8.0; // Size of resize hit areas
 const MIN_OVERLAY_SIZE: f32 = 100.0; // Minimum overlay dimensions
+
+/// Collapses a [`Length`] to either `Fill` or `Shrink`, depending on whether it
+/// grows with the available space.
+fn fluid(length: Length) -> Length {
+    if length.is_fill() {
+        Length::Fill
+    } else {
+        Length::Shrink
+    }
+}
+
+/// Returns `true` when a [`Length`] resolves to the intrinsic size of its contents.
+fn is_intrinsic(length: Length) -> bool {
+    matches!(length, Length::Shrink | Length::Fit)
+        || matches!(
+            length,
+            Length::Bounded {
+                sizing: Sizing::Shrink | Sizing::Fit,
+                ..
+            }
+        )
+}
+
+/// Resolves a [`Length`] to a concrete amount of pixels, given the space available
+/// to fill and the intrinsic size of the contents.
+fn resolve_length(length: Length, available: f32, intrinsic: impl FnOnce() -> f32) -> f32 {
+    match length {
+        Length::Fixed(amount) => amount,
+        Length::Fill | Length::FillPortion(_) => available,
+        Length::Shrink | Length::Fit => intrinsic(),
+        Length::Fluid(Constraint::Min(min)) => available.max(min),
+        Length::Fluid(Constraint::Max) => available.min(intrinsic()),
+        Length::Bounded { bounds, sizing } => {
+            let amount = match sizing {
+                Sizing::Fill(_) => available,
+                Sizing::Fit | Sizing::Shrink => intrinsic(),
+            };
+
+            match bounds {
+                Bounds::Min(min) => amount.max(min),
+                Bounds::Max(max) => amount.min(max),
+                Bounds::Both { min, max } => amount.clamp(min, max.max(min)),
+            }
+        }
+    }
+}
 
 /// Helper function to create an overlay button
 pub fn overlay_button<'a, Message, Theme, Renderer>(
@@ -190,14 +237,14 @@ where
         content: impl Into<Element<'a, Message, Theme, Renderer>>,
     ) -> Self {
         let button_content = label.into();
-        let size = button_content.as_widget().size_hint();
+        let size = button_content.as_widget().size();
 
         Self {
             // Overlay Button
             id: None,
             button_content,
-            width: size.width.fluid(),
-            height: size.height.fluid(),
+            width: fluid(size.width),
+            height: fluid(size.height),
             padding: DEFAULT_PADDING,
             button_class: <Theme as button::Catalog>::default(),
 
@@ -430,7 +477,7 @@ where
         self
     }
 
-    /// Sets the alpha/darkness of the opaque backdrop (clamped to 0.1–1.0)
+    /// Sets the alpha/darkness of the opaque backdrop (clamped to 0.1â€“1.0)
     #[must_use]
     pub fn opaque_alpha(mut self, alpha: f32) -> Self {
         self.opaque_alpha = alpha.clamp(0.1, 1.0);
@@ -845,14 +892,7 @@ where
         })
     }
 
-    fn children(&self) -> Vec<Tree> {
-        vec![
-            Tree::new(&(self.content)),
-            Tree::new(&(self.button_content)),
-        ]
-    }
-
-    fn diff(&self, tree: &mut Tree) {
+    fn diff(&mut self, tree: &mut Tree) {
         // Sync external is_open state with internal state
         if let Some(external_open) = self.external_is_open {
             let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
@@ -861,7 +901,7 @@ where
                     // Use pending_close so update() can start the animation with shell access
                     if self.animate {
                         state.pending_close = true;
-                        // Don't call reset() yet — deferred to update() via pending_close
+                        // Don't call reset() yet â€” deferred to update() via pending_close
                     } else {
                         state.reset();
                     }
@@ -874,7 +914,7 @@ where
             }
         }
 
-        tree.diff_children(&[&self.content, &self.button_content]);
+        tree.diff_children(&mut [&mut self.content, &mut self.button_content]);
     }
 
     fn size(&self) -> Size<Length> {
@@ -949,7 +989,6 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
@@ -979,7 +1018,6 @@ where
                 layout.children().next().unwrap(),
                 cursor,
                 renderer,
-                clipboard,
                 shell,
                 viewport,
             );
@@ -1101,7 +1139,6 @@ where
                 layout.children().next().unwrap(),
                 cursor,
                 renderer,
-                clipboard,
                 shell,
                 viewport,
             );
@@ -1212,25 +1249,18 @@ where
         // Initialize sizes if needed
         if state.current_width == 0.0 {
             let width_limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-            let resolved_width = match width_strategy {
-                Length::Fixed(w) => w,
-                Length::Fill => viewport.width,
-                Length::FillPortion(_) => viewport.width,
-                Length::Shrink => {
-                    let measure_limits =
-                        Limits::new(Size::ZERO, Size::new(viewport.width, f32::INFINITY));
-                    let temp_node = self.content.as_widget_mut().layout(
-                        content_tree,
-                        renderer,
-                        &measure_limits,
-                    );
-                    temp_node.size().width + padding
-                }
-            };
+            let resolved_width = resolve_length(width_strategy, viewport.width, || {
+                let measure_limits =
+                    Limits::new(Size::ZERO, Size::new(viewport.width, f32::INFINITY));
+                let temp_node =
+                    self.content
+                        .as_widget_mut()
+                        .layout(content_tree, renderer, &measure_limits);
+                temp_node.size().width + padding
+            });
 
             state.current_width = resolved_width;
-            let init_auto =
-                self.overlay_height.is_none() || matches!(height_strategy, Length::Shrink);
+            let init_auto = self.overlay_height.is_none() || is_intrinsic(height_strategy);
             state.height_auto = init_auto;
 
             // First layout with resolved width to measure natural content height
@@ -1247,12 +1277,10 @@ where
             if init_auto {
                 state.current_height = header_height + computed_content_h + padding;
             } else {
-                let resolved_height = match height_strategy {
-                    Length::Fixed(h) => h,
-                    Length::Fill => width_limits.max().height,
-                    Length::FillPortion(_) => width_limits.max().height,
-                    Length::Shrink => header_height + computed_content_h + padding,
-                };
+                let resolved_height =
+                    resolve_length(height_strategy, width_limits.max().height, || {
+                        header_height + computed_content_h + padding
+                    });
 
                 state.current_height = resolved_height;
 
@@ -1599,7 +1627,7 @@ where
         let bounds = layout.bounds();
         let draw_style = <Theme as Catalog>::style(theme, self.class);
 
-        // Alpha used only for backdrop animation — dialog draws at full opacity
+        // Alpha used only for backdrop animation â€” dialog draws at full opacity
         let alpha = self.state.open_progress;
 
         // Use layer rendering for proper overlay isolation
@@ -1679,6 +1707,8 @@ where
                         line_height: iced::advanced::text::LineHeight::default(),
                         shaping: iced::advanced::text::Shaping::Advanced,
                         wrapping: iced::advanced::text::Wrapping::default(),
+                        ellipsis: iced::advanced::text::Ellipsis::None,
+                        hint_factor: None,
                     },
                     Point::new(
                         header_bounds.center_x() - (CLOSE_BUTTON_SIZE / 2.0),
@@ -1714,7 +1744,7 @@ where
 
                     renderer.fill_text(
                         iced::advanced::Text {
-                            content: "×".to_string(),
+                            content: "Ã—".to_string(),
                             bounds: Size::new(close_bounds.width, close_bounds.height),
                             size: iced::Pixels(24.0),
                             font: iced::Font::default(),
@@ -1723,6 +1753,8 @@ where
                             line_height: iced::advanced::text::LineHeight::default(),
                             shaping: iced::advanced::text::Shaping::Basic,
                             wrapping: iced::advanced::text::Wrapping::default(),
+                            ellipsis: iced::advanced::text::Ellipsis::None,
+                            hint_factor: None,
                         },
                         Point::new(close_bounds.center_x(), close_bounds.center_y()),
                         draw_style.text_color,
@@ -1774,7 +1806,7 @@ where
             });
 
             // Debug: draw safe triangle outline when Ctrl is held (window coordinate space).
-            // Each edge is rendered as a series of 2×2 pixel squares spaced 1.5px apart,
+            // Each edge is rendered as a series of 2Ã—2 pixel squares spaced 1.5px apart,
             // producing a solid-looking line at typical display densities.
             if self.state.ctrl_pressed
                 && self.safe_triangle
@@ -1832,7 +1864,6 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
         let bounds = layout.bounds();
@@ -2025,14 +2056,14 @@ where
                         }
                         self.state.in_safe_triangle = false;
                     } else if raw_over_overlay {
-                        // Cursor is inside the overlay — safe zone no longer needed.
+                        // Cursor is inside the overlay â€” safe zone no longer needed.
                         // last_button_cursor_pos is intentionally NOT updated here: the safe
                         // triangle for this overlay stays anchored to where the cursor last
                         // left the trigger button, keeping it frozen while the user navigates
                         // inside the overlay (including through nested child overlay buttons).
                         self.state.in_safe_triangle = false;
                     } else if !self.state.is_closing {
-                        // Cursor is in the gap between button and overlay — check safe triangle
+                        // Cursor is in the gap between button and overlay â€” check safe triangle
                         if self.safe_triangle {
                             if let (Some(last_pos), Some(cur_pos)) =
                                 (self.state.last_button_cursor_pos, cursor.position())
@@ -2218,7 +2249,6 @@ where
                 content_layout,
                 cursor,
                 renderer,
-                clipboard,
                 shell,
                 &layout.bounds(),
             );
@@ -2491,7 +2521,7 @@ impl Catalog for iced::Theme {
 
     fn default<'a>() -> Self::Class<'a> {
         Box::new(|theme| {
-            let palette = theme.extended_palette();
+            let palette = theme.palette();
             Style {
                 background: palette.background.base.color,
                 header_background: palette.background.weak.color,
@@ -2512,7 +2542,7 @@ impl Catalog for iced::Theme {
 }
 
 pub fn primary(theme: &iced::Theme) -> Style {
-    let palette = theme.extended_palette();
+    let palette = theme.palette();
 
     Style {
         background: palette.primary.base.color,
@@ -2528,7 +2558,7 @@ pub fn primary(theme: &iced::Theme) -> Style {
 }
 
 pub fn success(theme: &iced::Theme) -> Style {
-    let palette = theme.extended_palette();
+    let palette = theme.palette();
 
     Style {
         background: palette.success.base.color,
@@ -2544,7 +2574,7 @@ pub fn success(theme: &iced::Theme) -> Style {
 }
 
 pub fn danger(theme: &iced::Theme) -> Style {
-    let palette = theme.extended_palette();
+    let palette = theme.palette();
 
     Style {
         background: palette.danger.base.color,
@@ -2560,7 +2590,7 @@ pub fn danger(theme: &iced::Theme) -> Style {
 }
 
 pub fn warning(theme: &iced::Theme) -> Style {
-    let palette = theme.extended_palette();
+    let palette = theme.palette();
 
     Style {
         background: palette.warning.base.color,
@@ -2576,7 +2606,7 @@ pub fn warning(theme: &iced::Theme) -> Style {
 }
 
 pub fn blank(theme: &iced::Theme) -> Style {
-    let palette = theme.extended_palette();
+    let palette = theme.palette();
 
     Style {
         background: Color::TRANSPARENT,

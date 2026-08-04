@@ -1,7 +1,7 @@
-use iced::{
+﻿use iced::{
     Border, Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector,
     advanced::{
-        Clipboard, Layout, Shell, Widget, layout, renderer,
+        Layout, Shell, Widget, layout, renderer,
         text::Renderer as _,
         widget::{self, tree::Tree},
     },
@@ -246,9 +246,9 @@ where
                 align_y: branch.align_y,
             });
 
-            let size_hint = branch.content.as_widget().size_hint();
-            *width = width.enclose(size_hint.width);
-            *height = height.enclose(size_hint.height);
+            let size_hint = branch.content.as_widget().size();
+            *width = width.cross(size_hint.width);
+            *height = height.stack(size_hint.height);
             branch_content.push(branch.content);
 
             for child in branch.children {
@@ -738,40 +738,22 @@ where
         })
     }
 
-    fn children(&self) -> Vec<Tree> {
+    fn diff(&mut self, state: &mut widget::Tree) {
         let mut children = vec![];
 
-        if let Some(ref expand_icon) = self.expand_icon {
-            children.push(Tree::new(expand_icon));
-        }
-
-        if let Some(ref collapse_icon) = self.collapse_icon {
-            children.push(Tree::new(collapse_icon));
-        }
-
-        for content in &self.branch_content {
-            children.push(Tree::new(content));
-        }
-
-        children
-    }
-
-    fn diff(&self, state: &mut widget::Tree) {
-        let mut children = vec![];
-
-        if let Some(ref expand_icon) = self.expand_icon {
+        if let Some(expand_icon) = self.expand_icon.as_mut() {
             children.push(expand_icon);
         }
 
-        if let Some(ref collapse_icon) = self.collapse_icon {
+        if let Some(collapse_icon) = self.collapse_icon.as_mut() {
             children.push(collapse_icon);
         }
 
-        for child in &self.branch_content {
+        for child in &mut self.branch_content {
             children.push(child);
         }
 
-        state.diff_children(&children);
+        state.diff_children(&mut children);
     }
 
     fn layout(
@@ -869,7 +851,11 @@ where
 
         let limits = limits.width(self.width).height(self.height);
         let available = limits.max();
-        let tree_fluid = self.width.fluid();
+        let tree_fluid = if self.width.is_fill() {
+            Length::Fill
+        } else {
+            Length::Shrink
+        };
         let content_offset = self.get_child_content_index();
 
         // Update visibility
@@ -894,7 +880,7 @@ where
         let mut max_content_width = 0.0f32;
         let mut total_nonfluid_height = 0.0;
 
-        // FIRST PASS — layout non-fluid branches, collect factors for fluid ones
+        // FIRST PASS â€” layout non-fluid branches, collect factors for fluid ones
         for index in 0..ordered_indices.len() {
             let i = ordered_indices[index];
             if i >= self.branches.len() {
@@ -933,8 +919,7 @@ where
             let content_limits = layout::Limits::new(
                 Size::ZERO,
                 Size::new(avail_w, (available.height - y).max(0.0)),
-            )
-            .max_width(avail_w);
+            );
 
             let content_layout =
                 content
@@ -965,7 +950,7 @@ where
             }
         }
 
-        // SECOND PASS — lay out fluid branches (width and/or height)
+        // SECOND PASS â€” lay out fluid branches (width and/or height)
         let total_height_fill: u16 = row_fill_factors
             .iter()
             .enumerate()
@@ -1033,7 +1018,7 @@ where
             };
 
             let content_limits =
-                layout::Limits::new(Size::ZERO, Size::new(avail_w, max_h)).max_width(avail_w);
+                layout::Limits::new(Size::ZERO, Size::new(avail_w, max_h));
 
             let content_layout =
                 content
@@ -1101,7 +1086,7 @@ where
             }
         }
 
-        // THIRD PASS — position each visible branch
+        // THIRD PASS â€” position each visible branch
         y = self.padding_y;
 
         let drop_indicator_space = if combined_state.tree_state.drag_active.is_some() {
@@ -1253,7 +1238,6 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
@@ -1288,7 +1272,6 @@ where
                 child_layout,
                 cursor,
                 renderer,
-                clipboard,
                 shell,
                 viewport,
             );
@@ -2237,7 +2220,7 @@ where
 
                             renderer.fill_text(
                                 iced::advanced::Text {
-                                    content: "→".into(),
+                                    content: "â†’".into(),
                                     bounds: Size::new(20.0, branch_height),
                                     size: Pixels(16.0),
                                     font: iced::Font::default(),
@@ -2246,6 +2229,8 @@ where
                                     line_height: iced::advanced::text::LineHeight::default(),
                                     shaping: iced::advanced::text::Shaping::Advanced,
                                     wrapping: iced::advanced::text::Wrapping::default(),
+                                    ellipsis: iced::advanced::text::Ellipsis::None,
+                                    hint_factor: None,
                                 },
                                 Point::new(indicator_x - 20.0, branch_y + (branch_height / 2.0)),
                                 indicator_color,
@@ -2325,9 +2310,9 @@ where
                     if branch.has_children {
                         if self.expand_icon.is_none() && self.collapse_icon.is_none() {
                             let arrow = if state.expanded.contains(&id) {
-                                "🠻"
+                                "ðŸ »"
                             } else {
-                                "🠺"
+                                "ðŸ º"
                             };
 
                             renderer.fill_text(
@@ -2341,6 +2326,8 @@ where
                                     line_height: iced::advanced::text::LineHeight::default(),
                                     shaping: iced::advanced::text::Shaping::Advanced,
                                     wrapping: iced::advanced::text::Wrapping::default(),
+                                    ellipsis: iced::advanced::text::Ellipsis::None,
+                                    hint_factor: None,
                                 },
                                 Point::new(
                                     indent_x + ARROW_X_PAD,
@@ -2754,7 +2741,6 @@ where
         _layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
         match event {
@@ -3489,7 +3475,7 @@ impl Catalog for iced::Theme {
 
     fn default<'a>() -> Self::Class<'a> {
         Box::new(|theme| {
-            let palette = theme.extended_palette();
+            let palette = theme.palette();
 
             Style {
                 text: palette.background.base.text,

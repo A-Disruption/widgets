@@ -1,4 +1,4 @@
-use iced::advanced::text::Renderer as _;
+﻿use iced::advanced::text::Renderer as _;
 use iced::advanced::{Renderer, renderer, text};
 use iced::{
     Border, Color, Font, Pixels, Point, Rectangle, Shadow, Size, Vector, alignment, border,
@@ -562,6 +562,8 @@ pub fn label(
             align_y: alignment::Vertical::Top,
             shaping: text::Shaping::Basic,
             wrapping: text::Wrapping::None,
+            ellipsis: iced::advanced::text::Ellipsis::None,
+            hint_factor: None,
         },
         position,
         color,

@@ -1,5 +1,5 @@
 use iced::advanced::{
-    Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
+    Layout, Shell, Widget, layout, mouse, overlay, renderer,
     widget::{Operation, Tree},
 };
 use iced::{
@@ -976,7 +976,6 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
         let inverse = self.transformation.inverse();
@@ -992,14 +991,9 @@ where
                 .expect("overlay layout should be computed before use"),
         );
 
-        inner.as_overlay_mut().update(
-            event,
-            scene_layout,
-            cursor * inverse,
-            renderer,
-            clipboard,
-            shell,
-        );
+        inner
+            .as_overlay_mut()
+            .update(event, scene_layout, cursor * inverse, renderer, shell);
     }
 
     fn mouse_interaction(
@@ -1062,21 +1056,26 @@ where
 impl<'a, Message: Clone + 'a, Theme: Catalog> Widget<Message, Theme, Renderer>
     for FlowEditor<'a, Message, Theme>
 {
-    fn children(&self) -> Vec<Tree> {
-        let slots = self.child_slots();
-        slots
-            .iter()
-            .map(|&slot| Tree::new(self.child_element(slot).as_widget()))
-            .collect()
-    }
+    fn diff(&mut self, tree: &mut Tree) {
+        // Mirrors the ordering of `child_slots`, gathering mutable borrows in one pass
+        let mut children = Vec::new();
 
-    fn diff(&self, tree: &mut Tree) {
-        let slots = self.child_slots();
-        let widgets: Vec<_> = slots
-            .iter()
-            .map(|&slot| self.child_element(slot).as_widget())
-            .collect();
-        tree.diff_children(&widgets);
+        for content in &mut self.content {
+            if let Some(header) = content.header.as_mut() {
+                children.push(header);
+            }
+            if let Some(body) = content.body.as_mut() {
+                children.push(body);
+            }
+            if let Some(selected_top) = content.selected_top.as_mut() {
+                children.push(selected_top);
+            }
+            if let Some(selected_bottom) = content.selected_bottom.as_mut() {
+                children.push(selected_bottom);
+            }
+        }
+
+        tree.diff_children(&mut children);
     }
 
     fn size(&self) -> Size<Length> {
@@ -1208,7 +1207,6 @@ impl<'a, Message: Clone + 'a, Theme: Catalog> Widget<Message, Theme, Renderer>
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
@@ -1305,7 +1303,6 @@ impl<'a, Message: Clone + 'a, Theme: Catalog> Widget<Message, Theme, Renderer>
                     child_layouts[slot_idx],
                     child_cursor,
                     renderer,
-                    clipboard,
                     shell,
                     child_viewport,
                 );

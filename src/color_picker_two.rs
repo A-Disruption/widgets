@@ -36,7 +36,8 @@ use iced::{
     Background, Border, Color, Degrees, Element, Event, Length, Point, Rectangle, Shadow, Size,
     Task, Vector,
     advanced::{
-        Clipboard, Layout, Overlay, Shell, Widget,
+        Layout, Overlay, Shell, Widget,
+        clipboard::Content as ClipboardContent,
         layout::{Limits, Node},
         overlay, renderer,
         widget::{self, tree::Tree},
@@ -585,7 +586,7 @@ where
         ))
     }
 
-    fn diff(&self, tree: &mut Tree) {
+    fn diff(&mut self, tree: &mut Tree) {
         let state = tree.state.downcast_mut::<State>();
 
         if !self.is_open || (state.dragging_slider.is_none() && !state.is_dragging_overlay) {
@@ -637,7 +638,6 @@ where
         _layout: Layout<'_>,
         _cursor: mouse::Cursor,
         _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
         _shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
@@ -897,20 +897,17 @@ where
         shell.request_redraw();
     }
 
-    fn copy_hex(&mut self, clipboard: &mut dyn Clipboard, shell: &mut Shell<'_, Message>) {
-        clipboard.write(
-            iced::advanced::clipboard::Kind::Standard,
-            color_to_hex(self.state.color),
-        );
+    fn copy_hex(&mut self, shell: &mut Shell<'_, Message>) {
+        shell.write_clipboard(ClipboardContent::Text(color_to_hex(self.state.color)));
         self.set_feedback(FeedbackKind::Hex);
         shell.request_redraw();
     }
 
-    fn copy_formatted(&mut self, clipboard: &mut dyn Clipboard, shell: &mut Shell<'_, Message>) {
-        clipboard.write(
-            iced::advanced::clipboard::Kind::Standard,
-            format_model_value(self.state.model, self.state.color),
-        );
+    fn copy_formatted(&mut self, shell: &mut Shell<'_, Message>) {
+        shell.write_clipboard(ClipboardContent::Text(format_model_value(
+            self.state.model,
+            self.state.color,
+        )));
         self.set_feedback(FeedbackKind::Formatted);
         shell.request_redraw();
     }
@@ -926,21 +923,10 @@ where
         shell.request_redraw();
     }
 
-    fn paste_clipboard_color(&mut self, clipboard: &dyn Clipboard, shell: &mut Shell<'_, Message>) {
-        let Some(contents) = clipboard.read(iced::advanced::clipboard::Kind::Standard) else {
-            self.set_feedback(FeedbackKind::InvalidPaste);
-            shell.request_redraw();
-            return;
-        };
-
-        let Some(color) = parse_color_string(&contents) else {
-            self.set_feedback(FeedbackKind::InvalidPaste);
-            shell.request_redraw();
-            return;
-        };
-
-        self.set_color(color, shell);
-        self.set_feedback(FeedbackKind::Pasted);
+    fn paste_clipboard_color(&mut self, shell: &mut Shell<'_, Message>) {
+        // TODO(iced master): clipboard reads are async via Shell::read_clipboard +
+        // a clipboard::Event::Read event. Wire up later.
+        self.set_feedback(FeedbackKind::InvalidPaste);
         shell.request_redraw();
     }
 
@@ -1260,7 +1246,6 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
         let bounds = layout.bounds();
@@ -1315,14 +1300,14 @@ where
 
                 if hex_value_rect(bounds, self.state.page).contains(cursor_pos) {
                     self.close_menu(shell);
-                    self.copy_hex(clipboard, shell);
+                    self.copy_hex(shell);
                     shell.capture_event();
                     return;
                 }
 
                 if copy_button_rect(bounds, self.state.page).contains(cursor_pos) {
                     self.close_menu(shell);
-                    self.copy_formatted(clipboard, shell);
+                    self.copy_formatted(shell);
                     shell.capture_event();
                     return;
                 }
@@ -1465,7 +1450,7 @@ where
                     && !modifiers.alt()
                 {
                     self.close_menu(shell);
-                    self.paste_clipboard_color(clipboard, shell);
+                    self.paste_clipboard_color(shell);
                     shell.capture_event();
                 }
             }
@@ -2420,6 +2405,8 @@ fn draw_text_with_font<Renderer>(
             line_height: iced::advanced::text::LineHeight::default(),
             shaping: iced::advanced::text::Shaping::Basic,
             wrapping: iced::widget::text::Wrapping::None,
+            ellipsis: iced::advanced::text::Ellipsis::None,
+            hint_factor: None,
         },
         anchor,
         color,
@@ -3735,7 +3722,7 @@ impl Catalog for iced::Theme {
 
 /// Default style inspired by the provided ColorSlurp UI.
 pub fn default_style(theme: &iced::Theme, _status: Status) -> Style {
-    let accent = theme.extended_palette().primary.base.color;
+    let accent = theme.palette().primary.base.color;
 
     Style {
         background: Color::from_rgb8(0xF7, 0xF6, 0xF3),

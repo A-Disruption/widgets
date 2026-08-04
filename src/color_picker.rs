@@ -2,7 +2,8 @@ use iced::{
     Border, Color, Element, Event, Length, Padding, Point, Rectangle, Renderer, Shadow, Size,
     Vector,
     advanced::{
-        Clipboard, Layout, Overlay, Renderer as _, Shell, Widget,
+        Layout, Overlay, Renderer as _, Shell, Widget,
+        clipboard::Content as ClipboardContent,
         layout::{Limits, Node},
         overlay, renderer,
         text::Renderer as _,
@@ -195,7 +196,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
         })
     }
 
-    fn diff(&self, tree: &mut Tree) {
+    fn diff(&mut self, tree: &mut Tree) {
         let state = tree.state.downcast_mut::<State>();
 
         // Sync external color to internal state if it changed
@@ -234,7 +235,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
                 bounds,
                 border: Border {
                     color: if state.is_open {
-                        theme.palette().primary
+                        theme.palette().primary.base.color
                     } else {
                         Color::from_rgb(0.5, 0.5, 0.5)
                     },
@@ -276,6 +277,8 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
                     line_height: iced::advanced::text::LineHeight::default(),
                     shaping: iced::advanced::text::Shaping::Basic,
                     wrapping: iced::widget::text::Wrapping::default(),
+                    ellipsis: iced::advanced::text::Ellipsis::None,
+                    hint_factor: None,
                 },
                 Point::new(bounds.center_x(), bounds.center_y()),
                 text_color,
@@ -291,7 +294,6 @@ impl<'a, Message: Clone + 'a> Widget<Message, iced::Theme, Renderer> for ColorBu
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
@@ -513,153 +515,119 @@ impl OverlayState {
         let base = match (source.row, source.tone, source.pick_target) {
             // Background paths
             ("Background", "Base", PickTarget::Color) => {
-                "theme.extended_palette()    \n.background.base.color\n"
+                "theme.palette()    \n.background.base.color\n"
             }
             ("Background", "Base", PickTarget::Text) => {
-                "theme.extended_palette()    \n.background.base.text\n"
+                "theme.palette()    \n.background.base.text\n"
             }
             ("Background", "Neutral", PickTarget::Color) => {
-                "theme.extended_palette()    \n.background.neutral.color\n"
+                "theme.palette()    \n.background.neutral.color\n"
             }
             ("Background", "Neutral", PickTarget::Text) => {
-                "theme.extended_palette()    \n.background.neutral.text\n"
+                "theme.palette()    \n.background.neutral.text\n"
             }
             ("Background", "Weak", PickTarget::Color) => {
-                "theme.extended_palette()    \n.background.weak.color\n"
+                "theme.palette()    \n.background.weak.color\n"
             }
             ("Background", "Weak", PickTarget::Text) => {
-                "theme.extended_palette()    \n.background.weak.text\n"
+                "theme.palette()    \n.background.weak.text\n"
             }
             ("Background", "Weaker", PickTarget::Color) => {
-                "theme.extended_palette()    \n.background.weaker.color\n"
+                "theme.palette()    \n.background.weaker.color\n"
             }
             ("Background", "Weaker", PickTarget::Text) => {
-                "theme.extended_palette()    \n.background.weaker.text\n"
+                "theme.palette()    \n.background.weaker.text\n"
             }
             ("Background", "Weakest", PickTarget::Color) => {
-                "theme.extended_palette()    \n.background.weakest.color\n"
+                "theme.palette()    \n.background.weakest.color\n"
             }
             ("Background", "Weakest", PickTarget::Text) => {
-                "theme.extended_palette()    \n.background.weakest.text\n"
+                "theme.palette()    \n.background.weakest.text\n"
             }
             ("Background", "Strong", PickTarget::Color) => {
-                "theme.extended_palette()    \n.background.strong.color\n"
+                "theme.palette()    \n.background.strong.color\n"
             }
             ("Background", "Strong", PickTarget::Text) => {
-                "theme.extended_palette()    \n.background.strong.text\n"
+                "theme.palette()    \n.background.strong.text\n"
             }
             ("Background", "Stronger", PickTarget::Color) => {
-                "theme.extended_palette()    \n.background.stronger.color\n"
+                "theme.palette()    \n.background.stronger.color\n"
             }
             ("Background", "Stronger", PickTarget::Text) => {
-                "theme.extended_palette()    \n.background.stronger.text\n"
+                "theme.palette()    \n.background.stronger.text\n"
             }
             ("Background", "Strongest", PickTarget::Color) => {
-                "theme.extended_palette()    \n.background.strongest.color\n"
+                "theme.palette()    \n.background.strongest.color\n"
             }
             ("Background", "Strongest", PickTarget::Text) => {
-                "theme.extended_palette()    \n.background.strongest.text\n"
+                "theme.palette()    \n.background.strongest.text\n"
             }
 
             // Primary paths
-            ("Primary", "Base", PickTarget::Color) => {
-                "theme.extended_palette()    \n.primary.base.color\n"
-            }
-            ("Primary", "Base", PickTarget::Text) => {
-                "theme.extended_palette()    \n.primary.base.text\n"
-            }
-            ("Primary", "Weak", PickTarget::Color) => {
-                "theme.extended_palette()    \n.primary.weak.color\n"
-            }
-            ("Primary", "Weak", PickTarget::Text) => {
-                "theme.extended_palette()    \n.primary.weak.text\n"
-            }
+            ("Primary", "Base", PickTarget::Color) => "theme.palette()    \n.primary.base.color\n",
+            ("Primary", "Base", PickTarget::Text) => "theme.palette()    \n.primary.base.text\n",
+            ("Primary", "Weak", PickTarget::Color) => "theme.palette()    \n.primary.weak.color\n",
+            ("Primary", "Weak", PickTarget::Text) => "theme.palette()    \n.primary.weak.text\n",
             ("Primary", "Strong", PickTarget::Color) => {
-                "theme.extended_palette()    \n.primary.strong.color\n"
+                "theme.palette()    \n.primary.strong.color\n"
             }
             ("Primary", "Strong", PickTarget::Text) => {
-                "theme.extended_palette()    \n.primary.strong.text\n"
+                "theme.palette()    \n.primary.strong.text\n"
             }
 
             // Secondary paths
             ("Secondary", "Base", PickTarget::Color) => {
-                "theme.extended_palette()    \n.secondary.base.color\n"
+                "theme.palette()    \n.secondary.base.color\n"
             }
             ("Secondary", "Base", PickTarget::Text) => {
-                "theme.extended_palette()    \n.secondary.base.text\n"
+                "theme.palette()    \n.secondary.base.text\n"
             }
             ("Secondary", "Weak", PickTarget::Color) => {
-                "theme.extended_palette()    \n.secondary.weak.color\n"
+                "theme.palette()    \n.secondary.weak.color\n"
             }
             ("Secondary", "Weak", PickTarget::Text) => {
-                "theme.extended_palette()    \n.secondary.weak.text\n"
+                "theme.palette()    \n.secondary.weak.text\n"
             }
             ("Secondary", "Strong", PickTarget::Color) => {
-                "theme.extended_palette()    \n.secondary.strong.color\n"
+                "theme.palette()    \n.secondary.strong.color\n"
             }
             ("Secondary", "Strong", PickTarget::Text) => {
-                "theme.extended_palette()    \n.secondary.strong.text\n"
+                "theme.palette()    \n.secondary.strong.text\n"
             }
 
             // Success paths
-            ("Success", "Base", PickTarget::Color) => {
-                "theme.extended_palette()    \n.success.base.color\n"
-            }
-            ("Success", "Base", PickTarget::Text) => {
-                "theme.extended_palette()    \n.success.base.text\n"
-            }
-            ("Success", "Weak", PickTarget::Color) => {
-                "theme.extended_palette()    \n.success.weak.color\n"
-            }
-            ("Success", "Weak", PickTarget::Text) => {
-                "theme.extended_palette()    \n.success.weak.text\n"
-            }
+            ("Success", "Base", PickTarget::Color) => "theme.palette()    \n.success.base.color\n",
+            ("Success", "Base", PickTarget::Text) => "theme.palette()    \n.success.base.text\n",
+            ("Success", "Weak", PickTarget::Color) => "theme.palette()    \n.success.weak.color\n",
+            ("Success", "Weak", PickTarget::Text) => "theme.palette()    \n.success.weak.text\n",
             ("Success", "Strong", PickTarget::Color) => {
-                "theme.extended_palette()    \n.success.strong.color\n"
+                "theme.palette()    \n.success.strong.color\n"
             }
             ("Success", "Strong", PickTarget::Text) => {
-                "theme.extended_palette()    \n.success.strong.text\n"
+                "theme.palette()    \n.success.strong.text\n"
             }
 
             // Warning paths
-            ("Warning", "Base", PickTarget::Color) => {
-                "theme.extended_palette()    \n.warning.base.color\n"
-            }
-            ("Warning", "Base", PickTarget::Text) => {
-                "theme.extended_palette()    \n.warning.base.text\n"
-            }
-            ("Warning", "Weak", PickTarget::Color) => {
-                "theme.extended_palette()    \n.warning.weak.color\n"
-            }
-            ("Warning", "Weak", PickTarget::Text) => {
-                "theme.extended_palette()    \n.warning.weak.text\n"
-            }
+            ("Warning", "Base", PickTarget::Color) => "theme.palette()    \n.warning.base.color\n",
+            ("Warning", "Base", PickTarget::Text) => "theme.palette()    \n.warning.base.text\n",
+            ("Warning", "Weak", PickTarget::Color) => "theme.palette()    \n.warning.weak.color\n",
+            ("Warning", "Weak", PickTarget::Text) => "theme.palette()    \n.warning.weak.text\n",
             ("Warning", "Strong", PickTarget::Color) => {
-                "theme.extended_palette()    \n.warning.strong.color\n"
+                "theme.palette()    \n.warning.strong.color\n"
             }
             ("Warning", "Strong", PickTarget::Text) => {
-                "theme.extended_palette()    \n.warning.strong.text\n"
+                "theme.palette()    \n.warning.strong.text\n"
             }
 
             // Danger paths
-            ("Danger", "Base", PickTarget::Color) => {
-                "theme.extended_palette()    \n.danger.base.color\n"
-            }
-            ("Danger", "Base", PickTarget::Text) => {
-                "theme.extended_palette()    \n.danger.base.text\n"
-            }
-            ("Danger", "Weak", PickTarget::Color) => {
-                "theme.extended_palette()    \n.danger.weak.color\n"
-            }
-            ("Danger", "Weak", PickTarget::Text) => {
-                "theme.extended_palette()    \n.danger.weak.text\n"
-            }
+            ("Danger", "Base", PickTarget::Color) => "theme.palette()    \n.danger.base.color\n",
+            ("Danger", "Base", PickTarget::Text) => "theme.palette()    \n.danger.base.text\n",
+            ("Danger", "Weak", PickTarget::Color) => "theme.palette()    \n.danger.weak.color\n",
+            ("Danger", "Weak", PickTarget::Text) => "theme.palette()    \n.danger.weak.text\n",
             ("Danger", "Strong", PickTarget::Color) => {
-                "theme.extended_palette()    \n.danger.strong.color\n"
+                "theme.palette()    \n.danger.strong.color\n"
             }
-            ("Danger", "Strong", PickTarget::Text) => {
-                "theme.extended_palette()    \n.danger.strong.text\n"
-            }
+            ("Danger", "Strong", PickTarget::Text) => "theme.palette()    \n.danger.strong.text\n",
 
             _ => return None,
         };
@@ -743,7 +711,7 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
             renderer::Quad {
                 bounds,
                 border: Border {
-                    color: theme.extended_palette().background.weak.color,
+                    color: theme.palette().background.weak.color,
                     width: 1.0,
                     radius: 12.0.into(),
                 },
@@ -754,7 +722,7 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
                 },
                 snap: true,
             },
-            theme.extended_palette().background.base.color,
+            theme.palette().background.base.color,
         );
 
         // Draw header background
@@ -778,7 +746,7 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
                 shadow: Shadow::default(),
                 snap: true,
             },
-            theme.extended_palette().background.neutral.color,
+            theme.palette().background.neutral.color,
         );
 
         // Shadow under header with no bleed to left / right
@@ -812,9 +780,11 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
                 line_height: iced::advanced::text::LineHeight::default(),
                 shaping: iced::advanced::text::Shaping::Advanced,
                 wrapping: iced::widget::text::Wrapping::default(),
+                ellipsis: iced::advanced::text::Ellipsis::None,
+                hint_factor: None,
             },
             Point::new(header_bounds.center_x(), header_bounds.center_y()),
-            theme.extended_palette().background.weak.text,
+            theme.palette().background.weak.text,
             header_bounds,
         );
 
@@ -835,7 +805,7 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
 
         renderer.fill_text(
             iced::advanced::Text {
-                content: "×".to_string(),
+                content: "Ã—".to_string(),
                 bounds: Size::new(close_bounds.width, close_bounds.height),
                 size: iced::Pixels(24.0),
                 font: iced::Font::default(),
@@ -844,6 +814,8 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
                 line_height: iced::advanced::text::LineHeight::default(),
                 shaping: iced::advanced::text::Shaping::Basic,
                 wrapping: iced::widget::text::Wrapping::default(),
+                ellipsis: iced::advanced::text::Ellipsis::None,
+                hint_factor: None,
             },
             Point::new(close_bounds.center_x(), close_bounds.center_y()),
             style.text_color,
@@ -873,9 +845,9 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
                     ..Default::default()
                 },
                 if is_active {
-                    theme.extended_palette().primary.base.color
+                    theme.palette().primary.base.color
                 } else if is_hovered {
-                    theme.extended_palette().background.weak.color
+                    theme.palette().background.weak.color
                 } else {
                     Color::TRANSPARENT
                 },
@@ -891,6 +863,8 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
                     line_height: iced::advanced::text::LineHeight::default(),
                     shaping: iced::advanced::text::Shaping::Basic,
                     wrapping: iced::widget::text::Wrapping::default(),
+                    ellipsis: iced::advanced::text::Ellipsis::None,
+                    hint_factor: None,
                 },
                 Point::new(tab_bounds.center_x(), tab_bounds.center_y()),
                 if is_active {
@@ -943,7 +917,7 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
                         bounds: preset_bounds,
                         border: Border {
                             color: if is_hovered {
-                                theme.palette().primary
+                                theme.palette().primary.base.color
                             } else {
                                 Color::from_rgba(0.5, 0.5, 0.5, 0.9)
                             },
@@ -981,7 +955,7 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
                         shadow: Shadow::default(),
                         snap: true,
                     },
-                    theme.extended_palette().background.weak.color,
+                    theme.palette().background.weak.color,
                 );
 
                 renderer.fill_text(
@@ -995,6 +969,8 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
                         line_height: iced::advanced::text::LineHeight::default(),
                         shaping: iced::advanced::text::Shaping::Basic,
                         wrapping: iced::widget::text::Wrapping::default(),
+                        ellipsis: iced::advanced::text::Ellipsis::None,
+                        hint_factor: None,
                     },
                     Point::new(add_preset_bounds.center_x(), add_preset_bounds.center_y()),
                     style.text_color,
@@ -1010,7 +986,6 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
         let bounds = layout.bounds();
@@ -1156,13 +1131,7 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
                         self.handle_spectrum_click(content_bounds, cursor, shell);
                     }
                     ColorPickerTab::Sliders => {
-                        self.handle_slider_click(
-                            content_bounds,
-                            cursor,
-                            clipboard,
-                            shell,
-                            ColorString::Hex,
-                        );
+                        self.handle_slider_click(content_bounds, cursor, shell, ColorString::Hex);
                     }
                     ColorPickerTab::Palette => {
                         self.overlay_state.palette_cache_dirty.set(true);
@@ -1185,13 +1154,7 @@ impl<'a, Message: Clone> Overlay<Message, iced::Theme, Renderer>
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 match self.overlay_state.active_tab {
                     ColorPickerTab::Sliders => {
-                        self.handle_slider_click(
-                            content_bounds,
-                            cursor,
-                            clipboard,
-                            shell,
-                            ColorString::Rgb,
-                        );
+                        self.handle_slider_click(content_bounds, cursor, shell, ColorString::Rgb);
                     }
                     ColorPickerTab::Palette => {
                         self.overlay_state.palette_cache_dirty.set(true);
@@ -1553,6 +1516,8 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                     line_height: iced::advanced::text::LineHeight::default(),
                     shaping: iced::advanced::text::Shaping::Basic,
                     wrapping: iced::widget::text::Wrapping::default(),
+                    ellipsis: iced::advanced::text::Ellipsis::None,
+                    hint_factor: None,
                 },
                 Point::new(bounds.x, y + slider_height / 2.0),
                 style.text_color,
@@ -1582,7 +1547,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                     shadow: Shadow::default(),
                     snap: true,
                 },
-                theme.extended_palette().background.weak.color,
+                theme.palette().background.weak.color,
             );
 
             // Slider fill
@@ -1619,7 +1584,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                 renderer::Quad {
                     bounds: handle_bounds,
                     border: Border {
-                        color: theme.extended_palette().background.weak.color,
+                        color: theme.palette().background.weak.color,
                         width: 2.0,
                         radius: 8.0.into(),
                     },
@@ -1642,6 +1607,8 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                     line_height: iced::advanced::text::LineHeight::default(),
                     shaping: iced::advanced::text::Shaping::Basic,
                     wrapping: iced::widget::text::Wrapping::default(),
+                    ellipsis: iced::advanced::text::Ellipsis::None,
+                    hint_factor: None,
                 },
                 Point::new(
                     bounds.x + bounds.width - value_width / 2.0,
@@ -1676,12 +1643,12 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
             renderer::Quad {
                 bounds: chip_bounds,
                 border: Border {
-                    color: theme.extended_palette().primary.base.color,
+                    color: theme.palette().primary.base.color,
                     width: 0.0,
                     radius: 10.0.into(),
                 },
                 shadow: Shadow {
-                    color: theme.extended_palette().background.strong.color,
+                    color: theme.palette().background.strong.color,
                     offset: Vector::new(0.0, 0.0),
                     blur_radius: 20.0,
                 },
@@ -1735,6 +1702,8 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                 line_height: iced::advanced::text::LineHeight::default(),
                 shaping: iced::advanced::text::Shaping::Advanced,
                 wrapping: iced::widget::text::Wrapping::default(),
+                ellipsis: iced::advanced::text::Ellipsis::None,
+                hint_factor: None,
             },
             Point::new(chip_bounds.center_x(), chip_label_y_position),
             text_color,
@@ -1754,6 +1723,8 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                     line_height: iced::advanced::text::LineHeight::default(),
                     shaping: iced::advanced::text::Shaping::Basic,
                     wrapping: iced::widget::text::Wrapping::default(),
+                    ellipsis: iced::advanced::text::Ellipsis::None,
+                    hint_factor: None,
                 },
                 Point::new(chip_bounds.center_x(), chip_bounds.center_y() + 10.0),
                 text_color,
@@ -1773,7 +1744,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         if self.overlay_state.palette_cache.borrow().is_empty()
             || self.overlay_state.palette_cache_dirty.get()
         {
-            let ep = theme.extended_palette();
+            let ep = theme.palette();
             let bg = &ep.background;
             *self.overlay_state.palette_cache.borrow_mut() = build_palette_rows_compact(ep, bg);
             self.overlay_state.palette_cache_dirty.set(false);
@@ -1783,14 +1754,14 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         let needs_update = {
             let cache = self.overlay_state.palette_cache.borrow();
             if let Some(first) = cache.first() {
-                first.tones[0].1.color != theme.extended_palette().background.base.color
+                first.tones[0].1.color != theme.palette().background.base.color
             } else {
                 false
             }
         };
 
         if needs_update {
-            let ep = theme.extended_palette();
+            let ep = theme.palette();
             let bg = &ep.background;
             *self.overlay_state.palette_cache.borrow_mut() = build_palette_rows_compact(ep, bg);
             self.overlay_state.palette_cache_dirty.set(false);
@@ -1798,7 +1769,7 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
 
         let rows = self.overlay_state.palette_cache.borrow();
         let g = palette_geom_compact(bounds);
-        let title_color = theme.extended_palette().background.weak.text;
+        let title_color = theme.palette().background.weak.text;
 
         let mut y = bounds.y;
         let max_y = bounds.y + bounds.height;
@@ -1816,6 +1787,8 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
                     line_height: iced::advanced::text::LineHeight::default(),
                     shaping: iced::advanced::text::Shaping::Basic,
                     wrapping: iced::widget::text::Wrapping::default(),
+                    ellipsis: iced::advanced::text::Ellipsis::None,
+                    hint_factor: None,
                 },
                 Point::new(bounds.center_x(), y + g.label_h * 0.5),
                 title_color,
@@ -2054,7 +2027,6 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         &mut self,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         copy_string: ColorString,
     ) {
@@ -2082,15 +2054,12 @@ impl<'a, Message: Clone> ModernColorPickerOverlay<'a, Message> {
         if cursor.is_over(chip_bounds) {
             // Priority: palette code > hex > rgb
             if let Some(palette_code) = self.overlay_state.palette_to_code_compact() {
-                clipboard.write(iced::advanced::clipboard::Kind::Standard, palette_code);
+                shell.write_clipboard(ClipboardContent::Text(palette_code));
             } else if copy_string != ColorString::Rgb {
-                clipboard.write(
-                    iced::advanced::clipboard::Kind::Standard,
-                    self.overlay_state.hex_input.clone(),
-                );
+                shell.write_clipboard(ClipboardContent::Text(self.overlay_state.hex_input.clone()));
             } else {
                 let rgb = rgb_or_rgba_string(self.overlay_state.current_color());
-                clipboard.write(iced::advanced::clipboard::Kind::Standard, rgb);
+                shell.write_clipboard(ClipboardContent::Text(rgb));
             }
 
             // flash "Copied!"
@@ -2434,7 +2403,7 @@ impl<'a, Message> std::fmt::Debug for ModernColorPickerOverlay<'a, Message> {
 }
 
 fn build_palette_rows_compact(
-    ep: &iced::theme::palette::Extended,
+    ep: &iced::theme::palette::Palette,
     bg: &iced::theme::palette::Background,
 ) -> Vec<PaletteRow> {
     // helpers
@@ -2513,7 +2482,7 @@ fn draw_pill(
             bounds: r,
             border: Border {
                 color: if hovered {
-                    theme.palette().primary
+                    theme.palette().primary.base.color
                 } else {
                     Color::from_rgba(0.0, 0.0, 0.0, 0.25)
                 },
@@ -2539,6 +2508,8 @@ fn draw_pill_label(renderer: &mut Renderer, r: Rectangle, text: &str, color: Col
             line_height: iced::advanced::text::LineHeight::default(),
             shaping: iced::advanced::text::Shaping::Basic,
             wrapping: iced::widget::text::Wrapping::default(),
+            ellipsis: iced::advanced::text::Ellipsis::None,
+            hint_factor: None,
         },
         Point::new(r.center_x(), r.center_y()),
         color,

@@ -1,4 +1,4 @@
-//! Calendar / date-picker overlay widget for iced 0.14.
+﻿//! Calendar / date-picker overlay widget for iced 0.14.
 //!
 //! The user controls open/close externally by passing `is_open: bool`.
 //! Supports single date and date-range selection with an optional time picker.
@@ -31,7 +31,7 @@ use chrono::{Datelike, Local, NaiveDate};
 use iced::{
     Border, Color, Element, Event, Length, Point, Rectangle, Shadow, Size, Vector,
     advanced::{
-        Clipboard, Layout, Overlay, Shell, Widget,
+        Layout, Overlay, Shell, Widget,
         layout::{Limits, Node},
         overlay, renderer,
         widget::{self, tree::Tree},
@@ -42,16 +42,16 @@ use iced::{
 };
 use std::marker::PhantomData;
 
-// ── Re-exports ────────────────────────────────────────────────────────────────
+// â”€â”€ Re-exports â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 pub use chrono::NaiveDate as Date;
 pub use chrono::NaiveDateTime as DateTime;
 pub use chrono::NaiveTime as Time;
 
-// ── Layout constants ─────────────────────────────────────────────────────────
+// â”€â”€ Layout constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const OVERLAY_WIDTH: f32 = 280.0;
 const HEADER_HEIGHT: f32 = 44.0;
 const DOW_HEIGHT: f32 = 28.0;
-const GRID_HEIGHT: f32 = 180.0; // 6 rows × 30 px
+const GRID_HEIGHT: f32 = 180.0; // 6 rows Ã— 30 px
 const TIME_HEIGHT: f32 = 48.0;
 const FOOTER_HEIGHT: f32 = 40.0;
 const INNER_PAD: f32 = 8.0;
@@ -61,9 +61,9 @@ const HEADER_TITLE_HIT_PADDING_X: f32 = 12.0;
 const HEADER_TITLE_HIT_HEIGHT: f32 = 30.0;
 const TIME_DRAG_STEP_PX: f32 = 8.0;
 
-// ── Public types ──────────────────────────────────────────────────────────────
+// â”€â”€ Public types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-/// The user's date selection — either a single date or a date range.
+/// The user's date selection â€” either a single date or a date range.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DateSelection {
     Single(Option<NaiveDate>),
@@ -157,7 +157,7 @@ impl TimeSelection {
     }
 }
 
-// ── Constructor ───────────────────────────────────────────────────────────────
+// â”€â”€ Constructor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Creates a [`DatePicker`] overlay widget.
 ///
@@ -174,7 +174,7 @@ where
     DatePicker::new(is_open, selection)
 }
 
-// ── Widget struct ─────────────────────────────────────────────────────────────
+// â”€â”€ Widget struct â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// A tiny invisible anchor widget that shows a calendar overlay when `is_open`.
 pub struct DatePicker<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
@@ -277,7 +277,7 @@ where
     }
 }
 
-// ── Internal state ────────────────────────────────────────────────────────────
+// â”€â”€ Internal state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[derive(Debug, Clone)]
 struct State {
@@ -289,7 +289,7 @@ struct State {
     view_mode: PickerView,
     /// Day cell under the cursor (for hover highlight and range preview).
     hovered_date: Option<NaiveDate>,
-    /// First click in range mode — the uncommitted start.
+    /// First click in range mode â€” the uncommitted start.
     range_anchor: Option<NaiveDate>,
     /// Current time value.
     time: TimeSelection,
@@ -373,7 +373,7 @@ impl State {
     }
 }
 
-// ── Widget trait ──────────────────────────────────────────────────────────────
+// â”€â”€ Widget trait â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for DatePicker<'a, Message, Theme, Renderer>
@@ -390,7 +390,7 @@ where
         widget::tree::State::new(State::new(&self.selection, self.time))
     }
 
-    fn diff(&self, tree: &mut Tree) {
+    fn diff(&mut self, tree: &mut Tree) {
         let state = tree.state.downcast_mut::<State>();
         // Sync view to newly-passed selection when the widget is updated externally
         // (e.g. the parent sets a new date). Only when overlay is closed to avoid
@@ -423,7 +423,7 @@ where
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
-        // Invisible anchor — nothing drawn here.
+        // Invisible anchor â€” nothing drawn here.
     }
 
     fn update(
@@ -433,7 +433,6 @@ where
         _layout: Layout<'_>,
         _cursor: mouse::Cursor,
         _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
         _shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
@@ -521,7 +520,7 @@ where
     }
 }
 
-// ── Overlay struct ────────────────────────────────────────────────────────────
+// â”€â”€ Overlay struct â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // 'r = borrow/reference lifetime (the overlay element's lifetime)
 // 'w = widget data lifetime (the 'a from DatePicker<'w, ...>)
@@ -825,7 +824,7 @@ where
     }
 }
 
-// ── Overlay trait ─────────────────────────────────────────────────────────────
+// â”€â”€ Overlay trait â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 impl<'r, Message, Theme, Renderer> Overlay<Message, Theme, Renderer>
     for DatePickerOverlay<'r, '_, Message, Theme, Renderer>
@@ -904,13 +903,12 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
         let bounds = layout.bounds();
 
         match event {
-            // ── Left click ───────────────────────────────────────────────
+            // â”€â”€ Left click â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
                 let cursor_pos = cursor.position().unwrap_or(Point::ORIGIN);
@@ -1017,7 +1015,7 @@ where
                 }
             }
 
-            // ── Cursor moved ─────────────────────────────────────────────
+            // â”€â”€ Cursor moved â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 let pos = *position;
 
@@ -1086,7 +1084,7 @@ where
                 }
             }
 
-            // ── Button released ──────────────────────────────────────────
+            // â”€â”€ Button released â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. }) => {
                 self.state.is_dragging = false;
@@ -1098,7 +1096,7 @@ where
                 }
             }
 
-            // ── Scroll on time spinners ──────────────────────────────────
+            // â”€â”€ Scroll on time spinners â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 if !self.show_time {
                     return;
@@ -1245,7 +1243,7 @@ where
     }
 }
 
-// ── Draw helpers ──────────────────────────────────────────────────────────────
+// â”€â”€ Draw helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 impl<'r, Message, Theme, Renderer> DatePickerOverlay<'r, '_, Message, Theme, Renderer>
 where
@@ -1282,8 +1280,8 @@ where
             }
         }
 
-        // Prev arrow ‹
-        fill_text_centered(renderer, "‹", 18.0, style.arrow_color, prev, bounds);
+        // Prev arrow â€¹
+        fill_text_centered(renderer, "â€¹", 18.0, style.arrow_color, prev, bounds);
 
         // Month/year label
         let label_rect = header_title_band_rect(bounds);
@@ -1300,8 +1298,8 @@ where
             bounds,
         );
 
-        // Next arrow ›
-        fill_text_centered(renderer, "›", 18.0, style.arrow_color, next, bounds);
+        // Next arrow â€º
+        fill_text_centered(renderer, "â€º", 18.0, style.arrow_color, next, bounds);
     }
 
     fn draw_dow_header(&self, renderer: &mut Renderer, style: &Style, bounds: Rectangle) {
@@ -1887,7 +1885,7 @@ where
     }
 }
 
-// ── Rendering utilities ───────────────────────────────────────────────────────
+// â”€â”€ Rendering utilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn fill_text_centered<R>(
     renderer: &mut R,
@@ -1910,6 +1908,8 @@ fn fill_text_centered<R>(
             line_height: iced::advanced::text::LineHeight::default(),
             shaping: iced::advanced::text::Shaping::Basic,
             wrapping: iced::widget::text::Wrapping::None,
+            ellipsis: iced::advanced::text::Ellipsis::None,
+            hint_factor: None,
         },
         Point::new(cell.center_x(), cell.center_y()),
         color,
@@ -1941,6 +1941,8 @@ fn fill_text_bold_centered<R>(
             line_height: iced::advanced::text::LineHeight::default(),
             shaping: iced::advanced::text::Shaping::Basic,
             wrapping: iced::widget::text::Wrapping::None,
+            ellipsis: iced::advanced::text::Ellipsis::None,
+            hint_factor: None,
         },
         Point::new(cell.center_x(), cell.center_y()),
         color,
@@ -1948,7 +1950,7 @@ fn fill_text_bold_centered<R>(
     );
 }
 
-// ── Layout helpers ────────────────────────────────────────────────────────────
+// â”€â”€ Layout helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn overlay_size(show_time: bool) -> Size {
     let h = HEADER_HEIGHT
@@ -2771,7 +2773,7 @@ fn ampm_rect(tr: Rectangle) -> Rectangle {
     }
 }
 
-// ── Date helpers ──────────────────────────────────────────────────────────────
+// â”€â”€ Date helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[derive(Clone, Copy)]
 struct GridDay {
@@ -2779,10 +2781,10 @@ struct GridDay {
     is_current_month: bool,
 }
 
-/// Builds a Sunday-anchored 6×7 grid for the given year/month.
+/// Builds a Sunday-anchored 6Ã—7 grid for the given year/month.
 fn month_grid(year: i32, month: u32) -> [[GridDay; 7]; 6] {
     let first = NaiveDate::from_ymd_opt(year, month, 1).expect("valid date");
-    // num_days_from_monday(): Mon=0 … Sun=6. Convert to Sun=0 … Sat=6:
+    // num_days_from_monday(): Mon=0 â€¦ Sun=6. Convert to Sun=0 â€¦ Sat=6:
     let start_col = (first.weekday().num_days_from_monday() + 1) % 7;
 
     let dummy = GridDay {
@@ -2917,7 +2919,7 @@ fn to_12h(hour: u32) -> (u32, bool) {
     (h, is_pm)
 }
 
-// ── Style / Catalog ───────────────────────────────────────────────────────────
+// â”€â”€ Style / Catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Interaction status for style queries.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2973,7 +2975,7 @@ pub struct Style {
     pub time_active_text_color: Color,
 }
 
-/// Theme catalog trait — mirrors the pattern used by [`collapsible`].
+/// Theme catalog trait â€” mirrors the pattern used by [`collapsible`].
 pub trait Catalog {
     type Class<'a>;
     fn default<'a>() -> Self::Class<'a>;
@@ -2997,7 +2999,7 @@ impl Catalog for iced::Theme {
 
 /// Default style derived from the current iced [`Theme`].
 pub fn default_style(theme: &iced::Theme, _status: Status) -> Style {
-    let p = theme.extended_palette();
+    let p = theme.palette();
     Style {
         background: p.background.weak.color,
         border: Border {

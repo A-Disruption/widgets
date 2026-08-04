@@ -45,7 +45,7 @@ pub fn node_body_style(_theme: &Theme, style: &Style) -> container::Style {
 
 /// Red "danger" icon button (e.g. delete).
 pub fn danger_icon_button_style(theme: &Theme, status: button::Status) -> button::Style {
-    let danger = theme.extended_palette().danger;
+    let danger = theme.palette().danger;
     let (bg, border, text) = match status {
         button::Status::Hovered => (danger.base.color, danger.strong.color, danger.base.text),
         button::Status::Pressed => (danger.strong.color, danger.strong.color, danger.strong.text),
@@ -131,7 +131,7 @@ pub fn header_pick_list_style(
             a: 0.45,
             ..style.node_border_selected
         },
-        pick_list::Status::Active => Color::TRANSPARENT,
+        pick_list::Status::Active | pick_list::Status::Disabled => Color::TRANSPARENT,
     };
     pick_list::Style {
         text_color: style.title_text,

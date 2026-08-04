@@ -1,10 +1,9 @@
-//! A collapsible container widget with a header and expandable content area.
+﻿//! A collapsible container widget with a header and expandable content area.
 //!
 //! Supports two modes:
 //! 1. Standalone: Self-managing expand/collapse state
 //! 2. Group: Wrap multiple collapsibles in `collapsible_group![]` for accordion behavior
 
-use iced::advanced::Clipboard;
 use iced::advanced::Layout;
 use iced::advanced::Shell;
 use iced::advanced::Widget;
@@ -381,44 +380,24 @@ where
         })
     }
 
-    fn children(&self) -> Vec<Tree> {
+    fn diff(&mut self, tree: &mut Tree) {
         let mut children = vec![];
 
-        if let Some(ref expand_icon) = self.expand_icon {
-            children.push(Tree::new(expand_icon));
-        }
-
-        if let Some(ref collapse_icon) = self.collapse_icon {
-            children.push(Tree::new(collapse_icon));
-        }
-
-        if let Some(ref action_icon) = self.action_icon {
-            children.push(Tree::new(action_icon));
-        }
-
-        children.push(Tree::new(&self.content));
-
-        children
-    }
-
-    fn diff(&self, tree: &mut Tree) {
-        let mut children = vec![];
-
-        if let Some(ref expand_icon) = self.expand_icon {
+        if let Some(expand_icon) = self.expand_icon.as_mut() {
             children.push(expand_icon);
         }
 
-        if let Some(ref collapse_icon) = self.collapse_icon {
+        if let Some(collapse_icon) = self.collapse_icon.as_mut() {
             children.push(collapse_icon);
         }
 
-        if let Some(ref action_icon) = self.action_icon {
+        if let Some(action_icon) = self.action_icon.as_mut() {
             children.push(action_icon);
         }
 
-        children.push(&self.content);
+        children.push(&mut self.content);
 
-        tree.diff_children(&children);
+        tree.diff_children(&mut children);
     }
 
     fn size(&self) -> Size<Length> {
@@ -443,9 +422,9 @@ where
         let icon_node = if self.expand_icon.is_none() && self.collapse_icon.is_none() {
             // Use default text icon
             let arrow = if state.animation.value() {
-                "🠻"
+                "ðŸ »"
             } else {
-                "🠺"
+                "ðŸ º"
             };
 
             let icon_limits = layout::Limits::new(
@@ -468,6 +447,7 @@ where
                     align_y: alignment::Vertical::Center,
                     shaping: text::Shaping::Advanced,
                     wrapping: text::Wrapping::default(),
+                    ellipsis: text::Ellipsis::None,
                 },
             )
         } else {
@@ -557,6 +537,7 @@ where
                 align_y: alignment::Vertical::Center,
                 shaping: text::Shaping::Basic,
                 wrapping: text::Wrapping::default(),
+                ellipsis: text::Ellipsis::None,
             },
         );
 
@@ -654,7 +635,6 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
@@ -738,7 +718,6 @@ where
                     action_layout,
                     cursor,
                     renderer,
-                    clipboard,
                     shell,
                     viewport,
                 );
@@ -756,7 +735,6 @@ where
                 content_layout,
                 cursor,
                 renderer,
-                clipboard,
                 shell,
                 viewport,
             );
@@ -924,7 +902,7 @@ where
                 viewport,
             );
         } else {
-            // Draw custom icon Element — mirror layout()'s fallback logic exactly.
+            // Draw custom icon Element â€” mirror layout()'s fallback logic exactly.
             // If only one of the two icons is set, use it for both states rather than panicking.
             let (icon_element, icon_tree_index) = if state.animation.value() {
                 if let Some(collapse_idx) = collapse_child {
@@ -1236,12 +1214,8 @@ where
         tree::State::new(GroupState::default())
     }
 
-    fn children(&self) -> Vec<Tree> {
-        self.items.iter().map(Tree::new).collect()
-    }
-
-    fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(&self.items);
+    fn diff(&mut self, tree: &mut Tree) {
+        tree.diff_children(&mut self.items);
     }
 
     fn size(&self) -> Size<Length> {
@@ -1301,7 +1275,6 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
@@ -1364,7 +1337,6 @@ where
                 child_layout,
                 cursor,
                 renderer,
-                clipboard,
                 shell,
                 viewport,
             );
@@ -1528,7 +1500,7 @@ impl Catalog for iced::Theme {
 }
 
 pub fn default(theme: &iced::Theme, _status: Status) -> Style {
-    let palette = theme.extended_palette();
+    let palette = theme.palette();
 
     Style {
         title_text_color: Some(palette.background.strong.text),
@@ -1542,7 +1514,7 @@ pub fn default(theme: &iced::Theme, _status: Status) -> Style {
 }
 
 pub fn primary(theme: &iced::Theme, _status: Status) -> Style {
-    let palette = theme.extended_palette();
+    let palette = theme.palette();
 
     Style {
         title_text_color: Some(palette.primary.weak.text),
@@ -1556,7 +1528,7 @@ pub fn primary(theme: &iced::Theme, _status: Status) -> Style {
 }
 
 pub fn success(theme: &iced::Theme, _status: Status) -> Style {
-    let palette = theme.extended_palette();
+    let palette = theme.palette();
 
     Style {
         title_text_color: Some(palette.success.weak.text),
@@ -1570,7 +1542,7 @@ pub fn success(theme: &iced::Theme, _status: Status) -> Style {
 }
 
 pub fn danger(theme: &iced::Theme, _status: Status) -> Style {
-    let palette = theme.extended_palette();
+    let palette = theme.palette();
 
     Style {
         title_text_color: Some(palette.danger.weak.text),
@@ -1584,7 +1556,7 @@ pub fn danger(theme: &iced::Theme, _status: Status) -> Style {
 }
 
 pub fn warning(theme: &iced::Theme, _status: Status) -> Style {
-    let palette = theme.extended_palette();
+    let palette = theme.palette();
 
     Style {
         title_text_color: Some(palette.warning.weak.text),
