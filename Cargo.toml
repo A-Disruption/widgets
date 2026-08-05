@@ -19,9 +19,11 @@ iced_runtime = { git = "https://github.com/iced-rs/iced", rev = "4cad51ba61e3d76
 default = []
 # Shared base-relative placement used by the anchored widgets.
 anchor = []
+# Shared open/close transitions used by the overlay-backed widgets.
+animation = ["anchor"]
 # The embedded Lucide icon font, shared by widgets that draw their own glyphs.
 lucide = []
-menu = ["anchor", "lucide"]
+menu = ["anchor", "animation", "lucide"]
 tree = []
 color_picker = []
 color_picker_two = []
@@ -31,7 +33,7 @@ flow_editor = []
 date_picker = ["dep:chrono"]
 # Material Design 3 styles for the widgets above, in `widgets::m3`.
 m3_theme = ["dep:material_theme"]
-all = ["anchor", "lucide", "menu", "tree", "color_picker", "color_picker_two", "collapsible", "generic_overlay", "flow_editor", "date_picker"]
+all = ["anchor", "animation", "lucide", "menu", "tree", "color_picker", "color_picker_two", "collapsible", "generic_overlay", "flow_editor", "date_picker"]
 
 [[example]]
 name = "menu_example"

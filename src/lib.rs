@@ -1,6 +1,9 @@
 #[cfg(feature = "anchor")]
 pub mod anchor;
 
+#[cfg(feature = "animation")]
+pub mod animation;
+
 #[cfg(feature = "lucide")]
 pub mod lucide;
 

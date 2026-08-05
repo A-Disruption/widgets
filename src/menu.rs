@@ -85,12 +85,14 @@ use iced::advanced::{
     overlay, renderer, text,
 };
 use iced::alignment::Vertical;
+use iced::time::Instant;
 use iced::{
     Background, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow,
     Size, Theme, Vector, mouse, touch, window,
 };
 
 use crate::anchor::{self, Align, Placement, Side};
+use crate::animation::{self, Motion, Transition};
 use crate::lucide;
 
 /// The default gap between a root panel and its trigger.
@@ -453,6 +455,7 @@ where
     radius: f32,
     min_width: f32,
     max_width: Option<f32>,
+    motion: Motion,
     on_toggle: Option<Box<dyn Fn(bool) -> Message + 'a>>,
     class: Theme::Class<'a>,
 }
@@ -492,6 +495,7 @@ where
             radius: DEFAULT_RADIUS,
             min_width: 0.0,
             max_width: None,
+            motion: Motion::QUICK,
             on_toggle: None,
             class: <Theme as Catalog>::default(),
         }
@@ -599,6 +603,22 @@ where
         self
     }
 
+    /// Sets how the panels animate in and out.
+    ///
+    /// Defaults to [`Motion::QUICK`].
+    pub fn motion(mut self, motion: Motion) -> Self {
+        self.motion = motion;
+        self
+    }
+
+    /// Opens and closes the panels instantly, with no transition.
+    ///
+    /// A menu set this way never schedules an animation frame.
+    pub fn no_animation(mut self) -> Self {
+        self.motion = Motion::NONE;
+        self
+    }
+
     /// Sets a callback for when the menu opens or closes.
     pub fn on_toggle(mut self, callback: impl Fn(bool) -> Message + 'a) -> Self {
         self.on_toggle = Some(Box::new(callback));
@@ -653,10 +673,31 @@ struct State {
     ///
     /// An empty path means only the root panel is showing.
     path: Vec<usize>,
-    /// The hovered row, as a panel depth and a row index.
-    hovered: Option<(usize, usize)>,
+    /// The highlighted row, as a panel depth and a row index.
+    ///
+    /// The mouse and the keyboard share this: hovering a row highlights it,
+    /// and the arrow keys move the same highlight.
+    highlighted: Option<(usize, usize)>,
     /// Whether the cursor is over the trigger.
     is_trigger_hovered: bool,
+    /// A pending request to hand the keyboard over to a neighbouring menu.
+    ///
+    /// The open panels are an overlay, and an overlay that captures an event
+    /// stops the base widget tree from ever seeing it. So a menu that decides
+    /// an arrow key means "leave me" records it here and deliberately does not
+    /// capture, letting [`MenuBar`] pick it up in the same event pass.
+    sibling_request: Option<Sibling>,
+    /// The open/close transition of the root panel.
+    transition: Transition,
+}
+
+/// A neighbouring menu in a [`MenuBar`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sibling {
+    /// The menu to the left.
+    Previous,
+    /// The menu to the right.
+    Next,
 }
 
 /// The interaction state of a menu-drawn trigger surface.
@@ -675,11 +716,67 @@ pub enum TriggerStatus {
 
 impl State {
     /// Closes every panel.
+    ///
+    /// The menu counts as closed straight away — callbacks fire, the trigger
+    /// unlights, and further events are ignored — while the panels stay on
+    /// screen until the transition finishes. Deferring the *logical* close to
+    /// the end of the animation would make the widget lie about its state for
+    /// a tenth of a second.
     fn close(&mut self) {
         self.is_open = false;
         self.path.clear();
-        self.hovered = None;
+        self.highlighted = None;
+        self.sibling_request = None;
+        self.transition.close(Instant::now());
     }
+
+    /// Opens the root panel with nothing highlighted, as a press does.
+    fn open(&mut self) {
+        self.is_open = true;
+        self.path.clear();
+        self.highlighted = None;
+        self.transition.open(Instant::now());
+    }
+
+    /// Returns `true` when the panels should still be produced and drawn.
+    fn is_showing(&self, now: Instant) -> bool {
+        self.is_open || self.transition.is_visible(now)
+    }
+}
+
+/// Returns the index of the first row of `items` the keyboard may land on,
+/// searching from `from` in the given direction and wrapping around.
+///
+/// Separators and disabled rows are skipped: they can never be activated, so
+/// stopping on one would just cost the user an extra key press.
+fn selectable(
+    items: &[Item<'_, impl Sized, impl Sized, impl Sized>],
+    from: Option<usize>,
+    forward: bool,
+) -> Option<usize> {
+    let count = items.len();
+
+    if count == 0 {
+        return None;
+    }
+
+    // With nothing highlighted yet, stepping backwards should land on the last
+    // row rather than the second one.
+    let start = match from {
+        Some(index) => index,
+        None if forward => count - 1,
+        None => 0,
+    };
+
+    (1..=count)
+        .map(|step| {
+            if forward {
+                (start + step) % count
+            } else {
+                (start + count - step % count) % count
+            }
+        })
+        .find(|index| items[*index].is_interactive())
 }
 
 /// Walks down to the rows of the panel at the given `depth`.
@@ -850,6 +947,23 @@ where
     ) {
         let trigger_layout = layout.children().next().expect("trigger layout");
 
+        {
+            let state = tree.state.downcast_mut::<State>();
+
+            // Applied here as well as in `overlay`, because a menu can be
+            // opened — by a press, or by the bar handing over — before it has
+            // ever produced an overlay to sync in.
+            state.transition.sync(self.motion);
+
+            // Drive the transition, and stop asking for frames the moment it
+            // settles. A menu sitting there open costs nothing.
+            if let Event::Window(window::Event::RedrawRequested(now)) = event
+                && state.transition.is_animating(*now)
+            {
+                shell.request_redraw();
+            }
+        }
+
         let pressed = matches!(
             event,
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
@@ -869,7 +983,9 @@ where
             if was_open {
                 state.close();
             } else {
-                state.is_open = true;
+                // Must go through `open`, not just set the flag: that is what
+                // starts the transition.
+                state.open();
             }
 
             if let Some(on_toggle) = &self.on_toggle {
@@ -956,10 +1072,18 @@ where
         offset: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         let state = tree.state.downcast_mut::<State>();
+        state.transition.sync(self.motion);
 
-        if !state.is_open {
+        let now = Instant::now();
+
+        // Panels outlive the logical close so they can animate out.
+        if !state.is_showing(now) {
             return None;
         }
+
+        // Read the transition out before `state` is handed to the overlay.
+        let progress = state.transition.progress(now);
+        let is_closing = !state.is_open;
 
         let mut trigger_bounds = layout.bounds();
         trigger_bounds.x += offset.x;
@@ -981,6 +1105,9 @@ where
             radius: self.radius,
             min_width: self.min_width,
             max_width: self.max_width,
+            progress,
+            slide: self.motion.slide,
+            is_closing,
             on_toggle: self.on_toggle.as_deref(),
             class: &self.class,
         })))
@@ -996,6 +1123,314 @@ where
 {
     fn from(menu: Menu<'a, Message, Theme, Renderer>) -> Self {
         Element::new(menu)
+    }
+}
+
+/// Creates a [`MenuBar`] from a row of menus.
+pub fn menu_bar<'a, Message, Theme, Renderer>(
+    menus: Vec<Menu<'a, Message, Theme, Renderer>>,
+) -> MenuBar<'a, Message, Theme, Renderer>
+where
+    Theme: Catalog,
+    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+{
+    MenuBar::new(menus)
+}
+
+/// A row of [`Menu`]s that behave as one menu bar.
+///
+/// Grouping menus changes two things. Once any menu in the bar is open, moving
+/// the cursor onto another menu's trigger opens that one immediately, with no
+/// second click — the behaviour every desktop menu bar has. And the left and
+/// right arrow keys walk between menus once the keyboard runs out of panels to
+/// move within.
+///
+/// Menus used on their own are unaffected; they simply never hand over.
+#[allow(missing_debug_implementations)]
+pub struct MenuBar<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
+where
+    Theme: Catalog,
+{
+    menus: Vec<Menu<'a, Message, Theme, Renderer>>,
+    spacing: f32,
+    padding: Padding,
+}
+
+impl<'a, Message, Theme, Renderer> MenuBar<'a, Message, Theme, Renderer>
+where
+    Theme: Catalog,
+    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+{
+    /// Creates a new [`MenuBar`] from a row of menus.
+    pub fn new(menus: Vec<Menu<'a, Message, Theme, Renderer>>) -> Self {
+        Self {
+            menus,
+            spacing: 2.0,
+            padding: Padding::ZERO,
+        }
+    }
+
+    /// Sets the space between triggers.
+    pub fn spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing;
+        self
+    }
+
+    /// Sets the padding around the row of triggers.
+    pub fn padding(mut self, padding: impl Into<Padding>) -> Self {
+        self.padding = padding.into();
+        self
+    }
+
+    /// Returns the index of the menu that is currently open, if any.
+    fn open_index(&self, tree: &Tree) -> Option<usize> {
+        tree.children
+            .iter()
+            .position(|child| child.state.downcast_ref::<State>().is_open)
+    }
+
+    /// Closes every menu except the one at `keep`.
+    fn close_others(&self, tree: &mut Tree, keep: usize) {
+        for (index, child) in tree.children.iter_mut().enumerate() {
+            if index != keep {
+                child.state.downcast_mut::<State>().close();
+            }
+        }
+    }
+
+    /// Opens the menu at `index`, highlighting its first selectable row.
+    ///
+    /// Used by keyboard navigation, where landing on a menu with nothing
+    /// highlighted would cost an extra key press.
+    fn open_for_keyboard(&self, tree: &mut Tree, index: usize) {
+        self.close_others(tree, index);
+
+        let Some(child) = tree.children.get_mut(index) else {
+            return;
+        };
+
+        let state = child.state.downcast_mut::<State>();
+        state.open();
+        state.highlighted = selectable(&self.menus[index].items, None, true).map(|row| (0, row));
+    }
+
+    /// Consumes a pending hand-over request from whichever menu is open.
+    fn take_sibling_request(&self, tree: &mut Tree) -> Option<(usize, Sibling)> {
+        tree.children.iter_mut().enumerate().find_map(|(index, child)| {
+            let state = child.state.downcast_mut::<State>();
+
+            state.sibling_request.take().map(|request| (index, request))
+        })
+    }
+}
+
+impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for MenuBar<'a, Message, Theme, Renderer>
+where
+    Message: Clone + 'a,
+    Theme: Catalog + 'a,
+    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font> + 'a,
+{
+    fn diff(&mut self, tree: &mut Tree) {
+        tree.diff_children(
+            &mut self
+                .menus
+                .iter_mut()
+                .map(|menu| menu as &mut dyn Widget<Message, Theme, Renderer>)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Shrink, Length::Shrink)
+    }
+
+    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> Node {
+        let padding = self.padding;
+        let spacing = self.spacing;
+
+        let inner = limits.shrink(padding);
+
+        let mut x = padding.left;
+        let mut height: f32 = 0.0;
+        let mut triggers = Vec::with_capacity(self.menus.len());
+
+        for (index, (menu, child)) in self
+            .menus
+            .iter_mut()
+            .zip(tree.children.iter_mut())
+            .enumerate()
+        {
+            if index > 0 {
+                x += spacing;
+            }
+
+            let node = menu.layout(child, renderer, &inner);
+            let size = node.size();
+
+            triggers.push(node.move_to(Point::new(x, padding.top)));
+
+            x += size.width;
+            height = height.max(size.height);
+        }
+
+        Node::with_children(
+            Size::new(x + padding.right, height + padding.y()),
+            triggers,
+        )
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        for ((menu, child), trigger) in
+            self.menus.iter().zip(&tree.children).zip(layout.children())
+        {
+            menu.draw(child, renderer, theme, style, trigger, cursor, viewport);
+        }
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        // An open menu that ran out of panels to move within asks the bar to
+        // hand the keyboard to a neighbour. The request is set during the
+        // overlay pass, which runs just before this one.
+        if let Some((from, direction)) = self.take_sibling_request(tree) {
+            let count = self.menus.len();
+
+            if count > 0 {
+                let to = match direction {
+                    Sibling::Next => (from + 1) % count,
+                    Sibling::Previous => (from + count - 1) % count,
+                };
+
+                self.open_for_keyboard(tree, to);
+
+                shell.capture_event();
+                shell.invalidate_layout();
+                shell.request_redraw();
+
+                return;
+            }
+        }
+
+        // Once one menu is open, sliding the cursor onto another trigger opens
+        // that one instead. This is what makes a bar feel like a bar rather
+        // than a row of unrelated buttons.
+        if matches!(event, Event::Mouse(mouse::Event::CursorMoved { .. }))
+            && let Some(open) = self.open_index(tree)
+            && let Some(hovered) = layout
+                .children()
+                .position(|trigger| cursor.is_over(trigger.bounds()))
+            && hovered != open
+        {
+            self.close_others(tree, hovered);
+            tree.children[hovered].state.downcast_mut::<State>().open();
+
+            shell.invalidate_layout();
+            shell.request_redraw();
+        }
+
+        for ((menu, child), trigger) in self
+            .menus
+            .iter_mut()
+            .zip(tree.children.iter_mut())
+            .zip(layout.children())
+        {
+            menu.update(child, event, trigger, cursor, renderer, shell, viewport);
+
+            if shell.is_event_captured() {
+                return;
+            }
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        self.menus
+            .iter()
+            .zip(&tree.children)
+            .zip(layout.children())
+            .map(|((menu, child), trigger)| {
+                menu.mouse_interaction(child, trigger, cursor, viewport, renderer)
+            })
+            .max()
+            .unwrap_or_default()
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        operation.container(None, layout.bounds());
+
+        operation.traverse(&mut |operation| {
+            for ((menu, child), trigger) in self
+                .menus
+                .iter_mut()
+                .zip(tree.children.iter_mut())
+                .zip(layout.children())
+            {
+                menu.operate(child, trigger, renderer, operation);
+            }
+        });
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        offset: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        let panels: Vec<_> = self
+            .menus
+            .iter_mut()
+            .zip(tree.children.iter_mut())
+            .zip(layout.children())
+            .filter_map(|((menu, child), trigger)| {
+                menu.overlay(child, trigger, renderer, viewport, offset)
+            })
+            .collect();
+
+        (!panels.is_empty()).then(|| overlay::Group::with_children(panels).overlay())
+    }
+}
+
+impl<'a, Message, Theme, Renderer> From<MenuBar<'a, Message, Theme, Renderer>>
+    for Element<'a, Message, Theme, Renderer>
+where
+    Message: Clone + 'a,
+    Theme: Catalog + 'a,
+    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font> + 'a,
+{
+    fn from(bar: MenuBar<'a, Message, Theme, Renderer>) -> Self {
+        Element::new(bar)
     }
 }
 
@@ -1021,12 +1456,19 @@ where
     radius: f32,
     min_width: f32,
     max_width: Option<f32>,
+    /// How far open the root panel is, from `0.0` to `1.0`.
+    progress: f32,
+    /// The distance the root panel still has to slide.
+    slide: f32,
+    /// Whether the menu is closing, and so should ignore further input.
+    is_closing: bool,
     on_toggle: Option<&'a dyn Fn(bool) -> Message>,
     class: &'a Theme::Class<'b>,
 }
 
 impl<'a, 'b, Message, Theme, Renderer> Panels<'a, 'b, Message, Theme, Renderer>
 where
+    Message: Clone,
     Theme: Catalog,
     Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
 {
@@ -1250,6 +1692,193 @@ where
         None
     }
 
+    /// Moves the highlight within the deepest open panel.
+    ///
+    /// Stepping onto a row also collapses anything open below it, so the chain
+    /// on screen never runs deeper than the row the keyboard is actually on.
+    fn step_highlight(&mut self, forward: bool) {
+        let depth = self.state.path.len();
+
+        let Some(items) = panel_items(self.items, &self.state.path, depth) else {
+            return;
+        };
+
+        // Only a highlight already in this panel is a meaningful starting
+        // point; one left behind in a shallower panel is not.
+        let from = self
+            .state
+            .highlighted
+            .and_then(|(at, index)| (at == depth).then_some(index));
+
+        if let Some(index) = selectable(items, from, forward) {
+            self.state.highlighted = Some((depth, index));
+        }
+    }
+
+    /// Opens the submenu of the highlighted row, if it has one.
+    ///
+    /// Returns `true` when a panel was actually opened.
+    fn open_highlighted_submenu(&mut self) -> bool {
+        let Some((depth, index)) = self.state.highlighted else {
+            return false;
+        };
+
+        let Some(items) = panel_items(self.items, &self.state.path, depth) else {
+            return false;
+        };
+
+        let opens = items
+            .get(index)
+            .is_some_and(|item| item.opens_submenu() && item.is_interactive());
+
+        if !opens {
+            return false;
+        }
+
+        self.state.path.truncate(depth);
+        self.state.path.push(index);
+
+        // Land on the first row of the panel that just opened, so the next
+        // arrow press continues from somewhere sensible.
+        let nested = panel_items(self.items, &self.state.path, depth + 1)
+            .and_then(|items| selectable(items, None, true));
+
+        if let Some(first) = nested {
+            self.state.highlighted = Some((depth + 1, first));
+        }
+
+        true
+    }
+
+    /// Activates the highlighted row: opens its submenu, or publishes its
+    /// message and closes the menu.
+    fn activate_highlighted(&mut self, shell: &mut Shell<'_, Message>) {
+        if self.open_highlighted_submenu() {
+            return;
+        }
+
+        let Some((depth, index)) = self.state.highlighted else {
+            return;
+        };
+
+        let message = panel_items(self.items, &self.state.path, depth)
+            .and_then(|items| items.get(index))
+            .filter(|item| item.is_interactive())
+            .and_then(|item| match item {
+                Item::Entry { on_press, .. } => on_press.clone(),
+                _ => None,
+            });
+
+        if let Some(message) = message {
+            shell.publish(message);
+            self.state.close();
+
+            if let Some(on_toggle) = self.on_toggle {
+                shell.publish(on_toggle(false));
+            }
+        }
+    }
+
+    /// Handles a key press while the menu is open.
+    fn on_key_pressed(&mut self, key: &iced::keyboard::Key, shell: &mut Shell<'_, Message>) {
+        use iced::keyboard::{Key, key::Named};
+
+        let Key::Named(named) = key else {
+            return;
+        };
+
+        match named {
+            Named::ArrowDown => self.step_highlight(true),
+            Named::ArrowUp => self.step_highlight(false),
+            Named::Home => {
+                self.state.highlighted = None;
+                self.step_highlight(true);
+            }
+            Named::End => {
+                self.state.highlighted = None;
+                self.step_highlight(false);
+            }
+            Named::ArrowRight => {
+                if !self.open_highlighted_submenu() {
+                    // Nothing to descend into, so the key means "next menu".
+                    // Deliberately left uncaptured — see `State`.
+                    self.state.sibling_request = Some(Sibling::Next);
+                    shell.request_redraw();
+                    return;
+                }
+            }
+            Named::ArrowLeft => {
+                match self.state.path.pop() {
+                    Some(index) => {
+                        // Step back up onto the row that owned the panel just
+                        // closed, rather than losing the highlight entirely.
+                        self.state.highlighted = Some((self.state.path.len(), index));
+                    }
+                    None => {
+                        self.state.sibling_request = Some(Sibling::Previous);
+                        shell.request_redraw();
+                        return;
+                    }
+                }
+            }
+            Named::Enter | Named::Space => self.activate_highlighted(shell),
+            Named::Escape => {
+                // Escape peels one level off the chain, and closes the menu
+                // once only the root panel is left.
+                match self.state.path.pop() {
+                    Some(index) => self.state.highlighted = Some((self.state.path.len(), index)),
+                    None => {
+                        self.state.close();
+
+                        if let Some(on_toggle) = self.on_toggle {
+                            shell.publish(on_toggle(false));
+                        }
+                    }
+                }
+            }
+            _ => return,
+        }
+
+        shell.capture_event();
+        shell.invalidate_layout();
+        shell.request_redraw();
+    }
+
+    /// Resolves the panel style with every color scaled by the transition.
+    ///
+    /// Returned whole rather than faded at each use so that a settled panel
+    /// pays nothing beyond the usual style lookup.
+    fn faded_style(&self, theme: &Theme) -> Style {
+        let style = theme.style(self.class);
+
+        if self.progress >= 1.0 {
+            return style;
+        }
+
+        let progress = self.progress;
+
+        Style {
+            background: animation::fade_background(style.background, progress),
+            border: Border {
+                color: animation::fade(style.border.color, progress),
+                ..style.border
+            },
+            shadow: Shadow {
+                color: animation::fade(style.shadow.color, progress),
+                ..style.shadow
+            },
+            text_color: animation::fade(style.text_color, progress),
+            hovered_text_color: animation::fade(style.hovered_text_color, progress),
+            disabled_text_color: animation::fade(style.disabled_text_color, progress),
+            hovered_item_background: animation::fade_background(
+                style.hovered_item_background,
+                progress,
+            ),
+            separator_color: animation::fade(style.separator_color, progress),
+            ..style
+        }
+    }
+
     /// Returns `true` when the cursor is over any open panel.
     fn is_over_any_panel(&self, layout: Layout<'_>, cursor: mouse::Cursor) -> bool {
         layout
@@ -1289,7 +1918,16 @@ where
 
             let placed = anchor::place(anchor, panel.size(), viewport, placement);
 
-            panels.push(panel.move_to(placed.position));
+            // Only the root panel slides. Sub-panels are placed against a
+            // parent that has already settled, and sliding them too would make
+            // a deep chain ripple every time it opened.
+            let offset = if depth == 0 {
+                animation::slide(placed.side, self.slide, self.progress)
+            } else {
+                Vector::ZERO
+            };
+
+            panels.push(panel.move_to(placed.position + offset));
         }
 
         Node::with_children(bounds, panels)
@@ -1305,7 +1943,10 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
-        let appearance = theme.style(self.class);
+        // Every color the panel draws is faded by the transition. Children that
+        // inherit `text_color` come with it; one that sets its own colour does
+        // not. See `crate::animation` for why that trade is the best available.
+        let appearance = self.faded_style(theme);
 
         for (depth, panel) in layout.children().take(self.depth()).enumerate() {
             let panel_bounds = panel.bounds();
@@ -1361,7 +2002,7 @@ where
                     continue;
                 };
 
-                let is_highlighted = self.state.hovered == Some((depth, index))
+                let is_highlighted = self.state.highlighted == Some((depth, index))
                     || open_row == Some(index);
 
                 if is_highlighted && item.is_interactive() {
@@ -1386,9 +2027,15 @@ where
                     appearance.text_color
                 };
 
+                // The layout can be one frame behind the items — a hover that
+                // opens a submenu changes the panel chain before the next
+                // layout pass runs. A row whose node does not match the item
+                // is simply skipped; the following frame draws it correctly.
                 let mut slots = row.children();
-                let icon_layout = slots.next().expect("row icon layout");
-                let content_layout = slots.next().expect("row content layout");
+
+                let (Some(icon_layout), Some(content_layout)) = (slots.next(), slots.next()) else {
+                    continue;
+                };
 
                 if let Some(icon) = item.icon_element() {
                     icon.as_widget().draw(
@@ -1471,16 +2118,22 @@ where
         _renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
     ) {
+        // A panel on its way out is a picture, not a control: it must not
+        // highlight, activate, or swallow the press that follows a dismissal.
+        if self.is_closing {
+            return;
+        }
+
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. })
             | Event::Touch(touch::Event::FingerMoved { .. }) => {
                 let hovered = self.row_at(layout, cursor);
 
-                if hovered == self.state.hovered {
+                if hovered == self.state.highlighted {
                     return;
                 }
 
-                self.state.hovered = hovered;
+                self.state.highlighted = hovered;
 
                 if let Some((depth, index)) = hovered {
                     let Some(items) = panel_items(self.items, &self.state.path, depth) else {
@@ -1546,24 +2199,8 @@ where
                 shell.capture_event();
                 shell.request_redraw();
             }
-            Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-                ..
-            }) => {
-                // Escape peels one level off the chain, and closes the menu
-                // once only the root panel is left.
-                if self.state.path.pop().is_none() {
-                    self.state.close();
-
-                    if let Some(on_toggle) = self.on_toggle {
-                        shell.publish(on_toggle(false));
-                    }
-                }
-
-                self.state.hovered = None;
-
-                shell.capture_event();
-                shell.request_redraw();
+            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
+                self.on_key_pressed(key, shell);
             }
             _ => {}
         }
@@ -1575,7 +2212,7 @@ where
         cursor: mouse::Cursor,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
-        if self.row_at(layout, cursor).is_some() {
+        if !self.is_closing && self.row_at(layout, cursor).is_some() {
             mouse::Interaction::Pointer
         } else {
             mouse::Interaction::None
@@ -1858,6 +2495,55 @@ mod tests {
     fn an_empty_gutter_costs_nothing() {
         assert_eq!(gutter_offset(0.0, 8.0), 0.0);
         assert_eq!(gutter_offset(16.0, 8.0), 24.0);
+    }
+
+    /// Arrow keys must never park on a row that cannot be activated.
+    #[test]
+    fn keyboard_stepping_skips_separators_and_disabled_rows() {
+        let items: Vec<Item<'_, Message>> = vec![
+            item(iced::widget::text("A")),
+            separator(),
+            item(iced::widget::text("B")).enabled(false),
+            item(iced::widget::text("C")),
+        ];
+
+        assert_eq!(selectable(&items, Some(0), true), Some(3));
+        assert_eq!(selectable(&items, Some(3), false), Some(0));
+    }
+
+    #[test]
+    fn keyboard_stepping_wraps_around_the_panel() {
+        let items: Vec<Item<'_, Message>> = vec![
+            item(iced::widget::text("A")),
+            item(iced::widget::text("B")),
+        ];
+
+        assert_eq!(selectable(&items, Some(1), true), Some(0));
+        assert_eq!(selectable(&items, Some(0), false), Some(1));
+    }
+
+    /// With nothing highlighted, Down starts at the top and Up starts at the
+    /// bottom — anything else feels like the first key press was swallowed.
+    #[test]
+    fn keyboard_stepping_from_nothing_enters_at_the_near_end() {
+        let items: Vec<Item<'_, Message>> = vec![
+            item(iced::widget::text("A")),
+            item(iced::widget::text("B")),
+            item(iced::widget::text("C")),
+        ];
+
+        assert_eq!(selectable(&items, None, true), Some(0));
+        assert_eq!(selectable(&items, None, false), Some(2));
+    }
+
+    #[test]
+    fn keyboard_stepping_gives_up_on_a_panel_with_nothing_to_land_on() {
+        let empty: Vec<Item<'_, Message>> = vec![];
+        let inert: Vec<Item<'_, Message>> =
+            vec![separator(), item(iced::widget::text("A")).enabled(false)];
+
+        assert_eq!(selectable(&empty, None, true), None);
+        assert_eq!(selectable(&inert, None, true), None);
     }
 
     /// The chevron and a trailing checkmark share one gutter, so a row must

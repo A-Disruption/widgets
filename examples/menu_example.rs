@@ -6,10 +6,12 @@
 //! window narrow to watch the root panels flip too.
 
 use iced::widget::{column, container, row, space, text};
+use iced::time::Duration;
 use iced::{Element, Fill, Theme};
 
 use widgets::anchor::{Align, Side};
-use widgets::menu::{CheckSide, Item, item, menu, separator, submenu, toggle};
+use widgets::animation::Motion;
+use widgets::menu::{CheckSide, Item, Menu, item, menu, menu_bar, separator, submenu, toggle};
 
 pub fn main() -> iced::Result {
     iced::application(Example::default, Example::update, Example::view)
@@ -71,18 +73,15 @@ impl Example {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let bar = row![
-            file_menu(),
-            edit_menu(),
-            self.view_menu(),
-            // Pushes the last two menus against the right edge, where their
-            // submenus have to flip.
-            space().width(Fill),
-            deep_menu(),
-            aligned_menu(),
-        ]
-        .spacing(2);
-//        .padding(6);
+        // Grouping the menus into a bar is what makes them hand over to each
+        // other: with one open, sliding onto another trigger opens it, and the
+        // left and right arrows walk between them.
+        let bar = menu_bar(vec![file_menu(), edit_menu(), self.view_menu()]).padding(6);
+
+        // These two stay outside the bar, pushed against the right edge where
+        // their submenus have to flip. They still work on their own — they just
+        // never hand over.
+        let strays = row![deep_menu(), aligned_menu()].spacing(2);
 
         let status = match self.last {
             Some(label) => text(format!("chose: {label}")),
@@ -90,7 +89,9 @@ impl Example {
         };
 
         column![
-            container(bar).width(Fill).style(container::bordered_box),
+            container(row![bar, space().width(Fill), strays].padding(6))
+                .width(Fill)
+                .style(container::bordered_box),
             container(status).padding(16),
             space().width(Fill).height(Fill),
         ]
@@ -99,7 +100,7 @@ impl Example {
 
     /// Checkmarks in the leading gutter, mixed with plain and icon rows, plus a
     /// trailing-gutter submenu that behaves like a radio group.
-    fn view_menu(&self) -> Element<'_, Message> {
+    fn view_menu(&self) -> Menu<'_, Message> {
         menu(
             text("View"),
             vec![
@@ -120,7 +121,6 @@ impl Example {
             ],
         )
         .on_toggle(|open| Message::Toggled("view", open))
-        .into()
     }
 }
 
@@ -138,7 +138,7 @@ fn shortcut_item<'a>(label: &'static str, keys: &'static str) -> Item<'a, Messag
 }
 
 /// Icons in the leading gutter, alongside rows that have none.
-fn file_menu<'a>() -> Element<'a, Message> {
+fn file_menu<'a>() -> Menu<'a, Message> {
     menu(
         text("File"),
         vec![
@@ -162,11 +162,10 @@ fn file_menu<'a>() -> Element<'a, Message> {
         ],
     )
     .on_toggle(|open| Message::Toggled("file", open))
-    .into()
 }
 
 /// Checkmarks in the trailing gutter instead of the leading one.
-fn edit_menu<'a>() -> Element<'a, Message> {
+fn edit_menu<'a>() -> Menu<'a, Message> {
     menu(
         text("Edit"),
         vec![
@@ -188,7 +187,6 @@ fn edit_menu<'a>() -> Element<'a, Message> {
     )
     .check_side(CheckSide::Trailing)
     .on_toggle(|open| Message::Toggled("edit", open))
-    .into()
 }
 
 /// Four levels deep, anchored at the right of the window: every level after the
@@ -219,6 +217,9 @@ fn deep_menu<'a>() -> Element<'a, Message> {
             ),
         ],
     )
+    // A slower, longer travel than the default, to show the motion is
+    // configurable — and to make the transition easy to actually see.
+    .motion(Motion::SMOOTH.duration(Duration::from_millis(600)).slide(24.0))
     .on_toggle(|open| Message::Toggled("deep", open))
     .into()
 }
@@ -241,6 +242,8 @@ fn aligned_menu<'a>() -> Element<'a, Message> {
         ],
     )
     .plain_trigger()
+    // Opted out entirely: this menu never schedules an animation frame.
+    .no_animation()
     .side(Side::Bottom)
     .align(Align::End)
     .min_width(220.0)
