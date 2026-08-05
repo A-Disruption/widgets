@@ -11,6 +11,7 @@ use iced::{Element, Fill, Theme};
 
 use widgets::anchor::{Align, Side};
 use widgets::animation::Motion;
+use widgets::lucide::{self, Icon};
 use widgets::menu::{CheckSide, Item, Menu, item, menu, menu_bar, separator, submenu, toggle};
 
 pub fn main() -> iced::Result {
@@ -142,8 +143,8 @@ fn file_menu<'a>() -> Menu<'a, Message> {
     menu(
         text("File"),
         vec![
-            shortcut_item("New", "Ctrl+N").icon(text("＋")),
-            shortcut_item("Open…", "Ctrl+O").icon(text("📂")),
+            shortcut_item("New", "Ctrl+N").icon(lucide::icon(Icon::FilePlus)),
+            shortcut_item("Open…", "Ctrl+O").icon(lucide::icon(Icon::FolderOpen)),
             submenu(
                 text("Open Recent"),
                 vec![
@@ -155,7 +156,7 @@ fn file_menu<'a>() -> Menu<'a, Message> {
                 ],
             ),
             separator(),
-            shortcut_item("Save", "Ctrl+S").icon(text("💾")),
+            shortcut_item("Save", "Ctrl+S").icon(lucide::icon(Icon::Save)),
             item(text("Save As…")).enabled(false),
             separator(),
             shortcut_item("Quit", "Ctrl+Q"),
@@ -172,8 +173,8 @@ fn edit_menu<'a>() -> Menu<'a, Message> {
             shortcut_item("Undo", "Ctrl+Z"),
             shortcut_item("Redo", "Ctrl+Shift+Z"),
             separator(),
-            shortcut_item("Cut", "Ctrl+X"),
-            shortcut_item("Copy", "Ctrl+C"),
+            shortcut_item("Cut", "Ctrl+X").icon(lucide::icon(Icon::Scissors)),
+            shortcut_item("Copy", "Ctrl+C").icon(lucide::icon(Icon::Copy)),
             toggle(text("Overwrite Mode"), true).on_press(Message::Chose("overwrite")),
             submenu(
                 text("Paste Special"),

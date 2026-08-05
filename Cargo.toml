@@ -23,7 +23,10 @@ anchor = []
 animation = ["anchor"]
 # The embedded Lucide icon font, shared by widgets that draw their own glyphs.
 lucide = []
+layer = ["anchor", "animation"]
 menu = ["anchor", "animation", "lucide"]
+popover = ["anchor", "animation"]
+toast = ["anchor", "animation", "lucide"]
 tree = []
 color_picker = []
 color_picker_two = []
@@ -33,7 +36,22 @@ flow_editor = []
 date_picker = ["dep:chrono"]
 # Material Design 3 styles for the widgets above, in `widgets::m3`.
 m3_theme = ["dep:material_theme"]
-all = ["anchor", "animation", "lucide", "menu", "tree", "color_picker", "color_picker_two", "collapsible", "generic_overlay", "flow_editor", "date_picker"]
+all = ["anchor", "animation", "layer", "lucide", "menu", "popover", "toast", "tree", "color_picker", "color_picker_two", "collapsible", "generic_overlay", "flow_editor", "date_picker"]
+
+[[example]]
+name = "toast_example"
+path = "examples/toast_example.rs"
+required-features = ["toast"]
+
+[[example]]
+name = "layer_example"
+path = "examples/layer_example.rs"
+required-features = ["layer"]
+
+[[example]]
+name = "popover_example"
+path = "examples/popover_example.rs"
+required-features = ["popover"]
 
 [[example]]
 name = "menu_example"

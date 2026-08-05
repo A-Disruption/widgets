@@ -689,6 +689,18 @@ struct State {
     sibling_request: Option<Sibling>,
     /// The open/close transition of the root panel.
     transition: Transition,
+    /// The appear transition of each submenu panel, indexed by depth.
+    ///
+    /// Index 0 is unused — the root panel uses [`State::transition`], which
+    /// also animates *out*. Submenus only animate in: they are torn down by the
+    /// path shrinking, and keeping a closed panel alive to fade it would mean
+    /// the path no longer describing what is on screen.
+    submenu_transitions: Vec<Transition>,
+    /// The progress of each panel on screen, refreshed every layout pass.
+    ///
+    /// Cached because `draw` cannot advance a transition through `&self`, and
+    /// layout always runs first in a frame.
+    panel_progress: Vec<f32>,
 }
 
 /// A neighbouring menu in a [`MenuBar`].
@@ -728,6 +740,7 @@ impl State {
         self.highlighted = None;
         self.sibling_request = None;
         self.transition.close(Instant::now());
+        self.submenu_transitions.clear();
     }
 
     /// Opens the root panel with nothing highlighted, as a press does.
@@ -736,11 +749,118 @@ impl State {
         self.path.clear();
         self.highlighted = None;
         self.transition.open(Instant::now());
+        self.submenu_transitions.clear();
     }
 
     /// Returns `true` when the panels should still be produced and drawn.
     fn is_showing(&self, now: Instant) -> bool {
         self.is_open || self.transition.is_visible(now)
+    }
+
+    /// Returns `true` while any panel is still moving.
+    fn is_animating(&self, now: Instant) -> bool {
+        self.transition.is_animating(now)
+            || self
+                .submenu_transitions
+                .iter()
+                .any(|transition| transition.is_animating(now))
+    }
+
+    /// Collapses the chain to `depth`, fading the panels below it out.
+    ///
+    /// The path keeps describing the fading panels so they can still be laid
+    /// out and drawn; [`State::live_depth`] is what marks them as no longer
+    /// interactive, and [`State::retire_finished_panels`] drops them once the
+    /// fade completes.
+    fn collapse_to(&mut self, depth: usize, now: Instant) {
+        for transition in self.submenu_transitions.iter_mut().skip(depth + 1) {
+            transition.close(now);
+        }
+    }
+
+    /// Opens `index` as a submenu of the panel at `depth`, replacing whatever
+    /// was open below it.
+    ///
+    /// Unlike [`State::collapse_to`], this drops the old panels at once. A
+    /// replacement arrives in the same place the outgoing panel occupied, so
+    /// cross-fading the two would read as a smear rather than a transition.
+    fn open_submenu(&mut self, depth: usize, index: usize, now: Instant) {
+        // Asking for the submenu that is already open leaves its transition
+        // exactly where it is. Rebuilding it would restart the fade from
+        // nothing every time the cursor crossed back onto the row that opened
+        // it — which reads as the panel flickering shut and open again.
+        //
+        // A submenu that had begun fading out is resumed rather than restarted,
+        // so returning to its row catches it wherever it got to.
+        if self.path.len() == depth + 1 && self.path[depth] == index {
+            if let Some(transition) = self.submenu_transitions.get_mut(depth + 1) {
+                transition.open(now);
+            }
+
+            return;
+        }
+
+        self.path.truncate(depth);
+        self.path.push(index);
+        self.submenu_transitions.truncate(depth + 1);
+
+        while self.submenu_transitions.len() <= depth + 1 {
+            self.submenu_transitions.push(Transition::new());
+        }
+
+        self.submenu_transitions[depth + 1].open(now);
+    }
+
+    /// The deepest panel the cursor and keyboard may still reach.
+    ///
+    /// Panels past this are fading out and must not be hit-tested, or a click
+    /// aimed at what replaced them would land on a ghost.
+    fn live_depth(&self, now: Instant) -> usize {
+        self.submenu_transitions
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, transition)| transition.is_closing(now))
+            .map_or(self.path.len(), |(depth, _)| depth - 1)
+    }
+
+    /// Drops panels whose fade has finished.
+    fn retire_finished_panels(&mut self, now: Instant) {
+        let finished = self
+            .submenu_transitions
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, transition)| !transition.is_visible(now))
+            .map(|(depth, _)| depth);
+
+        if let Some(depth) = finished {
+            self.path.truncate(depth - 1);
+            self.submenu_transitions.truncate(depth);
+        }
+    }
+
+    /// Advances the transition of the panel at `depth` and returns its
+    /// progress.
+    ///
+    /// Submenu transitions are created on demand and dropped when the chain
+    /// collapses, so reopening a submenu animates it afresh rather than
+    /// snapping to the progress it had last time.
+    fn advance_panel(&mut self, depth: usize, now: Instant, motion: Motion) -> f32 {
+        if depth == 0 {
+            return self.transition.progress(now);
+        }
+
+        while self.submenu_transitions.len() <= depth {
+            let mut transition = Transition::new();
+            transition.sync(motion);
+            transition.open(now);
+            self.submenu_transitions.push(transition);
+        }
+
+        let transition = &mut self.submenu_transitions[depth];
+        transition.sync(motion);
+        transition.progress(now)
     }
 }
 
@@ -958,7 +1078,7 @@ where
             // Drive the transition, and stop asking for frames the moment it
             // settles. A menu sitting there open costs nothing.
             if let Event::Window(window::Event::RedrawRequested(now)) = event
-                && state.transition.is_animating(*now)
+                && state.is_animating(*now)
             {
                 shell.request_redraw();
             }
@@ -1106,7 +1226,7 @@ where
             min_width: self.min_width,
             max_width: self.max_width,
             progress,
-            slide: self.motion.slide,
+            motion: self.motion,
             is_closing,
             on_toggle: self.on_toggle.as_deref(),
             class: &self.class,
@@ -1458,8 +1578,8 @@ where
     max_width: Option<f32>,
     /// How far open the root panel is, from `0.0` to `1.0`.
     progress: f32,
-    /// The distance the root panel still has to slide.
-    slide: f32,
+    /// How the panels animate.
+    motion: Motion,
     /// Whether the menu is closing, and so should ignore further input.
     is_closing: bool,
     on_toggle: Option<&'a dyn Fn(bool) -> Message>,
@@ -1669,8 +1789,12 @@ where
     fn row_at(&self, layout: Layout<'_>, cursor: mouse::Cursor) -> Option<(usize, usize)> {
         let position = cursor.position()?;
 
-        // The layout may still hold panels the path has since dropped.
-        for (depth, panel) in layout.children().take(self.depth()).enumerate() {
+        // Fading panels are still on screen but are not targets.
+        for (depth, panel) in layout
+            .children()
+            .take(self.state.live_depth(Instant::now()) + 1)
+            .enumerate()
+        {
             if !panel.bounds().contains(position) {
                 continue;
             }
@@ -1697,7 +1821,7 @@ where
     /// Stepping onto a row also collapses anything open below it, so the chain
     /// on screen never runs deeper than the row the keyboard is actually on.
     fn step_highlight(&mut self, forward: bool) {
-        let depth = self.state.path.len();
+        let depth = self.state.live_depth(Instant::now());
 
         let Some(items) = panel_items(self.items, &self.state.path, depth) else {
             return;
@@ -1735,8 +1859,7 @@ where
             return false;
         }
 
-        self.state.path.truncate(depth);
-        self.state.path.push(index);
+        self.state.open_submenu(depth, index, Instant::now());
 
         // Land on the first row of the panel that just opened, so the next
         // arrow press continues from somewhere sensible.
@@ -1808,11 +1931,12 @@ where
                 }
             }
             Named::ArrowLeft => {
-                match self.state.path.pop() {
+                match self.state.path.last().copied() {
                     Some(index) => {
-                        // Step back up onto the row that owned the panel just
-                        // closed, rather than losing the highlight entirely.
-                        self.state.highlighted = Some((self.state.path.len(), index));
+                        // Step back up onto the row that owned the panel now
+                        // fading, rather than losing the highlight entirely.
+                        self.state.collapse_to(self.state.path.len() - 1, Instant::now());
+                        self.state.highlighted = Some((self.state.path.len() - 1, index));
                     }
                     None => {
                         self.state.sibling_request = Some(Sibling::Previous);
@@ -1825,8 +1949,11 @@ where
             Named::Escape => {
                 // Escape peels one level off the chain, and closes the menu
                 // once only the root panel is left.
-                match self.state.path.pop() {
-                    Some(index) => self.state.highlighted = Some((self.state.path.len(), index)),
+                match self.state.path.last().copied() {
+                    Some(index) => {
+                        self.state.collapse_to(self.state.path.len() - 1, Instant::now());
+                        self.state.highlighted = Some((self.state.path.len() - 1, index));
+                    }
                     None => {
                         self.state.close();
 
@@ -1848,14 +1975,10 @@ where
     ///
     /// Returned whole rather than faded at each use so that a settled panel
     /// pays nothing beyond the usual style lookup.
-    fn faded_style(&self, theme: &Theme) -> Style {
-        let style = theme.style(self.class);
-
-        if self.progress >= 1.0 {
+    fn faded_style(&self, style: Style, progress: f32) -> Style {
+        if progress >= 1.0 {
             return style;
         }
-
-        let progress = self.progress;
 
         Style {
             background: animation::fade_background(style.background, progress),
@@ -1883,7 +2006,7 @@ where
     fn is_over_any_panel(&self, layout: Layout<'_>, cursor: mouse::Cursor) -> bool {
         layout
             .children()
-            .take(self.depth())
+            .take(self.state.live_depth(Instant::now()) + 1)
             .any(|panel| cursor.is_over(panel.bounds()))
     }
 }
@@ -1897,7 +2020,11 @@ where
 {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
         let viewport = Rectangle::with_size(bounds);
+        let now = Instant::now();
+
+        self.state.retire_finished_panels(now);
         let mut panels: Vec<Node> = Vec::with_capacity(self.depth());
+        let mut progresses: Vec<f32> = Vec::with_capacity(self.depth());
 
         for depth in 0..self.depth() {
             let Some(panel) = self.layout_panel(renderer, bounds, depth) else {
@@ -1918,17 +2045,23 @@ where
 
             let placed = anchor::place(anchor, panel.size(), viewport, placement);
 
-            // Only the root panel slides. Sub-panels are placed against a
-            // parent that has already settled, and sliding them too would make
-            // a deep chain ripple every time it opened.
-            let offset = if depth == 0 {
-                animation::slide(placed.side, self.slide, self.progress)
+            // Every panel animates on its own clock, so a submenu opened long
+            // after its parent still slides in rather than appearing whole.
+            // A closing menu drives the whole chain from the root transition
+            // instead, so the panels fade out together.
+            let progress = if self.is_closing {
+                self.progress
             } else {
-                Vector::ZERO
+                self.state.advance_panel(depth, now, self.motion)
             };
 
+            let offset = animation::slide(placed.side, self.motion.slide, progress);
+
+            progresses.push(progress);
             panels.push(panel.move_to(placed.position + offset));
         }
+
+        self.state.panel_progress = progresses;
 
         Node::with_children(bounds, panels)
     }
@@ -1943,13 +2076,19 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
-        // Every color the panel draws is faded by the transition. Children that
-        // inherit `text_color` come with it; one that sets its own colour does
-        // not. See `crate::animation` for why that trade is the best available.
-        let appearance = self.faded_style(theme);
+        let style = theme.style(self.class);
 
         for (depth, panel) in layout.children().take(self.depth()).enumerate() {
             let panel_bounds = panel.bounds();
+
+            // Every color a panel draws is faded by its own transition, so a
+            // submenu fades in independently of the parent it opened from.
+            // Children that inherit `text_color` come with it; one that sets
+            // its own color does not — see `crate::animation`.
+            let appearance = self.faded_style(
+                style,
+                self.state.panel_progress.get(depth).copied().unwrap_or(1.0),
+            );
 
             let Some(items) = panel_items(self.items, &self.state.path, depth) else {
                 continue;
@@ -2146,10 +2285,10 @@ where
                     // opens its own submenu if it has one. Moving along a chain
                     // of submenus therefore never leaves an orphaned panel
                     // behind.
-                    self.state.path.truncate(depth);
-
                     if opens_submenu {
-                        self.state.path.push(index);
+                        self.state.open_submenu(depth, index, Instant::now());
+                    } else {
+                        self.state.collapse_to(depth, Instant::now());
                     }
                 }
 
@@ -2161,6 +2300,14 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
                 if !self.is_over_any_panel(layout, cursor) {
+                    // A press on the trigger belongs to the trigger, which
+                    // toggles. Closing here would hand the widget an
+                    // already-closed menu a moment later, and it would dutifully
+                    // re-open it — leaving the menu stuck open on every click.
+                    if cursor.is_over(self.trigger_bounds) {
+                        return;
+                    }
+
                     self.state.close();
 
                     if let Some(on_toggle) = self.on_toggle {
@@ -2417,6 +2564,7 @@ pub fn default(theme: &Theme) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::time::Duration;
 
     #[derive(Debug, Clone, PartialEq)]
     enum Message {
@@ -2495,6 +2643,108 @@ mod tests {
     fn an_empty_gutter_costs_nothing() {
         assert_eq!(gutter_offset(0.0, 8.0), 0.0);
         assert_eq!(gutter_offset(16.0, 8.0), 24.0);
+    }
+
+    /// A collapsing chain keeps its panels on screen to fade them, but they
+    /// stop being reachable the moment they start closing.
+    #[test]
+    fn a_fading_panel_is_still_rendered_but_no_longer_live() {
+        let mut state = State::default();
+        let now = Instant::now();
+
+        state.open();
+        state.open_submenu(0, 1, now);
+        state.open_submenu(1, 0, now);
+
+        assert_eq!(state.path.len(), 2);
+        assert_eq!(state.live_depth(now), 2);
+
+        state.collapse_to(0, now);
+
+        // Still described by the path, so still laid out and drawn...
+        assert_eq!(state.path.len(), 2);
+        // ...but no longer hit-tested.
+        assert_eq!(state.live_depth(now), 0);
+    }
+
+    #[test]
+    fn a_finished_fade_drops_the_panel_from_the_chain() {
+        let mut state = State::default();
+        let now = Instant::now();
+
+        state.open();
+        state.open_submenu(0, 1, now);
+        state.collapse_to(0, now);
+
+        state.retire_finished_panels(now);
+        assert_eq!(state.path.len(), 1, "still fading, so still present");
+
+        state.retire_finished_panels(now + Duration::from_millis(500));
+        assert_eq!(state.path.len(), 0, "fade finished, so dropped");
+    }
+
+    /// Moving the cursor back onto the row that opened a submenu must not
+    /// disturb it. Restarting the transition made the panel flicker.
+    #[test]
+    fn reopening_the_submenu_already_open_leaves_its_transition_alone() {
+        let mut state = State::default();
+        let start = Instant::now();
+
+        state.open();
+        state.open_submenu(0, 1, start);
+
+        let settled = start + Duration::from_millis(500);
+        assert_eq!(state.advance_panel(1, settled, Motion::QUICK), 1.0);
+
+        // The cursor wanders back onto "Level two" while its panel is open.
+        state.open_submenu(0, 1, settled);
+
+        assert_eq!(state.path, vec![1]);
+        assert_eq!(
+            state.advance_panel(1, settled, Motion::QUICK),
+            1.0,
+            "the panel restarted its fade instead of staying put"
+        );
+    }
+
+    /// ...but a submenu caught part-way out should come back, not stay closing.
+    #[test]
+    fn returning_to_a_fading_submenu_reopens_it() {
+        let mut state = State::default();
+        let start = Instant::now();
+
+        state.open();
+        state.open_submenu(0, 1, start);
+
+        let settled = start + Duration::from_millis(500);
+        let _ = state.advance_panel(1, settled, Motion::QUICK);
+
+        state.collapse_to(0, settled);
+        assert_eq!(state.live_depth(settled), 0);
+
+        state.open_submenu(0, 1, settled);
+
+        assert_eq!(state.path, vec![1]);
+        assert_eq!(
+            state.live_depth(settled),
+            1,
+            "the panel stayed closing after the cursor came back"
+        );
+    }
+
+    /// Replacing a sibling submenu has to be instant: the incoming panel lands
+    /// where the outgoing one is, and cross-fading them reads as a smear.
+    #[test]
+    fn opening_a_sibling_submenu_replaces_it_outright() {
+        let mut state = State::default();
+        let now = Instant::now();
+
+        state.open();
+        state.open_submenu(0, 1, now);
+        state.open_submenu(0, 2, now);
+
+        assert_eq!(state.path, vec![2]);
+        assert_eq!(state.live_depth(now), 1);
     }
 
     /// Arrow keys must never park on a row that cannot be activated.

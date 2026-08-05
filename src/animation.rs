@@ -185,6 +185,14 @@ impl Transition {
         self.animation.value() || self.animation.is_animating(now)
     }
 
+    /// Returns `true` while the surface is on its way out.
+    ///
+    /// A closing surface is still drawn, but should no longer respond to
+    /// anything.
+    pub fn is_closing(&self, now: Instant) -> bool {
+        !self.animation.value() && self.animation.is_animating(now)
+    }
+
     /// Returns `true` while the transition is in flight.
     ///
     /// A widget should request another redraw for as long as this holds, and
@@ -284,6 +292,23 @@ mod tests {
         assert!(transition.is_visible(open));
         assert!(transition.is_visible(open + Duration::from_millis(60)));
         assert!(!transition.is_visible(open + Duration::from_millis(200)));
+    }
+
+    #[test]
+    fn is_closing_holds_only_while_fading_out() {
+        let mut transition = Transition::new();
+        let start = Instant::now();
+
+        transition.open(start);
+        assert!(!transition.is_closing(start));
+
+        let open = start + Duration::from_millis(200);
+        transition.close(open);
+
+        assert!(transition.is_closing(open));
+        assert!(transition.is_closing(open + Duration::from_millis(60)));
+        // Once it has finished, it is closed rather than closing.
+        assert!(!transition.is_closing(open + Duration::from_millis(200)));
     }
 
     #[test]

@@ -54,6 +54,30 @@ pub enum Icon {
     ChevronDown,
     /// Lucide's `chevron-up` glyph.
     ChevronUp,
+    /// Lucide's `file-plus` glyph.
+    FilePlus,
+    /// Lucide's `folder-open` glyph.
+    FolderOpen,
+    /// Lucide's `save` glyph.
+    Save,
+    /// Lucide's `scissors` glyph.
+    Scissors,
+    /// Lucide's `copy` glyph.
+    Copy,
+    /// Lucide's `clipboard` glyph.
+    Clipboard,
+    /// Lucide's `settings` glyph.
+    Settings,
+    /// Lucide's `info` glyph.
+    Info,
+    /// Lucide's `alert-triangle` glyph.
+    TriangleAlert,
+    /// Lucide's `check-circle-2` glyph.
+    CircleCheck,
+    /// Lucide's `circle-x` glyph.
+    CircleX,
+    /// Lucide's `x` glyph.
+    X,
 }
 
 impl Icon {
@@ -65,6 +89,18 @@ impl Icon {
             Self::ChevronLeft => '\u{e06e}',
             Self::ChevronDown => '\u{e06d}',
             Self::ChevronUp => '\u{e070}',
+            Self::FilePlus => '\u{e0c9}',
+            Self::FolderOpen => '\u{e247}',
+            Self::Save => '\u{e14d}',
+            Self::Scissors => '\u{e14e}',
+            Self::Copy => '\u{e09e}',
+            Self::Clipboard => '\u{e085}',
+            Self::Settings => '\u{e154}',
+            Self::Info => '\u{e0f9}',
+            Self::TriangleAlert => '\u{e193}',
+            Self::CircleCheck => '\u{e226}',
+            Self::CircleX => '\u{e084}',
+            Self::X => '\u{e1b2}',
         }
     }
 }
@@ -89,6 +125,41 @@ mod tests {
         assert_eq!(Icon::Check.character(), '\u{e06c}');
         assert_eq!(Icon::ChevronLeft.character(), '\u{e06e}');
         assert_eq!(Icon::ChevronRight.character(), '\u{e06f}');
+        assert_eq!(Icon::FilePlus.character(), '\u{e0c9}');
+        assert_eq!(Icon::FolderOpen.character(), '\u{e247}');
+        assert_eq!(Icon::Save.character(), '\u{e14d}');
+    }
+
+    /// Every glyph sits in the private-use area. A code point outside it means
+    /// the wrong character was transcribed from the font.
+    #[test]
+    fn every_code_point_is_in_the_private_use_area() {
+        for icon in [
+            Icon::Check,
+            Icon::ChevronRight,
+            Icon::ChevronLeft,
+            Icon::ChevronDown,
+            Icon::ChevronUp,
+            Icon::FilePlus,
+            Icon::FolderOpen,
+            Icon::Save,
+            Icon::Scissors,
+            Icon::Copy,
+            Icon::Clipboard,
+            Icon::Settings,
+            Icon::Info,
+            Icon::TriangleAlert,
+            Icon::CircleCheck,
+            Icon::CircleX,
+            Icon::X,
+        ] {
+            let code = icon.character() as u32;
+
+            assert!(
+                (0xE000..=0xF8FF).contains(&code),
+                "{icon:?} is at U+{code:04X}, outside the private-use area"
+            );
+        }
     }
 
     #[test]

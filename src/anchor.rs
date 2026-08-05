@@ -253,6 +253,141 @@ fn shift_into(start: f32, extent: f32, origin: f32, available: f32) -> f32 {
     start.clamp(origin, origin + available - extent)
 }
 
+/// Returns the two corners of a placed surface that face its base.
+///
+/// `extend` widens the pair outwards along the cross axis, which gives the
+/// corridor below a more forgiving mouth when the surface and its base are
+/// closely aligned.
+pub fn facing_corners(surface: Rectangle, side: Side, extend: f32) -> (Point, Point) {
+    match side {
+        Side::Right => (
+            Point::new(surface.x, surface.y - extend),
+            Point::new(surface.x, surface.y + surface.height + extend),
+        ),
+        Side::Left => (
+            Point::new(surface.x + surface.width, surface.y - extend),
+            Point::new(surface.x + surface.width, surface.y + surface.height + extend),
+        ),
+        Side::Bottom => (
+            Point::new(surface.x - extend, surface.y),
+            Point::new(surface.x + surface.width + extend, surface.y),
+        ),
+        Side::Top => (
+            Point::new(surface.x - extend, surface.y + surface.height),
+            Point::new(surface.x + surface.width + extend, surface.y + surface.height),
+        ),
+    }
+}
+
+/// Returns `true` when `point` lies within the triangle `a`–`b`–`c`.
+///
+/// Uses the sign-of-cross-product test, so points exactly on an edge count as
+/// inside.
+pub fn point_in_triangle(point: Point, a: Point, b: Point, c: Point) -> bool {
+    let sign = |p: Point, q: Point, r: Point| (p.x - r.x) * (q.y - r.y) - (q.x - r.x) * (p.y - r.y);
+
+    let ab = sign(point, a, b);
+    let bc = sign(point, b, c);
+    let ca = sign(point, c, a);
+
+    let has_negative = ab < 0.0 || bc < 0.0 || ca < 0.0;
+    let has_positive = ab > 0.0 || bc > 0.0 || ca > 0.0;
+
+    !(has_negative && has_positive)
+}
+
+/// Returns `true` when the cursor is inside the corridor between where it left
+/// the base and the near edge of the surface.
+///
+/// A hover-triggered surface separated from its base by a gap would otherwise
+/// close the instant the cursor entered that gap, making the surface
+/// unreachable by any path except a perfectly straight one. Treating the
+/// triangle swept from the cursor's last position on the base to the surface's
+/// two facing corners as "still inside" lets the cursor cut a diagonal.
+///
+/// `from` is the last cursor position known to be over the base.
+pub fn in_safe_corridor(
+    cursor: Point,
+    from: Point,
+    surface: Rectangle,
+    side: Side,
+    extend: f32,
+) -> bool {
+    let (near, far) = facing_corners(surface, side, extend);
+
+    point_in_triangle(cursor, from, near, far)
+}
+
+/// Where a surface sits in the viewport.
+///
+/// Used by the widgets that anchor to the window rather than to another
+/// element — [`crate::layer`] and [`crate::toast`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Anchor {
+    /// The top-left corner.
+    TopLeft,
+    /// Centred against the top edge.
+    Top,
+    /// The top-right corner.
+    TopRight,
+    /// Centred against the left edge.
+    Left,
+    /// The middle of the viewport.
+    #[default]
+    Center,
+    /// Centred against the right edge.
+    Right,
+    /// The bottom-left corner.
+    BottomLeft,
+    /// Centred against the bottom edge.
+    Bottom,
+    /// The bottom-right corner.
+    BottomRight,
+}
+
+impl Anchor {
+    /// Returns the top-left corner of a surface of `size` anchored here.
+    pub fn position(self, size: Size, viewport: Rectangle, margin: f32) -> Point {
+        let free_x = (viewport.width - size.width).max(0.0);
+        let free_y = (viewport.height - size.height).max(0.0);
+
+        let left = viewport.x + margin.min(free_x);
+        let right = viewport.x + free_x - margin.min(free_x);
+        let middle_x = viewport.x + free_x / 2.0;
+
+        let top = viewport.y + margin.min(free_y);
+        let bottom = viewport.y + free_y - margin.min(free_y);
+        let middle_y = viewport.y + free_y / 2.0;
+
+        match self {
+            Self::TopLeft => Point::new(left, top),
+            Self::Top => Point::new(middle_x, top),
+            Self::TopRight => Point::new(right, top),
+            Self::Left => Point::new(left, middle_y),
+            Self::Center => Point::new(middle_x, middle_y),
+            Self::Right => Point::new(right, middle_y),
+            Self::BottomLeft => Point::new(left, bottom),
+            Self::Bottom => Point::new(middle_x, bottom),
+            Self::BottomRight => Point::new(right, bottom),
+        }
+    }
+
+    /// Returns the viewport edge this anchor slides in from.
+    ///
+    /// A surface against an edge emerges from it. A centred one has no edge of
+    /// its own, so it rises from the bottom, which is the convention every
+    /// dialog uses.
+    pub fn slide_from(self) -> Side {
+        match self {
+            Self::TopLeft | Self::Top | Self::TopRight => Side::Top,
+            Self::Left => Side::Left,
+            Self::Right => Side::Right,
+            Self::BottomLeft | Self::Bottom | Self::BottomRight | Self::Center => Side::Bottom,
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,6 +527,84 @@ mod tests {
         );
 
         assert_eq!(placed.position.x, 240.0);
+    }
+
+    #[test]
+    fn facing_corners_are_the_edge_nearest_the_base() {
+        let surface = Rectangle {
+            x: 200.0,
+            y: 100.0,
+            width: 160.0,
+            height: 80.0,
+        };
+
+        // A surface to the right of its base presents its left edge.
+        let (near, far) = facing_corners(surface, Side::Right, 0.0);
+        assert_eq!(near, Point::new(200.0, 100.0));
+        assert_eq!(far, Point::new(200.0, 180.0));
+
+        // Below its base, it presents its top edge.
+        let (near, far) = facing_corners(surface, Side::Bottom, 0.0);
+        assert_eq!(near, Point::new(200.0, 100.0));
+        assert_eq!(far, Point::new(360.0, 100.0));
+    }
+
+    #[test]
+    fn extending_widens_the_mouth_of_the_corridor() {
+        let surface = Rectangle {
+            x: 200.0,
+            y: 100.0,
+            width: 160.0,
+            height: 80.0,
+        };
+
+        let (near, far) = facing_corners(surface, Side::Right, 10.0);
+
+        assert_eq!(near, Point::new(200.0, 90.0));
+        assert_eq!(far, Point::new(200.0, 190.0));
+    }
+
+    #[test]
+    fn a_point_inside_a_triangle_is_detected() {
+        let a = Point::new(0.0, 0.0);
+        let b = Point::new(10.0, 0.0);
+        let c = Point::new(0.0, 10.0);
+
+        assert!(point_in_triangle(Point::new(2.0, 2.0), a, b, c));
+        assert!(point_in_triangle(a, a, b, c), "a vertex counts as inside");
+        assert!(!point_in_triangle(Point::new(9.0, 9.0), a, b, c));
+    }
+
+    /// The whole point of the corridor: a diagonal path from the base to a
+    /// surface offset below it must not be treated as leaving.
+    #[test]
+    fn a_diagonal_path_to_the_surface_stays_in_the_corridor() {
+        let surface = Rectangle {
+            x: 200.0,
+            y: 100.0,
+            width: 160.0,
+            height: 80.0,
+        };
+
+        // The cursor left the base here, heading down and to the right.
+        let from = Point::new(150.0, 90.0);
+
+        assert!(in_safe_corridor(
+            Point::new(180.0, 110.0),
+            from,
+            surface,
+            Side::Right,
+            0.0
+        ));
+
+        // Wandering well above the corridor is genuinely leaving.
+        assert!(!in_safe_corridor(
+            Point::new(180.0, 20.0),
+            from,
+            surface,
+            Side::Right,
+            0.0
+        ));
     }
 
     #[test]

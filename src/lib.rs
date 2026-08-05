@@ -4,11 +4,20 @@ pub mod anchor;
 #[cfg(feature = "animation")]
 pub mod animation;
 
+#[cfg(feature = "layer")]
+pub mod layer;
+
 #[cfg(feature = "lucide")]
 pub mod lucide;
 
 #[cfg(feature = "menu")]
 pub mod menu;
+
+#[cfg(feature = "popover")]
+pub mod popover;
+
+#[cfg(feature = "toast")]
+pub mod toast;
 
 #[cfg(feature = "tree")]
 pub mod tree;
