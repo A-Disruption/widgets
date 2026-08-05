@@ -8,12 +8,20 @@ edition = "2024"
 # one iced build (floating `branch = "master"` otherwise).
 iced = { git = "https://github.com/iced-rs/iced", rev = "4cad51ba61e3d76a7e696ad5923d675a20994e34", features = ["tokio", "advanced", "debug"] }
 chrono = { version = "0.4", optional = true }
+# Optional, behind `m3_theme`. Consumers that don't want Material Design 3
+# styling never pull this in.
+material_theme = { path = "../material_theme", optional = true }
 
 [dev-dependencies]
 iced_runtime = { git = "https://github.com/iced-rs/iced", rev = "4cad51ba61e3d76a7e696ad5923d675a20994e34" }
 
 [features]
 default = []
+# Shared base-relative placement used by the anchored widgets.
+anchor = []
+# The embedded Lucide icon font, shared by widgets that draw their own glyphs.
+lucide = []
+menu = ["anchor", "lucide"]
 tree = []
 color_picker = []
 color_picker_two = []
@@ -21,7 +29,14 @@ collapsible = []
 generic_overlay = []
 flow_editor = []
 date_picker = ["dep:chrono"]
-all = ["tree", "color_picker", "color_picker_two", "collapsible", "generic_overlay", "flow_editor", "date_picker"]
+# Material Design 3 styles for the widgets above, in `widgets::m3`.
+m3_theme = ["dep:material_theme"]
+all = ["anchor", "lucide", "menu", "tree", "color_picker", "color_picker_two", "collapsible", "generic_overlay", "flow_editor", "date_picker"]
+
+[[example]]
+name = "menu_example"
+path = "examples/menu_example.rs"
+required-features = ["menu"]
 
 [[example]]
 name = "tree_example"

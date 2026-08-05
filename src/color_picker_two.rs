@@ -69,7 +69,9 @@ const VALUE_WIDTH: f32 = 54.0;
 const SWATCH_HEADER_HEIGHT: f32 = 22.0;
 const SWATCH_SIZE: f32 = 32.0;
 const SWATCH_GAP: f32 = 8.0;
-const SWATCH_RADIUS: f32 = 10.0;
+/// Corner radius of a saved-color swatch. Public so alternative styles can
+/// match the radius the widget actually draws with.
+pub const SWATCH_RADIUS: f32 = 10.0;
 const SWATCH_TOP_MARGIN: f32 = 14.0;
 const FOOTER_PADDING: f32 = 20.0;
 const ANCHOR_SIZE: f32 = 1.0;

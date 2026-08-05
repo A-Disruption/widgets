@@ -1,3 +1,12 @@
+#[cfg(feature = "anchor")]
+pub mod anchor;
+
+#[cfg(feature = "lucide")]
+pub mod lucide;
+
+#[cfg(feature = "menu")]
+pub mod menu;
+
 #[cfg(feature = "tree")]
 pub mod tree;
 
@@ -18,3 +27,6 @@ pub mod flow_editor;
 
 #[cfg(feature = "date_picker")]
 pub mod date_picker;
+
+#[cfg(feature = "m3_theme")]
+pub mod m3;
