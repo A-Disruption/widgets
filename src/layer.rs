@@ -444,7 +444,6 @@ where
             dismiss_on_escape: self.dismiss_on_escape,
             on_dismiss: self.on_dismiss.as_ref(),
             class: &self.class,
-            viewport: Rectangle::default(),
         })))
     }
 }
@@ -483,9 +482,6 @@ where
     dismiss_on_escape: bool,
     on_dismiss: Option<&'a Message>,
     class: &'a Theme::Class<'b>,
-    /// The viewport, recorded during layout so `draw` knows how far the
-    /// backdrop has to reach.
-    viewport: Rectangle,
 }
 
 impl<Message, Theme, Renderer> Surface<'_, '_, Message, Theme, Renderer>
@@ -511,7 +507,6 @@ where
 {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
         let viewport = Rectangle::with_size(bounds);
-        self.viewport = viewport;
         let chrome = self.padding * 2.0;
 
         let available = Size::new(
@@ -580,11 +575,15 @@ where
 
         let offset = animation::slide_from_edge(side, travel, self.progress);
 
-        Node::with_children(
+        let surface = Node::with_children(
             size,
             vec![content.move_to(Point::new(self.padding, self.padding))],
         )
-        .move_to(position + offset)
+        .move_to(position + offset);
+
+        // The root spans the viewport so the backdrop has something to fill and
+        // presses outside the surface are still inside this overlay.
+        Node::with_children(bounds, vec![surface])
     }
 
     fn draw(
@@ -595,7 +594,8 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
-        let bounds = layout.bounds();
+        let surface = layout.children().next().expect("surface layout");
+        let bounds = surface.bounds();
         let style = theme.style(self.class);
 
         // The backdrop is the one thing here with no children of its own, so it
@@ -603,7 +603,7 @@ where
         if let Some(alpha) = self.backdrop {
             renderer.fill_quad(
                 renderer::Quad {
-                    bounds: self.viewport,
+                    bounds: layout.bounds(),
                     ..renderer::Quad::default()
                 },
                 animation::fade(
@@ -636,7 +636,7 @@ where
             &renderer::Style {
                 text_color: style.text_color,
             },
-            layout.children().next().expect("content layout"),
+            surface.children().next().expect("content layout"),
             cursor,
             &bounds,
         );
@@ -650,7 +650,8 @@ where
         renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
     ) {
-        let bounds = layout.bounds();
+        let surface = layout.children().next().expect("surface layout");
+        let bounds = surface.bounds();
 
         // A surface on its way out is a picture, not a control.
         if self.is_closing {
@@ -660,7 +661,7 @@ where
         self.content.as_widget_mut().update(
             self.tree,
             event,
-            layout.children().next().expect("content layout"),
+            surface.children().next().expect("content layout"),
             cursor,
             renderer,
             shell,
@@ -707,11 +708,13 @@ where
             return mouse::Interaction::None;
         }
 
+        let surface = layout.children().next().expect("surface layout");
+
         self.content.as_widget().mouse_interaction(
             self.tree,
-            layout.children().next().expect("content layout"),
+            surface.children().next().expect("content layout"),
             cursor,
-            &layout.bounds(),
+            &surface.bounds(),
             renderer,
         )
     }
@@ -722,9 +725,11 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
+        let surface = layout.children().next().expect("surface layout");
+
         self.content.as_widget_mut().operate(
             self.tree,
-            layout.children().next().expect("content layout"),
+            surface.children().next().expect("content layout"),
             renderer,
             operation,
         );
