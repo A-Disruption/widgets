@@ -54,6 +54,7 @@ use iced::{
 // Re-exported so `layer::Anchor` resolves for callers who never touch the
 // base-relative placement module.
 pub use crate::anchor::Anchor;
+use crate::anchor::Side;
 use crate::animation::{self, Motion, Transition};
 
 /// The default margin between the surface and the viewport edge.
@@ -74,6 +75,46 @@ where
     Renderer: iced::advanced::Renderer,
 {
     Layer::new(content)
+}
+
+/// Creates a dialog: centred, undecorated, with a dimmed backdrop.
+///
+/// The plain confirmation surface — no title bar, nothing to drag, nothing to
+/// resize. Visibility is the application's, as with every layer.
+pub fn dialog<'a, Message, Theme, Renderer>(
+    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+) -> Layer<'a, Message, Theme, Renderer>
+where
+    Theme: Catalog,
+    Renderer: iced::advanced::Renderer,
+{
+    Layer::new(content).backdrop(0.4)
+}
+
+/// Creates a sheet: a panel that slides out of one edge and spans it.
+///
+/// `side` is the edge it comes from. A sheet from [`Anchor::Left`] or
+/// [`Anchor::Right`] runs the full height of the viewport; one from
+/// [`Anchor::Top`] or [`Anchor::Bottom`] runs the full width. Any other anchor
+/// is treated as the nearest edge.
+///
+/// This lives here rather than in [`crate::toast`] despite both sliding out of
+/// an edge: a sheet is a single surface with application-owned visibility,
+/// which is exactly what a layer is. A toast is a list with per-item timers.
+pub fn sheet<'a, Message, Theme, Renderer>(
+    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    side: Anchor,
+) -> Layer<'a, Message, Theme, Renderer>
+where
+    Theme: Catalog,
+    Renderer: iced::advanced::Renderer,
+{
+    Layer::new(content)
+        .anchor(side)
+        .backdrop(0.4)
+        .margin(0.0)
+        .radius(0.0)
+        .stretch(true)
 }
 
 /// Creates a modal [`Layer`]: centred, with a dimmed backdrop.
@@ -102,6 +143,7 @@ where
     radius: f32,
     min_width: f32,
     max_width: Option<f32>,
+    stretch: bool,
     motion: Motion,
     backdrop: Option<f32>,
     dismiss_on_backdrop: bool,
@@ -127,6 +169,7 @@ where
             radius: DEFAULT_RADIUS,
             min_width: 0.0,
             max_width: None,
+            stretch: false,
             motion: Motion::SMOOTH,
             backdrop: None,
             dismiss_on_backdrop: true,
@@ -181,6 +224,16 @@ where
     /// Sets an upper bound on the width of the surface.
     pub fn max_width(mut self, width: f32) -> Self {
         self.max_width = Some(width);
+        self
+    }
+
+    /// Makes the surface span the edge it is anchored to.
+    ///
+    /// A stretched layer anchored to a vertical edge fills the height of the
+    /// viewport and vice versa, which is what turns a panel into a [`sheet`].
+    /// A centred layer has no edge to span, so this does nothing to one.
+    pub fn stretch(mut self, stretch: bool) -> Self {
+        self.stretch = stretch;
         self
     }
 
@@ -382,6 +435,7 @@ where
             radius: self.radius,
             min_width: self.min_width,
             max_width: self.max_width,
+            stretch: self.stretch,
             motion: self.motion,
             progress,
             is_closing: !self.is_open,
@@ -420,6 +474,7 @@ where
     radius: f32,
     min_width: f32,
     max_width: Option<f32>,
+    stretch: bool,
     motion: Motion,
     progress: f32,
     is_closing: bool,
@@ -482,13 +537,48 @@ where
             content = self.content.as_widget_mut().layout(self.tree, renderer, &pinned);
         }
 
-        let size = Size::new(
+        let mut size = Size::new(
             content.size().width + chrome,
             content.size().height + chrome,
         );
 
+        // A stretched surface fills the edge it hugs: the cross axis of its
+        // anchor becomes the viewport extent, which is what makes a sheet read
+        // as a panel sliding out rather than a floating card.
+        if self.stretch {
+            match self.anchor.slide_from() {
+                Side::Left | Side::Right => size.height = bounds.height,
+                Side::Top | Side::Bottom => {
+                    size.width = bounds.width;
+
+                    // The measuring pass compressed fluid widths, so content
+                    // that wants to fill the sheet has to be laid out again
+                    // against the width the sheet actually took.
+                    let filled = (size.width - chrome).max(0.0);
+                    let pinned =
+                        Limits::new(Size::new(filled, 0.0), Size::new(filled, available.height));
+
+                    content = self.content.as_widget_mut().layout(self.tree, renderer, &pinned);
+                    size.height = content.size().height + chrome;
+                }
+            }
+        }
+
         let position = self.anchor.position(size, viewport, self.margin);
-        let offset = animation::slide(self.anchor.slide_from(), self.motion.slide, self.progress);
+
+        // A sheet travels its own extent, so it rolls completely out of the
+        // window edge and back into it. Anything else just eases a few pixels.
+        let side = self.anchor.slide_from();
+        let travel = if self.stretch {
+            match side {
+                Side::Left | Side::Right => size.width,
+                Side::Top | Side::Bottom => size.height,
+            }
+        } else {
+            self.motion.slide
+        };
+
+        let offset = animation::slide_from_edge(side, travel, self.progress);
 
         Node::with_children(
             size,
@@ -776,6 +866,30 @@ mod tests {
         assert_eq!(Anchor::BottomLeft.slide_from(), Side::Bottom);
         // A centred surface has no edge of its own, so it rises.
         assert_eq!(Anchor::Center.slide_from(), Side::Bottom);
+    }
+
+    #[test]
+    fn a_sheet_stretches_along_the_edge_it_comes_from_and_a_dialog_does_not() {
+        let panel: Layer<'_, ()> = sheet(iced::widget::text("Filters"), Anchor::Right);
+        let confirm: Layer<'_, ()> = dialog(iced::widget::text("Sure?"));
+
+        assert!(panel.stretch);
+        assert_eq!(panel.anchor, Anchor::Right);
+        // Flush against the edge: a sheet with a margin would float.
+        assert_eq!(panel.margin, 0.0);
+        assert_eq!(panel.radius, 0.0);
+
+        assert!(!confirm.stretch);
+        assert_eq!(confirm.anchor, Anchor::Center);
+    }
+
+    #[test]
+    fn a_dialog_and_a_modal_are_both_backed_by_a_dimmed_page() {
+        let confirm: Layer<'_, ()> = dialog(iced::widget::text("Sure?"));
+        let panel: Layer<'_, ()> = sheet(iced::widget::text("Filters"), Anchor::Left);
+
+        assert_eq!(confirm.backdrop, Some(0.4));
+        assert_eq!(panel.backdrop, Some(0.4));
     }
 
     #[test]

@@ -248,6 +248,29 @@ pub fn slide(side: Side, distance: f32, progress: f32) -> Vector {
     }
 }
 
+/// Returns the offset to draw a surface at while it slides in from a viewport
+/// edge.
+///
+/// This is the mirror of [`slide`], and the distinction matters. A popover
+/// emerges *from its trigger*, so it starts pulled towards the trigger and
+/// travels outwards. A surface anchored to the window emerges *from beyond the
+/// edge*: it starts outside the viewport and travels inwards. Using [`slide`]
+/// for one of these makes it appear to pop off the edge towards the middle and
+/// then vanish, rather than rolling out of the edge and back into it.
+///
+/// Pass the surface's own extent as `distance` to have it travel fully off
+/// screen, which is what a sheet wants.
+pub fn slide_from_edge(side: Side, distance: f32, progress: f32) -> Vector {
+    let remaining = distance * (1.0 - progress);
+
+    match side {
+        Side::Top => Vector::new(0.0, -remaining),
+        Side::Bottom => Vector::new(0.0, remaining),
+        Side::Left => Vector::new(-remaining, 0.0),
+        Side::Right => Vector::new(remaining, 0.0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +391,32 @@ mod tests {
         ));
 
         assert_eq!(fade_background(gradient, 0.5), gradient);
+    }
+
+    /// The two slides are mirrors, and getting them the wrong way round is
+    /// what makes a sheet pop towards the middle instead of rolling out of the
+    /// edge it belongs to.
+    #[test]
+    fn sliding_from_an_edge_starts_outside_the_viewport() {
+        // A sheet on the right edge starts off-screen to the right...
+        assert_eq!(slide_from_edge(Side::Right, 10.0, 0.0), Vector::new(10.0, 0.0));
+        // ...and arrives flush with it.
+        assert_eq!(slide_from_edge(Side::Right, 10.0, 1.0), Vector::new(0.0, 0.0));
+
+        // A sheet from the top starts above the window and rolls down.
+        assert_eq!(slide_from_edge(Side::Top, 10.0, 0.0), Vector::new(0.0, -10.0));
+        assert_eq!(slide_from_edge(Side::Bottom, 10.0, 0.0), Vector::new(0.0, 10.0));
+        assert_eq!(slide_from_edge(Side::Left, 10.0, 0.0), Vector::new(-10.0, 0.0));
+    }
+
+    #[test]
+    fn the_two_slides_are_opposites() {
+        for side in [Side::Top, Side::Bottom, Side::Left, Side::Right] {
+            let out = slide(side, 10.0, 0.0);
+            let inward = slide_from_edge(side, 10.0, 0.0);
+
+            assert_eq!(inward, Vector::new(-out.x, -out.y), "{side:?}");
+        }
     }
 
     #[test]

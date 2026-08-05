@@ -1,13 +1,22 @@
-//! Exercises the `layer` widget: a modal with a backdrop, and toasts anchored
-//! to viewport corners.
+//! Exercises the `layer` widget: dialogs, sheets, and edge/corner anchoring.
 //!
-//! Layers are stacked over the page rather than laid out in it, so the buttons
-//! below never move as they appear and disappear.
+//! Layers are stacked over the page rather than laid out in it, so nothing
+//! below ever moves as they appear and disappear.
+//!
+//! # What to look at
+//!
+//! * **Dialog** is the plain confirmation surface: centred, dimmed page, no
+//!   chrome. Escape and a press on the backdrop both ask it to close — and it
+//!   is the application that decides whether to.
+//! * **Sheets** slide out of an edge and span it. The left and right ones run
+//!   the full height; the bottom one runs the full width.
+//! * **Refuses to close** shows why `on_dismiss` reports rather than acts: the
+//!   layer asks, the application says no, and it stays put.
 
 use iced::widget::{button, column, container, row, space, stack, text};
 use iced::{Element, Fill, Theme};
 
-use widgets::layer::{Anchor, layer, modal};
+use widgets::layer::{Anchor, dialog, layer, sheet};
 
 pub fn main() -> iced::Result {
     iced::application(Example::default, Example::update, Example::view)
@@ -20,51 +29,112 @@ fn theme(_state: &Example) -> Theme {
     Theme::Dark
 }
 
-#[derive(Debug, Clone)]
-enum Message {
+/// Which layer, if any, is showing. Only one at a time keeps the example
+/// readable — layers themselves have no such restriction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Panel {
     Confirm,
-    CancelConfirm,
-    Deleted,
-    ShowToast(Anchor),
-    DismissToast,
-    ShowSheet,
-    DismissSheet,
+    Stubborn,
+    Sheet(Anchor),
+    Corner(Anchor),
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone)]
+enum Message {
+    Show(Panel),
+    Dismiss,
+    Refused,
+    Deleted,
+}
+
 struct Example {
-    confirming: bool,
-    toast: Option<Anchor>,
-    sheet: bool,
+    panel: Option<Panel>,
     deleted: u32,
+    refusals: u32,
+    /// The edge the last sheet came from.
+    ///
+    /// Kept separately from `panel`, because `panel` goes to `None` the moment
+    /// the sheet is dismissed — and the sheet is still on screen animating out
+    /// for a few hundred milliseconds after that. Deriving the edge from
+    /// `panel` would snap it to the default mid-close and the sheet would leave
+    /// through the wrong edge.
+    sheet_side: Anchor,
+    /// The same, for the corner-anchored panel.
+    corner: Anchor,
+}
+
+impl Default for Example {
+    fn default() -> Self {
+        Self {
+            panel: None,
+            deleted: 0,
+            refusals: 0,
+            // `Anchor` defaults to `Center`, which is not an edge and so is not
+            // a sheet. These only matter before the first press anyway.
+            sheet_side: Anchor::Right,
+            corner: Anchor::BottomRight,
+        }
+    }
 }
 
 impl Example {
     fn update(&mut self, message: Message) {
         match message {
-            Message::Confirm => self.confirming = true,
-            Message::CancelConfirm => self.confirming = false,
-            Message::Deleted => {
-                self.confirming = false;
-                self.deleted += 1;
-                self.toast = Some(Anchor::BottomRight);
+            Message::Show(panel) => {
+                match panel {
+                    Panel::Sheet(side) => self.sheet_side = side,
+                    Panel::Corner(corner) => self.corner = corner,
+                    _ => {}
+                }
+
+                self.panel = Some(panel);
             }
-            Message::ShowToast(corner) => self.toast = Some(corner),
-            Message::DismissToast => self.toast = None,
-            Message::ShowSheet => self.sheet = true,
-            Message::DismissSheet => self.sheet = false,
+            Message::Dismiss => self.panel = None,
+            // The layer asked to close and the application declined.
+            Message::Refused => self.refusals += 1,
+            Message::Deleted => {
+                self.panel = None;
+                self.deleted += 1;
+            }
         }
     }
 
+    fn showing(&self, panel: Panel) -> bool {
+        self.panel == Some(panel)
+    }
+
     fn view(&self) -> Element<'_, Message> {
+        let show = |label: &'static str, panel: Panel| {
+            button(text(label)).on_press(Message::Show(panel))
+        };
+
         let page = column![
             text("layer").size(24),
-            text(format!("deleted {} time(s)", self.deleted)),
+            text(format!(
+                "deleted {} time(s) · {} dismissal(s) refused",
+                self.deleted, self.refusals
+            ))
+            .size(13),
+            text("Dialogs").size(13),
             row![
-                button(text("Delete…")).on_press(Message::Confirm),
-                button(text("Toast top-left")).on_press(Message::ShowToast(Anchor::TopLeft)),
-                button(text("Toast bottom")).on_press(Message::ShowToast(Anchor::Bottom)),
-                button(text("Bottom sheet")).on_press(Message::ShowSheet),
+                show("Confirm", Panel::Confirm),
+                show("Refuses to close", Panel::Stubborn),
+            ]
+            .spacing(8),
+            text("Sheets — slide out of an edge and span it").size(13),
+            row![
+                show("Left", Panel::Sheet(Anchor::Left)),
+                show("Right", Panel::Sheet(Anchor::Right)),
+                show("Bottom", Panel::Sheet(Anchor::Bottom)),
+                show("Top", Panel::Sheet(Anchor::Top)),
+            ]
+            .spacing(8),
+            text("Corners — anchored, not stretched, no backdrop").size(13),
+            row![
+                show("Top left", Panel::Corner(Anchor::TopLeft)),
+                show("Top right", Panel::Corner(Anchor::TopRight)),
+                show("Bottom left", Panel::Corner(Anchor::BottomLeft)),
+                show("Bottom right", Panel::Corner(Anchor::BottomRight)),
             ]
             .spacing(8),
             space().width(Fill).height(Fill),
@@ -73,70 +143,87 @@ impl Example {
         .padding(24);
 
         // A `Stack` is the natural host: the layers report a zero size, and a
-        // `Column` with spacing would still budget a gap for them.
+        // `Column` with spacing would still budget a gap for each of them.
         stack![
             container(page).width(Fill).height(Fill),
-            self.confirm_modal(),
-            self.toast_layer(),
-            self.bottom_sheet(),
+            self.confirm(),
+            self.stubborn(),
+            self.sheets(),
+            self.corner(),
         ]
         .into()
     }
 
-    /// A modal: centred, backdrop, and it refuses to close itself — the app
-    /// decides, which is what `on_dismiss` reporting rather than acting buys.
-    fn confirm_modal(&self) -> Element<'_, Message> {
-        modal(
+    /// The ordinary case: centred, dimmed, undecorated.
+    fn confirm(&self) -> Element<'_, Message> {
+        dialog(
             column![
                 text("Delete this project?").size(18),
                 text("This cannot be undone.").size(13),
                 row![
-                    button(text("Cancel")).on_press(Message::CancelConfirm),
+                    button(text("Cancel")).on_press(Message::Dismiss),
                     button(text("Delete")).on_press(Message::Deleted),
                 ]
                 .spacing(8),
             ]
             .spacing(12),
         )
-        .open(self.confirming)
-        .min_width(320.0)
-        .on_dismiss(Message::CancelConfirm)
+        .open(self.showing(Panel::Confirm))
+        .min_width(340.0)
+        .on_dismiss(Message::Dismiss)
         .into()
     }
 
-    /// A corner-anchored notice with no backdrop, so the page underneath stays
-    /// live. For real notification stacks use `widgets::toast` instead — it adds
-    /// per-item timers and reflow, which a single layer cannot do.
-    fn toast_layer(&self) -> Element<'_, Message> {
-        let corner = self.toast.unwrap_or(Anchor::BottomRight);
+    /// The same dialog, but its `on_dismiss` only counts the attempt. Escape
+    /// and backdrop presses are reported and ignored — which is the whole point
+    /// of the layer asking rather than acting.
+    fn stubborn(&self) -> Element<'_, Message> {
+        dialog(
+            column![
+                text("Saving…").size(18),
+                text("Escape and the backdrop will not close this.").size(13),
+                button(text("Let me out")).on_press(Message::Dismiss),
+            ]
+            .spacing(12),
+        )
+        .open(self.showing(Panel::Stubborn))
+        .min_width(340.0)
+        .on_dismiss(Message::Refused)
+        .into()
+    }
 
+    fn sheets(&self) -> Element<'_, Message> {
+        sheet(
+            column![
+                text("Sheet").size(18),
+                text("Spans the edge it came from.").size(13),
+                button(text("Close")).on_press(Message::Dismiss),
+            ]
+            .spacing(12)
+            .padding(8),
+            self.sheet_side,
+        )
+        .open(matches!(self.panel, Some(Panel::Sheet(_))))
+        .min_width(300.0)
+        .on_dismiss(Message::Dismiss)
+        .into()
+    }
+
+    /// A corner-anchored panel with no backdrop, so the page stays live behind
+    /// it. For notification stacks use `widgets::toast` — it adds per-item
+    /// timers and reflow, which a single layer cannot do.
+    fn corner(&self) -> Element<'_, Message> {
         layer(
             row![
-                text("Saved."),
-                button(text("Dismiss")).on_press(Message::DismissToast),
+                text("Anchored, page still live."),
+                button(text("Close")).on_press(Message::Dismiss),
             ]
             .spacing(12)
             .align_y(iced::Alignment::Center),
         )
-        .anchor(corner)
-        .open(self.toast.is_some())
-        .into()
-    }
-
-    /// Anchored to an edge rather than a corner, sliding up from it.
-    fn bottom_sheet(&self) -> Element<'_, Message> {
-        layer(
-            column![
-                text("Bottom sheet").size(18),
-                text("Anchored to the bottom edge, so it rises from there.").size(13),
-                button(text("Close")).on_press(Message::DismissSheet),
-            ]
-            .spacing(12),
-        )
-        .anchor(Anchor::Bottom)
-        .open(self.sheet)
-        .min_width(420.0)
-        .on_dismiss(Message::DismissSheet)
+        .anchor(self.corner)
+        .open(matches!(self.panel, Some(Panel::Corner(_))))
+        .on_dismiss(Message::Dismiss)
         .into()
     }
 }
