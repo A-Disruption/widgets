@@ -1537,6 +1537,7 @@ dependencies = [
 [[package]]
 name = "material_theme"
 version = "0.1.0"
+source = "git+https://github.com/A-Disruption/material_theme#a5756f6af37431f84c6f812aa87592fd7b3d2640"
 dependencies = [
  "iced",
  "material-colors",

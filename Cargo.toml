@@ -10,7 +10,7 @@ iced = { git = "https://github.com/iced-rs/iced", rev = "4cad51ba61e3d76a7e696ad
 chrono = { version = "0.4", optional = true }
 # Optional, behind `m3_theme`. Consumers that don't want Material Design 3
 # styling never pull this in.
-material_theme = { path = "../material_theme", optional = true }
+material_theme = { git = "https://github.com/A-Disruption/material_theme", optional = true }
 
 [dev-dependencies]
 iced_runtime = { git = "https://github.com/iced-rs/iced", rev = "4cad51ba61e3d76a7e696ad5923d675a20994e34" }
