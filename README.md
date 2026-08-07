@@ -1,5 +1,7 @@
 # AD Widgets for Iced
 
+# NOT UP TO DATE - run examples to see usage for now.
+
 A collection of custom widgets for the [iced-rs](https://github.com/iced-rs/iced) GUI library version 0.14.0.
 
 ## TL:DR

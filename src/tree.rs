@@ -1,4 +1,4 @@
-﻿use iced::{
+use iced::{
     Border, Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector,
     advanced::{
         Layout, Shell, Widget, layout, renderer,
@@ -13,6 +13,8 @@
     window,
 };
 use std::collections::{HashMap, HashSet};
+
+use crate::lucide;
 
 // Constants for layout
 const LINE_HEIGHT: f32 = 32.0;
@@ -207,6 +209,10 @@ where
 {
     /// Creates a new [`TreeHandle`] from root branches.
     pub fn new<'b>(roots: impl IntoIterator<Item = Branch<'a, Message, Theme, Renderer>>) -> Self {
+        // So the default chevron renders even if the application never
+        // registered `lucide::FONT_BYTES` itself.
+        lucide::ensure_loaded();
+
         let roots = roots.into_iter();
 
         let mut width = Length::Shrink;
@@ -880,7 +886,7 @@ where
         let mut max_content_width = 0.0f32;
         let mut total_nonfluid_height = 0.0;
 
-        // FIRST PASS â€” layout non-fluid branches, collect factors for fluid ones
+        // FIRST PASS — layout non-fluid branches, collect factors for fluid ones
         for index in 0..ordered_indices.len() {
             let i = ordered_indices[index];
             if i >= self.branches.len() {
@@ -950,7 +956,7 @@ where
             }
         }
 
-        // SECOND PASS â€” lay out fluid branches (width and/or height)
+        // SECOND PASS — lay out fluid branches (width and/or height)
         let total_height_fill: u16 = row_fill_factors
             .iter()
             .enumerate()
@@ -1017,8 +1023,7 @@ where
                 height_unit * row_fill_factors[i] as f32
             };
 
-            let content_limits =
-                layout::Limits::new(Size::ZERO, Size::new(avail_w, max_h));
+            let content_limits = layout::Limits::new(Size::ZERO, Size::new(avail_w, max_h));
 
             let content_layout =
                 content
@@ -1086,7 +1091,7 @@ where
             }
         }
 
-        // THIRD PASS â€” position each visible branch
+        // THIRD PASS — position each visible branch
         y = self.padding_y;
 
         let drop_indicator_space = if combined_state.tree_state.drag_active.is_some() {
@@ -2220,7 +2225,7 @@ where
 
                             renderer.fill_text(
                                 iced::advanced::Text {
-                                    content: "â†’".into(),
+                                    content: "→".into(),
                                     bounds: Size::new(20.0, branch_height),
                                     size: Pixels(16.0),
                                     font: iced::Font::default(),
@@ -2309,22 +2314,25 @@ where
                     // Draw expand/collapse arrow
                     if branch.has_children {
                         if self.expand_icon.is_none() && self.collapse_icon.is_none() {
+                            // The same Lucide chevrons `crate::menu` and
+                            // `crate::collapsible` draw. Requires the
+                            // application to register `lucide::FONT_BYTES`.
                             let arrow = if state.expanded.contains(&id) {
-                                "ðŸ »"
+                                lucide::Icon::ChevronDown
                             } else {
-                                "ðŸ º"
+                                lucide::Icon::ChevronRight
                             };
 
                             renderer.fill_text(
                                 iced::advanced::Text {
-                                    content: arrow.into(),
+                                    content: arrow.character().to_string(),
                                     bounds: Size::new(ARROW_W, branch_height),
-                                    size: Pixels(16.0),
-                                    font: iced::Font::default(),
+                                    size: Pixels(ARROW_W),
+                                    font: lucide::FONT,
                                     align_x: Alignment::Center,
                                     align_y: iced::alignment::Vertical::Center,
                                     line_height: iced::advanced::text::LineHeight::default(),
-                                    shaping: iced::advanced::text::Shaping::Advanced,
+                                    shaping: iced::advanced::text::Shaping::Basic,
                                     wrapping: iced::advanced::text::Wrapping::default(),
                                     ellipsis: iced::advanced::text::Ellipsis::None,
                                     hint_factor: None,

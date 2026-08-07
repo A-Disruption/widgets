@@ -38,6 +38,34 @@ pub fn load() -> iced::Task<Result<(), iced::font::Error>> {
     iced::font::load(FONT_BYTES)
 }
 
+/// Registers [`FONT_BYTES`] with the global font system, once per process.
+///
+/// Widgets in this crate that draw their own glyphs call this when they are
+/// built, so their icons render even if the application never registered the
+/// font. That is the whole reason it exists: a widget should not render a row
+/// of blank boxes because the consumer missed a line of setup.
+///
+/// This writes to exactly the same place `iced::font::load` and
+/// `iced::application(..).font(..)` end up — `Compositor::load_font` forwards
+/// to this global store — so calling it in addition to either is harmless.
+///
+/// Call it from `view` or a constructor, never from inside layout or draw: it
+/// briefly takes the font system's write lock, which the renderer holds for
+/// reading while it shapes text.
+pub fn ensure_loaded() {
+    use std::sync::Once;
+
+    static LOADED: Once = Once::new();
+
+    LOADED.call_once(|| {
+        // `FontSystem::load_font` also de-duplicates borrowed bytes by address,
+        // so this is belt and braces; the `Once` just avoids the write lock.
+        if let Ok(mut font_system) = iced::advanced::graphics::text::font_system().write() {
+            font_system.load_font(std::borrow::Cow::Borrowed(FONT_BYTES));
+        }
+    });
+}
+
 /// A glyph from the embedded Lucide font.
 ///
 /// The variants are named after their Lucide glyph names, and the code points
@@ -167,5 +195,30 @@ mod tests {
         assert!(FONT_BYTES.len() > 100_000);
         // A TrueType file starts with the 0x00010000 version tag.
         assert_eq!(&FONT_BYTES[..4], &[0x00, 0x01, 0x00, 0x00]);
+    }
+
+    /// The guarantee that widgets render their glyphs with no setup from the
+    /// application: after `ensure_loaded`, the family `FONT` names has to be
+    /// resolvable in the same global font system the renderer shapes against.
+    #[test]
+    fn ensure_loaded_registers_the_family() {
+        let font_system = iced::advanced::graphics::text::font_system();
+
+        {
+            let before = font_system.read().expect("read font system");
+            assert!(
+                !before.families().any(|family| family == "lucide"),
+                "expected lucide to be absent before ensure_loaded"
+            );
+        }
+
+        ensure_loaded();
+
+        let after = font_system.read().expect("read font system");
+        assert!(
+            after.families().any(|family| family == "lucide"),
+            "lucide missing after ensure_loaded; families: {:?}",
+            after.families().collect::<Vec<_>>()
+        );
     }
 }

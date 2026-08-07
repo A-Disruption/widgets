@@ -176,6 +176,10 @@ impl<'a, Message, Theme, Renderer> Toast<'a, Message, Theme, Renderer> {
     ///
     /// See the [module documentation](self) on why the id is required.
     pub fn new(id: u64, content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
+        // So the variant icon renders even if the application never registered
+        // `lucide::FONT_BYTES` itself.
+        lucide::ensure_loaded();
+
         Self {
             id,
             content: content.into(),

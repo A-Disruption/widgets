@@ -27,16 +27,15 @@ layer = ["anchor", "animation"]
 menu = ["anchor", "animation", "lucide"]
 popover = ["anchor", "animation"]
 toast = ["anchor", "animation", "lucide"]
-tree = []
-color_picker = []
+# `tree` and `collapsible` draw their default disclosure chevron from the
+# embedded Lucide font, the same one `menu` uses.
+tree = ["lucide"]
 color_picker_two = []
-collapsible = []
-generic_overlay = []
-flow_editor = []
+collapsible = ["lucide"]
 date_picker = ["dep:chrono"]
 # Material Design 3 styles for the widgets above, in `widgets::m3`.
 m3_theme = ["dep:material_theme"]
-all = ["anchor", "animation", "layer", "lucide", "menu", "popover", "toast", "tree", "color_picker", "color_picker_two", "collapsible", "generic_overlay", "flow_editor", "date_picker"]
+all = ["anchor", "animation", "layer", "lucide", "menu", "popover", "toast", "tree", "color_picker_two", "collapsible", "date_picker"]
 
 [[example]]
 name = "toast_example"
@@ -69,11 +68,6 @@ path = "examples/tree_in_collapsible_example.rs"
 required-features = ["tree", "collapsible"]
 
 [[example]]
-name = "color_picker_example"
-path = "examples/color_picker_example.rs"
-required-features = ["color_picker"]
-
-[[example]]
 name = "color_picker_two_example"
 path = "examples/color_picker_two_example.rs"
 required-features = ["color_picker_two"]
@@ -82,16 +76,6 @@ required-features = ["color_picker_two"]
 name = "collapsible_example"
 path = "examples/collapsible_example.rs"
 required-features = ["collapsible"]
-
-[[example]]
-name = "generic_overlay_example"
-path = "examples/generic_overlay_example.rs"
-required-features = ["generic_overlay"]
-
-[[example]]
-name = "flow_editor_example"
-path = "examples/flow_editor_example.rs"
-required-features = ["flow_editor"]
 
 [[example]]
 name = "date_picker_example"

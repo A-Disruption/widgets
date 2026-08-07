@@ -85,7 +85,7 @@ use iced::advanced::{
     overlay, renderer, text,
 };
 use iced::alignment::Vertical;
-use iced::time::Instant;
+use iced::time::{Duration, Instant};
 use iced::{
     Background, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow,
     Size, Theme, Vector, mouse, touch, window,
@@ -120,6 +120,21 @@ const DEFAULT_TRIGGER_PADDING: Padding = Padding {
 
 /// The default space between a gutter and the row contents.
 const DEFAULT_GUTTER_SPACING: f32 = 8.0;
+
+/// How far the safe triangle is widened at the submenu end.
+///
+/// The triangle's base is the submenu's facing edge. Widening it a little gives
+/// the sweep a more forgiving mouth, so a path that arrives just past a corner
+/// still counts as heading in.
+const AIM_EXTEND: f32 = 8.0;
+
+/// How long the safe triangle may hold a submenu open once the cursor has
+/// stopped making progress towards it.
+///
+/// Without a deadline, parking the cursor inside the triangle would leave the
+/// row underneath it permanently unreachable — the guard has to lose eventually
+/// or it stops being a shortcut and becomes a trap.
+const AIM_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// The size of a gutter glyph, as a fraction of the renderer's default text
 /// size.
@@ -419,9 +434,7 @@ const ITEM_ROWS: usize = 2;
 ///
 /// A row without an icon keeps an empty tree in the slot so that [`ITEM_ROWS`]
 /// is a constant offset rather than one that depends on the row.
-fn icon_tree<Message, Theme, Renderer>(
-    icon: &Option<Element<'_, Message, Theme, Renderer>>,
-) -> Tree
+fn icon_tree<Message, Theme, Renderer>(icon: &Option<Element<'_, Message, Theme, Renderer>>) -> Tree
 where
     Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
 {
@@ -480,6 +493,10 @@ where
         trigger: impl Into<Element<'a, Message, Theme, Renderer>>,
         items: Vec<Item<'a, Message, Theme, Renderer>>,
     ) -> Self {
+        // So the checkmark and chevron render even if the application never
+        // registered `lucide::FONT_BYTES` itself.
+        lucide::ensure_loaded();
+
         Self {
             id: None,
             trigger: trigger.into(),
@@ -701,6 +718,23 @@ struct State {
     /// Cached because `draw` cannot advance a transition through `&self`, and
     /// layout always runs first in a frame.
     panel_progress: Vec<f32>,
+    /// The [`Side`] each panel ended up on, refreshed every layout pass.
+    ///
+    /// Submenus ask for [`Side::Right`] and flip when they run out of room, so
+    /// which edge a panel presents to its parent is only known after placement.
+    /// The safe triangle needs it to know which two corners to sweep to.
+    panel_sides: Vec<Side>,
+    /// The previous cursor position, and the apex of the safe triangle.
+    ///
+    /// Taking the apex from the last position rather than a fixed point is what
+    /// makes the triangle track the direction of travel: the sweep narrows as
+    /// the cursor closes on the submenu, so it stops forgiving a path that has
+    /// turned away.
+    last_cursor: Option<Point>,
+    /// When the safe triangle started holding the current submenu open.
+    ///
+    /// `None` means the guard is not engaged. See [`AIM_TIMEOUT`].
+    aim_since: Option<Instant>,
 }
 
 /// A neighbouring menu in a [`MenuBar`].
@@ -741,6 +775,7 @@ impl State {
         self.sibling_request = None;
         self.transition.close(Instant::now());
         self.submenu_transitions.clear();
+        self.forget_aim();
     }
 
     /// Opens the root panel with nothing highlighted, as a press does.
@@ -750,6 +785,17 @@ impl State {
         self.highlighted = None;
         self.transition.open(Instant::now());
         self.submenu_transitions.clear();
+        self.forget_aim();
+    }
+
+    /// Drops the safe triangle.
+    ///
+    /// The apex goes with it: a triangle swept from a position the cursor
+    /// occupied before the panels changed would be aimed at a submenu that is
+    /// no longer there.
+    fn forget_aim(&mut self) {
+        self.last_cursor = None;
+        self.aim_since = None;
     }
 
     /// Returns `true` when the panels should still be produced and drawn.
@@ -999,7 +1045,9 @@ where
         let trigger_tree = &mut tree.children[0];
 
         layout::padded(limits, size.width, size.height, padding, |limits| {
-            trigger.as_widget_mut().layout(trigger_tree, renderer, limits)
+            trigger
+                .as_widget_mut()
+                .layout(trigger_tree, renderer, limits)
         })
     }
 
@@ -1136,7 +1184,8 @@ where
 
         if matches!(
             event,
-            Event::Mouse(mouse::Event::CursorMoved { .. }) | Event::Window(window::Event::Unfocused)
+            Event::Mouse(mouse::Event::CursorMoved { .. })
+                | Event::Window(window::Event::Unfocused)
         ) {
             let is_hovered = cursor.is_over(layout.bounds());
 
@@ -1336,11 +1385,14 @@ where
 
     /// Consumes a pending hand-over request from whichever menu is open.
     fn take_sibling_request(&self, tree: &mut Tree) -> Option<(usize, Sibling)> {
-        tree.children.iter_mut().enumerate().find_map(|(index, child)| {
-            let state = child.state.downcast_mut::<State>();
+        tree.children
+            .iter_mut()
+            .enumerate()
+            .find_map(|(index, child)| {
+                let state = child.state.downcast_mut::<State>();
 
-            state.sibling_request.take().map(|request| (index, request))
-        })
+                state.sibling_request.take().map(|request| (index, request))
+            })
     }
 }
 
@@ -1394,10 +1446,7 @@ where
             height = height.max(size.height);
         }
 
-        Node::with_children(
-            Size::new(x + padding.right, height + padding.y()),
-            triggers,
-        )
+        Node::with_children(Size::new(x + padding.right, height + padding.y()), triggers)
     }
 
     fn draw(
@@ -1410,8 +1459,7 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        for ((menu, child), trigger) in
-            self.menus.iter().zip(&tree.children).zip(layout.children())
+        for ((menu, child), trigger) in self.menus.iter().zip(&tree.children).zip(layout.children())
         {
             menu.draw(child, renderer, theme, style, trigger, cursor, viewport);
         }
@@ -1738,11 +1786,9 @@ where
                 (row_height - content_node.size().height) / 2.0,
             ));
 
-            let row = Node::with_children(
-                Size::new(widest, row_height),
-                vec![icon_node, content_node],
-            )
-            .move_to(Point::new(panel_padding, y));
+            let row =
+                Node::with_children(Size::new(widest, row_height), vec![icon_node, content_node])
+                    .move_to(Point::new(panel_padding, y));
 
             rows.push(row);
 
@@ -1814,6 +1860,66 @@ where
         }
 
         None
+    }
+
+    /// The depth of the panel under `position`, if any.
+    ///
+    /// Fading panels are excluded for the same reason [`Panels::row_at`]
+    /// excludes them: they are on screen but no longer targets.
+    fn panel_at(&self, layout: Layout<'_>, position: Point) -> Option<usize> {
+        layout
+            .children()
+            .take(self.state.live_depth(Instant::now()) + 1)
+            .position(|panel| panel.bounds().contains(position))
+    }
+
+    /// Returns `true` when the cursor is sweeping towards the submenu that is
+    /// already open, and so should not be treated as having left the row that
+    /// opened it.
+    ///
+    /// This is the "safe triangle". A submenu opens beside its parent panel, so
+    /// the natural path to its lower rows cuts diagonally across the rows below
+    /// the one it came from. Switching on whichever row the cursor happens to
+    /// cross would close the panel the user is on their way to — the submenu
+    /// would only be reachable by tracing an L, out along its own row and then
+    /// down. Treating the triangle swept from the cursor's last position to the
+    /// submenu's two facing corners as "still on the parent row" is what makes
+    /// the diagonal work.
+    ///
+    /// The apex moves with the cursor, so the triangle narrows as the submenu
+    /// gets closer and a path that turns away falls out of it immediately. The
+    /// case that needs [`AIM_TIMEOUT`] is the cursor that stops inside it.
+    fn is_aiming_at_submenu(&self, layout: Layout<'_>, position: Point) -> bool {
+        let Some(previous) = self.state.last_cursor else {
+            return false;
+        };
+
+        // Only a cursor still over a panel can be aiming across it. Once it has
+        // left the chain entirely there is nothing to protect.
+        let Some(depth) = self.panel_at(layout, position) else {
+            return false;
+        };
+
+        // The submenu at issue is the one this panel opened, not a deeper one:
+        // a cursor in panel 1 with 2 and 3 open is heading for 2.
+        let submenu = depth + 1;
+
+        if submenu > self.state.path.len() {
+            return false;
+        }
+
+        let Some(bounds) = layout.children().nth(submenu).map(|panel| panel.bounds()) else {
+            return false;
+        };
+
+        let side = self
+            .state
+            .panel_sides
+            .get(submenu)
+            .copied()
+            .unwrap_or(Side::Right);
+
+        anchor::in_safe_corridor(position, previous, bounds, side, AIM_EXTEND)
     }
 
     /// Moves the highlight within the deepest open panel.
@@ -1935,7 +2041,8 @@ where
                     Some(index) => {
                         // Step back up onto the row that owned the panel now
                         // fading, rather than losing the highlight entirely.
-                        self.state.collapse_to(self.state.path.len() - 1, Instant::now());
+                        self.state
+                            .collapse_to(self.state.path.len() - 1, Instant::now());
                         self.state.highlighted = Some((self.state.path.len() - 1, index));
                     }
                     None => {
@@ -1951,7 +2058,8 @@ where
                 // once only the root panel is left.
                 match self.state.path.last().copied() {
                     Some(index) => {
-                        self.state.collapse_to(self.state.path.len() - 1, Instant::now());
+                        self.state
+                            .collapse_to(self.state.path.len() - 1, Instant::now());
                         self.state.highlighted = Some((self.state.path.len() - 1, index));
                     }
                     None => {
@@ -2025,6 +2133,7 @@ where
         self.state.retire_finished_panels(now);
         let mut panels: Vec<Node> = Vec::with_capacity(self.depth());
         let mut progresses: Vec<f32> = Vec::with_capacity(self.depth());
+        let mut sides: Vec<Side> = Vec::with_capacity(self.depth());
 
         for depth in 0..self.depth() {
             let Some(panel) = self.layout_panel(renderer, bounds, depth) else {
@@ -2058,10 +2167,12 @@ where
             let offset = animation::slide(placed.side, self.motion.slide, progress);
 
             progresses.push(progress);
+            sides.push(placed.side);
             panels.push(panel.move_to(placed.position + offset));
         }
 
         self.state.panel_progress = progresses;
+        self.state.panel_sides = sides;
 
         Node::with_children(bounds, panels)
     }
@@ -2141,8 +2252,8 @@ where
                     continue;
                 };
 
-                let is_highlighted = self.state.highlighted == Some((depth, index))
-                    || open_row == Some(index);
+                let is_highlighted =
+                    self.state.highlighted == Some((depth, index)) || open_row == Some(index);
 
                 if is_highlighted && item.is_interactive() {
                     renderer.fill_quad(
@@ -2266,6 +2377,35 @@ where
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. })
             | Event::Touch(touch::Event::FingerMoved { .. }) => {
+                let now = Instant::now();
+
+                // The safe triangle is swept from the previous position, so the
+                // apex has to be updated on every move — including the ones
+                // that change nothing else.
+                let position = cursor.position();
+                let aiming = position.is_some_and(|position| {
+                    let aiming = self.is_aiming_at_submenu(layout, position);
+                    self.state.last_cursor = Some(position);
+                    aiming
+                });
+
+                if aiming {
+                    // Hold the submenu open, but only while the cursor keeps
+                    // closing on it. Once the deadline passes, the next move
+                    // gives the row underneath the cursor back.
+                    //
+                    // The deadline is only ever checked on a move, which is the
+                    // whole of it: a cursor sitting still is not asking for a
+                    // different row, and nothing on screen changes meanwhile.
+                    let since = *self.state.aim_since.get_or_insert(now);
+
+                    if now.duration_since(since) < AIM_TIMEOUT {
+                        return;
+                    }
+                } else {
+                    self.state.aim_since = None;
+                }
+
                 let hovered = self.row_at(layout, cursor);
 
                 if hovered == self.state.highlighted {
@@ -2286,10 +2426,14 @@ where
                     // of submenus therefore never leaves an orphaned panel
                     // behind.
                     if opens_submenu {
-                        self.state.open_submenu(depth, index, Instant::now());
+                        self.state.open_submenu(depth, index, now);
                     } else {
-                        self.state.collapse_to(depth, Instant::now());
+                        self.state.collapse_to(depth, now);
                     }
+
+                    // The chain just changed shape, so any deferral was aimed
+                    // at a panel that is on its way out.
+                    self.state.aim_since = None;
                 }
 
                 // The set of panels just changed, so the layout computed for
@@ -2571,9 +2715,7 @@ mod tests {
         Cut,
     }
 
-    fn menu_of<'a>(
-        items: Vec<Item<'a, Message>>,
-    ) -> Menu<'a, Message> {
+    fn menu_of<'a>(items: Vec<Item<'a, Message>>) -> Menu<'a, Message> {
         Menu::new(iced::widget::text("Edit"), items)
     }
 
@@ -2586,7 +2728,10 @@ mod tests {
                 iced::widget::text("More"),
                 vec![
                     item(iced::widget::text("A")),
-                    submenu(iced::widget::text("Deeper"), vec![item(iced::widget::text("B"))]),
+                    submenu(
+                        iced::widget::text("Deeper"),
+                        vec![item(iced::widget::text("B"))],
+                    ),
                 ],
             ),
         ]);
@@ -2613,8 +2758,9 @@ mod tests {
     #[test]
     fn the_icon_slot_is_reserved_even_on_rows_without_one() {
         let plain = menu_of(vec![item(iced::widget::text("Cut"))]);
-        let decorated =
-            menu_of(vec![item(iced::widget::text("Cut")).icon(iced::widget::text("*"))]);
+        let decorated = menu_of(vec![
+            item(iced::widget::text("Cut")).icon(iced::widget::text("*")),
+        ]);
 
         assert_eq!(plain.child_trees()[1].children.len(), ITEM_ROWS);
         assert_eq!(decorated.child_trees()[1].children.len(), ITEM_ROWS);
@@ -2625,9 +2771,11 @@ mod tests {
         let checked: Item<'_, Message> = toggle(iced::widget::text("Wrap"), true);
         let unchecked: Item<'_, Message> = toggle(iced::widget::text("Wrap"), false);
         let plain: Item<'_, Message> = item(iced::widget::text("Cut"));
-        let nested: Item<'_, Message> =
-            submenu(iced::widget::text("More"), vec![item(iced::widget::text("A"))])
-                .checked(true);
+        let nested: Item<'_, Message> = submenu(
+            iced::widget::text("More"),
+            vec![item(iced::widget::text("A"))],
+        )
+        .checked(true);
 
         assert_eq!(checked.check(), Some(true));
         // An unchecked toggle still reserves its gutter slot, so it reports
@@ -2763,10 +2911,8 @@ mod tests {
 
     #[test]
     fn keyboard_stepping_wraps_around_the_panel() {
-        let items: Vec<Item<'_, Message>> = vec![
-            item(iced::widget::text("A")),
-            item(iced::widget::text("B")),
-        ];
+        let items: Vec<Item<'_, Message>> =
+            vec![item(iced::widget::text("A")), item(iced::widget::text("B"))];
 
         assert_eq!(selectable(&items, Some(1), true), Some(0));
         assert_eq!(selectable(&items, Some(0), false), Some(1));
@@ -2800,8 +2946,10 @@ mod tests {
     /// never claim both — otherwise they would draw on top of each other.
     #[test]
     fn a_row_never_carries_both_a_chevron_and_a_checkmark() {
-        let nested: Item<'_, Message> =
-            submenu(iced::widget::text("More"), vec![item(iced::widget::text("A"))]);
+        let nested: Item<'_, Message> = submenu(
+            iced::widget::text("More"),
+            vec![item(iced::widget::text("A"))],
+        );
         let checked: Item<'_, Message> = toggle(iced::widget::text("Wrap"), true);
 
         assert!(nested.opens_submenu());
@@ -2819,7 +2967,10 @@ mod tests {
                 iced::widget::text("More"),
                 vec![
                     item(iced::widget::text("A")),
-                    submenu(iced::widget::text("Deeper"), vec![item(iced::widget::text("B"))]),
+                    submenu(
+                        iced::widget::text("Deeper"),
+                        vec![item(iced::widget::text("B"))],
+                    ),
                 ],
             ),
         ];

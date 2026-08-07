@@ -23,6 +23,8 @@ use iced::{
     Vector, window,
 };
 
+use crate::lucide;
+
 /// Creates a new [`Collapsible`] with the given title and content.
 ///
 /// The collapsible will self-manage its expand/collapse state.
@@ -118,6 +120,10 @@ where
         title: impl Into<String>,
         content: impl Into<Element<'a, Message, Theme, Renderer>>,
     ) -> Self {
+        // So the default chevron renders even if the application never
+        // registered `lucide::FONT_BYTES` itself.
+        lucide::ensure_loaded();
+
         Self {
             title: title.into(),
             content: content.into(),
@@ -351,7 +357,9 @@ impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
 where
     Message: 'a + Clone,
     Theme: Catalog,
-    Renderer: text::Renderer,
+    // `Font = iced::Font` so the default chevron can come from the embedded
+    // Lucide font, matching `crate::menu`, which carries the same bound.
+    Renderer: text::Renderer<Font = iced::Font>,
 {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<CombinedState<Renderer::Paragraph>>()
@@ -420,12 +428,20 @@ where
         let limits = limits.width(self.width).height(self.height);
 
         let icon_node = if self.expand_icon.is_none() && self.collapse_icon.is_none() {
-            // Use default text icon
-            let arrow = if state.animation.value() {
-                "ðŸ »"
+            // The same chevrons `crate::menu` draws, from the embedded Lucide
+            // font, so every disclosure control in the crate matches. The
+            // application has to register `lucide::FONT_BYTES` once at startup
+            // or these render blank. Pass `expand_icon`/`collapse_icon` to use
+            // your own instead.
+            let icon = if state.animation.value() {
+                lucide::Icon::ChevronDown
             } else {
-                "ðŸ º"
+                lucide::Icon::ChevronRight
             };
+
+            // Encoded in place: this runs on every layout pass.
+            let mut buffer = [0u8; 4];
+            let arrow: &str = icon.character().encode_utf8(&mut buffer);
 
             let icon_limits = layout::Limits::new(
                 Size::ZERO,
@@ -442,10 +458,12 @@ where
                     height: Length::Shrink,
                     line_height: text::LineHeight::default(),
                     size: self.text_size,
-                    font: self.font,
+                    // The glyph comes from Lucide, not from the header font.
+                    font: Some(lucide::FONT),
                     align_x: text::Alignment::Center,
                     align_y: alignment::Vertical::Center,
-                    shaping: text::Shaping::Advanced,
+                    // A single private-use glyph needs no complex shaping.
+                    shaping: text::Shaping::Basic,
                     wrapping: text::Wrapping::default(),
                     ellipsis: text::Ellipsis::None,
                 },
@@ -902,7 +920,7 @@ where
                 viewport,
             );
         } else {
-            // Draw custom icon Element â€” mirror layout()'s fallback logic exactly.
+            // Draw custom icon Element — mirror layout()'s fallback logic exactly.
             // If only one of the two icons is set, use it for both states rather than panicking.
             let (icon_element, icon_tree_index) = if state.animation.value() {
                 if let Some(collapse_idx) = collapse_child {
@@ -1435,7 +1453,8 @@ impl<'a, Message, Theme, Renderer> From<Collapsible<'a, Message, Theme, Renderer
 where
     Message: 'a + Clone,
     Theme: Catalog + 'a,
-    Renderer: text::Renderer + 'a,
+    // Matches the `Widget` impl, which draws its chevron from Lucide.
+    Renderer: text::Renderer<Font = iced::Font> + 'a,
 {
     fn from(
         collapsible: Collapsible<'a, Message, Theme, Renderer>,

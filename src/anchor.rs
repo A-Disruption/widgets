@@ -149,12 +149,7 @@ pub fn room(base: Rectangle, viewport: Rectangle, side: Side) -> f32 {
 /// Places a surface of the given `size` relative to `base`, inside `viewport`.
 ///
 /// See the [module documentation](self) for the strategy this uses.
-pub fn place(
-    base: Rectangle,
-    size: Size,
-    viewport: Rectangle,
-    placement: Placement,
-) -> Placed {
+pub fn place(base: Rectangle, size: Size, viewport: Rectangle, placement: Placement) -> Placed {
     let side = resolve_side(base, size, viewport, placement);
 
     let main = main_coordinate(base, size, side, placement.gap);
@@ -183,12 +178,7 @@ pub fn place(
 /// The requested side wins whenever the surface fits. Otherwise the surface
 /// flips, but only if the opposite side is genuinely roomier — flipping into an
 /// equally cramped side would just trade one overflow for another.
-fn resolve_side(
-    base: Rectangle,
-    size: Size,
-    viewport: Rectangle,
-    placement: Placement,
-) -> Side {
+fn resolve_side(base: Rectangle, size: Size, viewport: Rectangle, placement: Placement) -> Side {
     if !placement.flip {
         return placement.side;
     }
@@ -266,7 +256,10 @@ pub fn facing_corners(surface: Rectangle, side: Side, extend: f32) -> (Point, Po
         ),
         Side::Left => (
             Point::new(surface.x + surface.width, surface.y - extend),
-            Point::new(surface.x + surface.width, surface.y + surface.height + extend),
+            Point::new(
+                surface.x + surface.width,
+                surface.y + surface.height + extend,
+            ),
         ),
         Side::Bottom => (
             Point::new(surface.x - extend, surface.y),
@@ -274,7 +267,10 @@ pub fn facing_corners(surface: Rectangle, side: Side, extend: f32) -> (Point, Po
         ),
         Side::Top => (
             Point::new(surface.x - extend, surface.y + surface.height),
-            Point::new(surface.x + surface.width + extend, surface.y + surface.height),
+            Point::new(
+                surface.x + surface.width + extend,
+                surface.y + surface.height,
+            ),
         ),
     }
 }
@@ -386,7 +382,6 @@ impl Anchor {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -603,6 +598,94 @@ mod tests {
             from,
             surface,
             Side::Right,
+            0.0
+        ));
+    }
+
+    /// A submenu panel, as `crate::menu` places one: hard against the right of
+    /// its parent, its rows running well below the row that opened it.
+    fn submenu() -> Rectangle {
+        Rectangle {
+            x: 200.0,
+            y: 100.0,
+            width: 180.0,
+            height: 200.0,
+        }
+    }
+
+    /// The case the safe triangle exists for. Sweeping from the row that opened
+    /// a submenu down to that submenu's lower rows crosses the parent's other
+    /// rows on the way; none of those crossings may count as leaving.
+    #[test]
+    fn a_sweep_towards_a_submenus_lower_rows_stays_inside() {
+        // Leaving the submenu's own row, heading down and to the right.
+        let from = Point::new(120.0, 110.0);
+
+        for step in [
+            Point::new(150.0, 150.0),
+            Point::new(175.0, 200.0),
+            Point::new(195.0, 250.0),
+        ] {
+            assert!(
+                in_safe_corridor(step, from, submenu(), Side::Right, 0.0),
+                "{step:?} should still count as heading for the submenu"
+            );
+        }
+    }
+
+    /// The guard has to lose as soon as the cursor is no longer going there,
+    /// or it stops being a shortcut and becomes a trap.
+    #[test]
+    fn a_path_that_turns_away_leaves_the_triangle() {
+        let from = Point::new(120.0, 110.0);
+
+        // Straight down the parent panel, away from the submenu edge.
+        assert!(!in_safe_corridor(
+            Point::new(110.0, 260.0),
+            from,
+            submenu(),
+            Side::Right,
+            0.0
+        ));
+
+        // Back towards the left, which is further from the submenu still.
+        assert!(!in_safe_corridor(
+            Point::new(60.0, 180.0),
+            from,
+            submenu(),
+            Side::Right,
+            0.0
+        ));
+    }
+
+    /// A submenu near the right edge of the window flips to the left of its
+    /// parent, and the sweep has to flip with it.
+    #[test]
+    fn a_flipped_submenu_is_approached_from_the_other_direction() {
+        let surface = Rectangle {
+            x: 0.0,
+            y: 100.0,
+            width: 180.0,
+            height: 200.0,
+        };
+
+        // Leaving a row on the parent panel, which now sits to the *right*.
+        let from = Point::new(260.0, 110.0);
+
+        assert!(in_safe_corridor(
+            Point::new(220.0, 180.0),
+            from,
+            surface,
+            Side::Left,
+            0.0
+        ));
+
+        // The same displacement in the direction the panel is not.
+        assert!(!in_safe_corridor(
+            Point::new(300.0, 180.0),
+            from,
+            surface,
+            Side::Left,
             0.0
         ));
     }

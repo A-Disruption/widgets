@@ -42,16 +42,16 @@ use iced::{
 };
 use std::marker::PhantomData;
 
-// â”€â”€ Re-exports â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Re-exports ────────────────────────────────────────────────────────────────
 pub use chrono::NaiveDate as Date;
 pub use chrono::NaiveDateTime as DateTime;
 pub use chrono::NaiveTime as Time;
 
-// â”€â”€ Layout constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Layout constants ─────────────────────────────────────────────────────────
 const OVERLAY_WIDTH: f32 = 280.0;
 const HEADER_HEIGHT: f32 = 44.0;
 const DOW_HEIGHT: f32 = 28.0;
-const GRID_HEIGHT: f32 = 180.0; // 6 rows Ã— 30 px
+const GRID_HEIGHT: f32 = 180.0; // 6 rows × 30 px
 const TIME_HEIGHT: f32 = 48.0;
 const FOOTER_HEIGHT: f32 = 40.0;
 const INNER_PAD: f32 = 8.0;
@@ -61,9 +61,9 @@ const HEADER_TITLE_HIT_PADDING_X: f32 = 12.0;
 const HEADER_TITLE_HIT_HEIGHT: f32 = 30.0;
 const TIME_DRAG_STEP_PX: f32 = 8.0;
 
-// â”€â”€ Public types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Public types ──────────────────────────────────────────────────────────────
 
-/// The user's date selection â€” either a single date or a date range.
+/// The user's date selection — either a single date or a date range.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DateSelection {
     Single(Option<NaiveDate>),
@@ -157,7 +157,7 @@ impl TimeSelection {
     }
 }
 
-// â”€â”€ Constructor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Constructor ───────────────────────────────────────────────────────────────
 
 /// Creates a [`DatePicker`] overlay widget.
 ///
@@ -174,7 +174,7 @@ where
     DatePicker::new(is_open, selection)
 }
 
-// â”€â”€ Widget struct â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Widget struct ─────────────────────────────────────────────────────────────
 
 /// A tiny invisible anchor widget that shows a calendar overlay when `is_open`.
 pub struct DatePicker<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
@@ -277,7 +277,7 @@ where
     }
 }
 
-// â”€â”€ Internal state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Internal state ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 struct State {
@@ -289,7 +289,7 @@ struct State {
     view_mode: PickerView,
     /// Day cell under the cursor (for hover highlight and range preview).
     hovered_date: Option<NaiveDate>,
-    /// First click in range mode â€” the uncommitted start.
+    /// First click in range mode — the uncommitted start.
     range_anchor: Option<NaiveDate>,
     /// Current time value.
     time: TimeSelection,
@@ -373,7 +373,7 @@ impl State {
     }
 }
 
-// â”€â”€ Widget trait â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Widget trait ──────────────────────────────────────────────────────────────
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for DatePicker<'a, Message, Theme, Renderer>
@@ -423,7 +423,7 @@ where
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
-        // Invisible anchor â€” nothing drawn here.
+        // Invisible anchor — nothing drawn here.
     }
 
     fn update(
@@ -520,7 +520,7 @@ where
     }
 }
 
-// â”€â”€ Overlay struct â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Overlay struct ────────────────────────────────────────────────────────────
 //
 // 'r = borrow/reference lifetime (the overlay element's lifetime)
 // 'w = widget data lifetime (the 'a from DatePicker<'w, ...>)
@@ -824,7 +824,7 @@ where
     }
 }
 
-// â”€â”€ Overlay trait â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Overlay trait ─────────────────────────────────────────────────────────────
 
 impl<'r, Message, Theme, Renderer> Overlay<Message, Theme, Renderer>
     for DatePickerOverlay<'r, '_, Message, Theme, Renderer>
@@ -908,7 +908,7 @@ where
         let bounds = layout.bounds();
 
         match event {
-            // â”€â”€ Left click â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Left click ───────────────────────────────────────────────
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
                 let cursor_pos = cursor.position().unwrap_or(Point::ORIGIN);
@@ -1015,7 +1015,7 @@ where
                 }
             }
 
-            // â”€â”€ Cursor moved â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Cursor moved ─────────────────────────────────────────────
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 let pos = *position;
 
@@ -1084,7 +1084,7 @@ where
                 }
             }
 
-            // â”€â”€ Button released â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Button released ──────────────────────────────────────────
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. }) => {
                 self.state.is_dragging = false;
@@ -1096,7 +1096,7 @@ where
                 }
             }
 
-            // â”€â”€ Scroll on time spinners â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Scroll on time spinners ──────────────────────────────────
             Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 if !self.show_time {
                     return;
@@ -1243,7 +1243,7 @@ where
     }
 }
 
-// â”€â”€ Draw helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Draw helpers ──────────────────────────────────────────────────────────────
 
 impl<'r, Message, Theme, Renderer> DatePickerOverlay<'r, '_, Message, Theme, Renderer>
 where
@@ -1280,8 +1280,8 @@ where
             }
         }
 
-        // Prev arrow â€¹
-        fill_text_centered(renderer, "â€¹", 18.0, style.arrow_color, prev, bounds);
+        // Prev arrow ‹
+        fill_text_centered(renderer, "‹", 18.0, style.arrow_color, prev, bounds);
 
         // Month/year label
         let label_rect = header_title_band_rect(bounds);
@@ -1298,8 +1298,8 @@ where
             bounds,
         );
 
-        // Next arrow â€º
-        fill_text_centered(renderer, "â€º", 18.0, style.arrow_color, next, bounds);
+        // Next arrow ›
+        fill_text_centered(renderer, "›", 18.0, style.arrow_color, next, bounds);
     }
 
     fn draw_dow_header(&self, renderer: &mut Renderer, style: &Style, bounds: Rectangle) {
@@ -1885,7 +1885,7 @@ where
     }
 }
 
-// â”€â”€ Rendering utilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Rendering utilities ───────────────────────────────────────────────────────
 
 fn fill_text_centered<R>(
     renderer: &mut R,
@@ -1950,7 +1950,7 @@ fn fill_text_bold_centered<R>(
     );
 }
 
-// â”€â”€ Layout helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Layout helpers ────────────────────────────────────────────────────────────
 
 fn overlay_size(show_time: bool) -> Size {
     let h = HEADER_HEIGHT
@@ -2106,8 +2106,8 @@ fn hour_rect(tr: Rectangle) -> Rectangle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::advanced::clipboard;
     use iced::advanced::renderer;
+    use iced::advanced::shell;
     use iced::advanced::text::{self, Text};
     use iced::{
         Background, Color, Font, Length, Pixels, Point, Rectangle, Size, Transformation, keyboard,
@@ -2124,10 +2124,43 @@ mod tests {
         Today(NaiveDate),
     }
 
+    /// Drives one `UserInterface::update` pass, collecting what it published.
+    ///
+    /// `update` now takes the window and waker a `Shell` carries, and publishes
+    /// into a `shell::Bus` rather than a `&mut Vec`; the clipboard it used to
+    /// borrow is built internally. Draining the bus into a `Vec` here keeps the
+    /// accumulate-and-assert style the tests below are written in.
+    fn update<Message, Theme, Renderer>(
+        ui: &mut UserInterface<'_, Message, Theme, Renderer>,
+        events: &[Event],
+        cursor: mouse::Cursor,
+        renderer: &mut Renderer,
+        messages: &mut Vec<Message>,
+    ) -> (UiState, Vec<iced::event::Status>)
+    where
+        Renderer: iced::advanced::Renderer,
+    {
+        let mut bus = shell::Bus::new();
+
+        let result = ui.update(
+            &iced::window::Headless,
+            &shell::Waker::noop(),
+            events,
+            cursor,
+            renderer,
+            &mut bus,
+        );
+
+        messages.extend(bus.drain());
+
+        result
+    }
+
     #[derive(Default)]
     struct RecordingRenderer {
         quads: usize,
         texts: usize,
+        scale: Option<renderer::Scale>,
     }
 
     impl iced::advanced::Renderer for RecordingRenderer {
@@ -2144,6 +2177,18 @@ mod tests {
         }
 
         fn reset(&mut self, _new_bounds: Rectangle) {}
+
+        fn hint(&mut self, scale: renderer::Scale) {
+            self.scale = Some(scale);
+        }
+
+        fn scale(&self) -> Option<renderer::Scale> {
+            self.scale
+        }
+
+        fn settings(&self) -> renderer::Settings {
+            renderer::Settings::default()
+        }
 
         fn allocate_image(
             &mut self,
@@ -2303,7 +2348,6 @@ mod tests {
             &mut renderer,
         );
 
-        let mut clipboard = clipboard::Null;
         let mut messages = Vec::new();
         let overlay = overlay_size(false);
         let cursor = mouse::Cursor::Available(Point::new(
@@ -2312,7 +2356,7 @@ mod tests {
         ));
 
         let (state, statuses) =
-            ui.update(&[], cursor, &mut renderer, &mut clipboard, &mut messages);
+            update(&mut ui, &[], cursor, &mut renderer, &mut messages);
 
         assert!(statuses.is_empty());
         assert!(messages.is_empty());
@@ -2337,7 +2381,6 @@ mod tests {
             &mut renderer,
         );
 
-        let mut clipboard = clipboard::Null;
         let mut messages = Vec::new();
         let overlay = overlay_size(false);
         let cursor = mouse::Cursor::Available(Point::new(
@@ -2345,7 +2388,7 @@ mod tests {
             (600.0 - overlay.height) / 2.0 + HEADER_HEIGHT / 2.0,
         ));
 
-        let _ = ui.update(&[], cursor, &mut renderer, &mut clipboard, &mut messages);
+        let _ = update(&mut ui, &[], cursor, &mut renderer, &mut messages);
         ui.draw(
             &mut renderer,
             &iced::Theme::TokyoNight,
@@ -2378,7 +2421,6 @@ mod tests {
             &mut renderer,
         );
 
-        let mut clipboard = clipboard::Null;
         let mut messages = Vec::new();
         let overlay = overlay_size(false);
         let cursor = mouse::Cursor::Available(Point::new(
@@ -2387,7 +2429,7 @@ mod tests {
         ));
 
         let (state, statuses) =
-            ui.update(&[], cursor, &mut renderer, &mut clipboard, &mut messages);
+            update(&mut ui, &[], cursor, &mut renderer, &mut messages);
 
         assert!(statuses.is_empty());
         assert!(messages.is_empty());
@@ -2417,7 +2459,6 @@ mod tests {
             &mut renderer,
         );
 
-        let mut clipboard = clipboard::Null;
         let mut messages = Vec::new();
         let overlay = overlay_size(false);
         let bounds = Rectangle {
@@ -2430,16 +2471,15 @@ mod tests {
         let cursor =
             mouse::Cursor::Available(Point::new(close_button.center_x(), close_button.center_y()));
 
-        let _ = ui.update(&[], cursor, &mut renderer, &mut clipboard, &mut messages);
+        let _ = update(&mut ui, &[], cursor, &mut renderer, &mut messages);
         messages.clear();
 
-        let (state, statuses) = ui.update(
+        let (state, statuses) = update(&mut ui,
             &[Event::Mouse(mouse::Event::ButtonPressed(
                 mouse::Button::Left,
             ))],
             cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
 
@@ -2468,23 +2508,21 @@ mod tests {
             &mut renderer,
         );
 
-        let mut clipboard = clipboard::Null;
         let mut messages = Vec::new();
         let bounds = overlay_bounds(false);
         let today_button = footer_button_rects(footer_rect(bounds, false))[0];
         let cursor =
             mouse::Cursor::Available(Point::new(today_button.center_x(), today_button.center_y()));
 
-        let _ = ui.update(&[], cursor, &mut renderer, &mut clipboard, &mut messages);
+        let _ = update(&mut ui, &[], cursor, &mut renderer, &mut messages);
         messages.clear();
 
-        let (_state, _statuses) = ui.update(
+        let (_state, _statuses) = update(&mut ui,
             &[Event::Mouse(mouse::Event::ButtonPressed(
                 mouse::Button::Left,
             ))],
             cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
 
@@ -2511,7 +2549,6 @@ mod tests {
             &mut renderer,
         );
 
-        let mut clipboard = clipboard::Null;
         let mut messages = Vec::new();
         let bounds = overlay_bounds(false);
         let title_rect = header_title_hit_rect(
@@ -2523,22 +2560,20 @@ mod tests {
         let title_cursor =
             mouse::Cursor::Available(Point::new(title_rect.center_x(), title_rect.center_y()));
 
-        let _ = ui.update(
+        let _ = update(&mut ui,
             &[],
             title_cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
 
         for _ in 0..2 {
-            let (_state, _statuses) = ui.update(
+            let (_state, _statuses) = update(&mut ui,
                 &[Event::Mouse(mouse::Event::ButtonPressed(
                     mouse::Button::Left,
                 ))],
                 title_cursor,
                 &mut renderer,
-                &mut clipboard,
                 &mut messages,
             );
         }
@@ -2550,13 +2585,12 @@ mod tests {
 
         let year_cursor =
             mouse::Cursor::Available(year_cell_center(bounds, initial.year(), target.year()));
-        let (_state, _statuses) = ui.update(
+        let (_state, _statuses) = update(&mut ui,
             &[Event::Mouse(mouse::Event::ButtonPressed(
                 mouse::Button::Left,
             ))],
             year_cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
 
@@ -2566,13 +2600,12 @@ mod tests {
         );
 
         let month_cursor = mouse::Cursor::Available(month_cell_center(bounds, target.month()));
-        let (_state, _statuses) = ui.update(
+        let (_state, _statuses) = update(&mut ui,
             &[Event::Mouse(mouse::Event::ButtonPressed(
                 mouse::Button::Left,
             ))],
             month_cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
 
@@ -2582,13 +2615,12 @@ mod tests {
         );
 
         let day_cursor = mouse::Cursor::Available(date_cell_center(bounds, target));
-        let (_state, _statuses) = ui.update(
+        let (_state, _statuses) = update(&mut ui,
             &[Event::Mouse(mouse::Event::ButtonPressed(
                 mouse::Button::Left,
             ))],
             day_cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
 
@@ -2609,7 +2641,6 @@ mod tests {
             &mut renderer,
         );
 
-        let mut clipboard = clipboard::Null;
         let mut messages = Vec::new();
         let bounds = overlay_bounds(false);
         let header = header_rect(bounds);
@@ -2622,7 +2653,7 @@ mod tests {
         ));
 
         let (state, statuses) =
-            ui.update(&[], cursor, &mut renderer, &mut clipboard, &mut messages);
+            update(&mut ui, &[], cursor, &mut renderer, &mut messages);
 
         assert!(statuses.is_empty());
         assert!(messages.is_empty());
@@ -2651,7 +2682,6 @@ mod tests {
             &mut renderer,
         );
 
-        let mut clipboard = clipboard::Null;
         let mut messages = Vec::new();
         let bounds = overlay_bounds(true);
         let time = time_rect(bounds);
@@ -2664,39 +2694,35 @@ mod tests {
             minute_rect(time).center_y(),
         ));
 
-        let _ = ui.update(
+        let _ = update(&mut ui,
             &[],
             hour_cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
-        let _ = ui.update(
+        let _ = update(&mut ui,
             &[
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
             ],
             hour_cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
         messages.clear();
 
-        let _ = ui.update(
+        let _ = update(&mut ui,
             &[digit_key_pressed('0')],
             hour_cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
         assert!(messages.is_empty());
 
-        let _ = ui.update(
+        let _ = update(&mut ui,
             &[digit_key_pressed('7')],
             hour_cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
         assert_eq!(
@@ -2707,23 +2733,21 @@ mod tests {
             )],
         );
 
-        let _ = ui.update(
+        let _ = update(&mut ui,
             &[
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
             ],
             minute_cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
         messages.clear();
 
-        let _ = ui.update(
+        let _ = update(&mut ui,
             &[digit_key_pressed('5')],
             minute_cursor,
             &mut renderer,
-            &mut clipboard,
             &mut messages,
         );
         assert_eq!(
@@ -2773,7 +2797,7 @@ fn ampm_rect(tr: Rectangle) -> Rectangle {
     }
 }
 
-// â”€â”€ Date helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Date helpers ──────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
 struct GridDay {
@@ -2781,10 +2805,10 @@ struct GridDay {
     is_current_month: bool,
 }
 
-/// Builds a Sunday-anchored 6Ã—7 grid for the given year/month.
+/// Builds a Sunday-anchored 6×7 grid for the given year/month.
 fn month_grid(year: i32, month: u32) -> [[GridDay; 7]; 6] {
     let first = NaiveDate::from_ymd_opt(year, month, 1).expect("valid date");
-    // num_days_from_monday(): Mon=0 â€¦ Sun=6. Convert to Sun=0 â€¦ Sat=6:
+    // num_days_from_monday(): Mon=0 … Sun=6. Convert to Sun=0 … Sat=6:
     let start_col = (first.weekday().num_days_from_monday() + 1) % 7;
 
     let dummy = GridDay {
@@ -2919,7 +2943,7 @@ fn to_12h(hour: u32) -> (u32, bool) {
     (h, is_pm)
 }
 
-// â”€â”€ Style / Catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Style / Catalog ───────────────────────────────────────────────────────────
 
 /// Interaction status for style queries.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2975,7 +2999,7 @@ pub struct Style {
     pub time_active_text_color: Color,
 }
 
-/// Theme catalog trait â€” mirrors the pattern used by [`collapsible`].
+/// Theme catalog trait — mirrors the pattern used by [`collapsible`].
 pub trait Catalog {
     type Class<'a>;
     fn default<'a>() -> Self::Class<'a>;
