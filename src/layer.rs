@@ -561,6 +561,45 @@ struct State {
     window: Option<Window>,
     /// The drag or resize in flight, if any.
     held: Option<Held>,
+    /// The instant of the frame the layer was last updated in.
+    ///
+    /// Whether the surface is showing, and how far through its transition it
+    /// is, are both read from here rather than from the clock. A frame is not
+    /// an instant: `UserInterface` lays the overlay out once during `update`,
+    /// caches that layout, then rebuilds the overlay tree in `draw` and hands
+    /// it the cached one. Deciding visibility from `Instant::now()` lets a
+    /// transition finish *between* the two, at which point the surface leaves
+    /// the tree but not the layout — and `overlay::Group` pairs the two up by
+    /// position, so every sibling overlay is then drawn against a layout node
+    /// belonging to something else, which panics as soon as that node has the
+    /// wrong shape.
+    ///
+    /// `None` until the first frame, when nothing has opened yet.
+    frame: Option<Instant>,
+}
+
+impl State {
+    /// Returns `true` when the surface should still be produced and drawn.
+    ///
+    /// Answered as of the frame the layer was last updated in, so that one
+    /// frame gets one answer however many passes it takes. See
+    /// [`State::frame`].
+    ///
+    /// `is_open` is the application's rather than [`State::is_open`], which has
+    /// not necessarily caught up with it: the view is rebuilt before `update`
+    /// runs.
+    fn is_showing(&self, is_open: bool) -> bool {
+        is_open
+            || self
+                .frame
+                .is_some_and(|frame| self.transition.is_visible(frame))
+    }
+
+    /// How far open the surface is, as of that same frame.
+    fn progress(&self) -> f32 {
+        self.frame
+            .map_or(0.0, |frame| self.transition.progress(frame))
+    }
 }
 
 /// A pointer event, without the distinction between mouse and touch.
@@ -745,10 +784,33 @@ where
         let state = tree.state.downcast_mut::<State>();
         state.transition.sync(self.motion);
 
+        // The one place the transition is allowed to advance. Everything else
+        // reads the answer back off the state, so that a frame gets a single
+        // answer however many passes it takes. See [`State::frame`].
+        if let Event::Window(window::Event::RedrawRequested(now)) = event {
+            let was_showing = state.is_showing(self.is_open);
+
+            state.frame = Some(*now);
+
+            if state.transition.is_animating(*now) {
+                shell.request_redraw();
+            }
+
+            // The frame the surface stops showing on is a frame the overlay has
+            // to be laid out on again: it is leaving the tree, and the layout
+            // cached for it would otherwise be handed to whichever overlay takes
+            // its place.
+            if was_showing != state.is_showing(self.is_open) {
+                shell.invalidate_layout();
+                shell.request_redraw();
+            }
+        }
+
         if self.is_open != state.is_open {
             let now = Instant::now();
 
             state.is_open = self.is_open;
+            state.frame = Some(now);
 
             if self.is_open {
                 state.transition.open(now);
@@ -762,12 +824,6 @@ where
             }
 
             shell.invalidate_layout();
-            shell.request_redraw();
-        }
-
-        if let Event::Window(window::Event::RedrawRequested(now)) = event
-            && state.transition.is_animating(*now)
-        {
             shell.request_redraw();
         }
     }
@@ -794,15 +850,17 @@ where
         let state = tree.state.downcast_mut::<State>();
         state.transition.sync(self.motion);
 
-        let now = Instant::now();
-
         // The surface outlives the close so it can animate out.
-        if !self.is_open && !state.transition.is_visible(now) {
+        //
+        // Deliberately the frame's instant and not the clock's: `overlay` is
+        // called once to lay the surface out and again to draw it, and the two
+        // have to agree. See [`State::frame`].
+        if !state.is_showing(self.is_open) {
             return None;
         }
 
         // Read the transition out before `state` is handed to the overlay.
-        let progress = state.transition.progress(now);
+        let progress = state.progress();
         let is_closing = !self.is_open;
 
         // The close button is chrome the user can press, so drawing one with
@@ -1616,6 +1674,8 @@ pub fn default(theme: &Theme) -> Style {
 mod tests {
     use super::*;
     use crate::anchor::Side;
+    use iced::advanced::shell;
+    use iced::time::Duration;
 
     const VIEWPORT: Rectangle = Rectangle {
         x: 0.0,
@@ -1626,6 +1686,128 @@ mod tests {
 
     fn size() -> Size {
         Size::new(200.0, 100.0)
+    }
+
+    /// The bounds the hosted layer is laid out in.
+    const HOST_BOUNDS: Size = Size::new(400.0, 400.0);
+
+    /// Drives one layer through frames the way `UserInterface` does.
+    ///
+    /// Deliberately not a `UserInterface`: what is under test is whether the
+    /// widget gives a frame one answer, which is a question about the widget
+    /// alone.
+    struct Host<'a> {
+        element: Element<'a, (), Theme, ()>,
+        tree: Tree,
+        node: Node,
+    }
+
+    impl<'a> Host<'a> {
+        /// Hosts a layer, opened or closed, reusing the state of the last one.
+        ///
+        /// Visibility is the application's, so changing it means a new view —
+        /// which is what the real thing does between frames.
+        fn show(&mut self, is_open: bool) {
+            let mut element = Element::from(Self::layer(is_open));
+            element.as_widget_mut().diff(&mut self.tree);
+
+            self.node = element.as_widget_mut().layout(
+                &mut self.tree,
+                &(),
+                &Limits::new(Size::ZERO, HOST_BOUNDS),
+            );
+
+            self.element = element;
+        }
+
+        fn layer(is_open: bool) -> Layer<'a, (), Theme, ()> {
+            dialog(iced::widget::text("Sure?")).open(is_open)
+        }
+
+        fn new(is_open: bool) -> Self {
+            let mut element = Element::from(Self::layer(is_open));
+            let mut tree = Tree::new(element.as_widget());
+            element.as_widget_mut().diff(&mut tree);
+
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &(),
+                &Limits::new(Size::ZERO, HOST_BOUNDS),
+            );
+
+            Self {
+                element,
+                tree,
+                node,
+            }
+        }
+
+        fn redraw(&mut self) {
+            let mut bus = shell::Bus::new();
+            let mut shell = Shell::new(&iced::window::Headless, shell::Waker::noop(), &mut bus);
+
+            self.element.as_widget_mut().update(
+                &mut self.tree,
+                &Event::Window(window::Event::RedrawRequested(Instant::now())),
+                Layout::new(&self.node),
+                mouse::Cursor::Unavailable,
+                &(),
+                &mut shell,
+                &Rectangle::with_size(HOST_BOUNDS),
+            );
+        }
+
+        /// Whether the layer would put a surface in the overlay tree right now.
+        fn has_overlay(&mut self) -> bool {
+            self.element
+                .as_widget_mut()
+                .overlay(
+                    &mut self.tree,
+                    Layout::new(&self.node),
+                    &(),
+                    &Rectangle::with_size(HOST_BOUNDS),
+                    Vector::ZERO,
+                )
+                .is_some()
+        }
+    }
+
+    /// A frame asks for the overlay twice, and the two answers have to match.
+    ///
+    /// `UserInterface` lays the overlay out once during `update` and caches
+    /// that layout; `draw` then rebuilds the overlay tree and hands it the
+    /// cached one, and `overlay::Group` pairs the two up by position. A layer
+    /// that decided it was showing for the layout and not for the draw takes
+    /// its layout node with it, and every sibling overlay — a `tooltip`, say —
+    /// is left drawing against a node belonging to something else. So the
+    /// answer comes from the frame rather than the clock. See [`State::frame`].
+    #[test]
+    fn a_closing_layer_answers_the_same_twice_within_one_frame() {
+        let mut host = Host::new(true);
+
+        host.redraw();
+
+        // Closed by the application. The surface is animating out, and still
+        // showing.
+        host.show(false);
+        host.redraw();
+
+        let showing_for_the_layout = host.has_overlay();
+        assert!(showing_for_the_layout, "still sliding out");
+
+        // However long the frame takes to get from its layout to its draw.
+        std::thread::sleep(Motion::SMOOTH.duration + Duration::from_millis(50));
+
+        assert_eq!(
+            host.has_overlay(),
+            showing_for_the_layout,
+            "the surface left the overlay tree without the layout being rebuilt"
+        );
+
+        // And the next frame does retire it, rather than pinning it open.
+        host.redraw();
+
+        assert!(!host.has_overlay());
     }
 
     /// A 200×100 window at (100, 100), the starting point for the drag tests.

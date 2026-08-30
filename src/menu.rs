@@ -735,6 +735,21 @@ struct State {
     ///
     /// `None` means the guard is not engaged. See [`AIM_TIMEOUT`].
     aim_since: Option<Instant>,
+    /// The instant of the frame the menu was last updated in.
+    ///
+    /// Whether the panels are showing, and how far through its transition the
+    /// root one is, are both read from here rather than from the clock. A frame
+    /// is not an instant: `UserInterface` lays the overlay out once during
+    /// `update`, caches that layout, then rebuilds the overlay tree in `draw`
+    /// and hands it the cached one. Deciding visibility from `Instant::now()`
+    /// lets a transition finish *between* the two, at which point the panels
+    /// leave the tree but not the layout — and `overlay::Group` pairs the two
+    /// up by position, so every sibling overlay is then drawn against a layout
+    /// node belonging to something else, which panics as soon as that node has
+    /// the wrong shape.
+    ///
+    /// `None` until the first frame, when nothing has opened yet.
+    frame: Option<Instant>,
 }
 
 /// A neighbouring menu in a [`MenuBar`].
@@ -769,21 +784,27 @@ impl State {
     /// the end of the animation would make the widget lie about its state for
     /// a tenth of a second.
     fn close(&mut self) {
+        let now = Instant::now();
+
         self.is_open = false;
         self.path.clear();
         self.highlighted = None;
         self.sibling_request = None;
-        self.transition.close(Instant::now());
+        self.frame = Some(now);
+        self.transition.close(now);
         self.submenu_transitions.clear();
         self.forget_aim();
     }
 
     /// Opens the root panel with nothing highlighted, as a press does.
     fn open(&mut self) {
+        let now = Instant::now();
+
         self.is_open = true;
         self.path.clear();
         self.highlighted = None;
-        self.transition.open(Instant::now());
+        self.frame = Some(now);
+        self.transition.open(now);
         self.submenu_transitions.clear();
         self.forget_aim();
     }
@@ -799,8 +820,20 @@ impl State {
     }
 
     /// Returns `true` when the panels should still be produced and drawn.
-    fn is_showing(&self, now: Instant) -> bool {
-        self.is_open || self.transition.is_visible(now)
+    ///
+    /// Answered as of the frame the menu was last updated in, so that one frame
+    /// gets one answer however many passes it takes. See [`State::frame`].
+    fn is_showing(&self) -> bool {
+        self.is_open
+            || self
+                .frame
+                .is_some_and(|frame| self.transition.is_visible(frame))
+    }
+
+    /// How far open the root panel is, as of that same frame.
+    fn progress(&self) -> f32 {
+        self.frame
+            .map_or(0.0, |frame| self.transition.progress(frame))
     }
 
     /// Returns `true` while any panel is still moving.
@@ -1125,10 +1158,27 @@ where
 
             // Drive the transition, and stop asking for frames the moment it
             // settles. A menu sitting there open costs nothing.
-            if let Event::Window(window::Event::RedrawRequested(now)) = event
-                && state.is_animating(*now)
-            {
-                shell.request_redraw();
+            //
+            // This is also the one place the frame the rest of the widget reads
+            // its visibility from advances, so that a frame gets a single answer
+            // however many passes it takes. See [`State::frame`].
+            if let Event::Window(window::Event::RedrawRequested(now)) = event {
+                let was_showing = state.is_showing();
+
+                state.frame = Some(*now);
+
+                if state.is_animating(*now) {
+                    shell.request_redraw();
+                }
+
+                // The frame the panels stop showing on is a frame the overlay
+                // has to be laid out on again: they are leaving the tree, and
+                // the layout cached for them would otherwise be handed to
+                // whichever overlay takes their place.
+                if was_showing != state.is_showing() {
+                    shell.invalidate_layout();
+                    shell.request_redraw();
+                }
             }
         }
 
@@ -1243,15 +1293,17 @@ where
         let state = tree.state.downcast_mut::<State>();
         state.transition.sync(self.motion);
 
-        let now = Instant::now();
-
         // Panels outlive the logical close so they can animate out.
-        if !state.is_showing(now) {
+        //
+        // Deliberately the frame's instant and not the clock's: `overlay` is
+        // called once to lay the panels out and again to draw them, and the two
+        // have to agree. See [`State::frame`].
+        if !state.is_showing() {
             return None;
         }
 
         // Read the transition out before `state` is handed to the overlay.
-        let progress = state.transition.progress(now);
+        let progress = state.progress();
         let is_closing = !state.is_open;
 
         let mut trigger_bounds = layout.bounds();
@@ -2708,6 +2760,7 @@ pub fn default(theme: &Theme) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::advanced::shell;
     use iced::time::Duration;
 
     #[derive(Debug, Clone, PartialEq)]
@@ -2717,6 +2770,128 @@ mod tests {
 
     fn menu_of<'a>(items: Vec<Item<'a, Message>>) -> Menu<'a, Message> {
         Menu::new(iced::widget::text("Edit"), items)
+    }
+
+    /// The bounds every hosted widget is laid out in.
+    const HOST_BOUNDS: Size = Size::new(400.0, 400.0);
+
+    /// Drives one menu through frames the way `UserInterface` does.
+    ///
+    /// Deliberately not a `UserInterface`: what is under test is whether the
+    /// widget gives a frame one answer, which is a question about the widget
+    /// alone.
+    struct Host<'a> {
+        element: Element<'a, Message, Theme, ()>,
+        tree: Tree,
+        node: Node,
+    }
+
+    impl<'a> Host<'a> {
+        fn new(menu: Menu<'a, Message, Theme, ()>) -> Self {
+            let mut element = Element::from(menu);
+            let mut tree = Tree::new(element.as_widget());
+            element.as_widget_mut().diff(&mut tree);
+
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &(),
+                &Limits::new(Size::ZERO, HOST_BOUNDS),
+            );
+
+            Self {
+                element,
+                tree,
+                node,
+            }
+        }
+
+        /// Parked over the trigger, which is where a press has to land to
+        /// toggle the menu.
+        fn cursor() -> mouse::Cursor {
+            mouse::Cursor::Available(Point::new(40.0, 12.0))
+        }
+
+        fn drive(&mut self, event: Event) {
+            let mut bus = shell::Bus::new();
+            let mut shell = Shell::new(&iced::window::Headless, shell::Waker::noop(), &mut bus);
+
+            self.element.as_widget_mut().update(
+                &mut self.tree,
+                &event,
+                Layout::new(&self.node),
+                Self::cursor(),
+                &(),
+                &mut shell,
+                &Rectangle::with_size(HOST_BOUNDS),
+            );
+        }
+
+        fn press(&mut self) {
+            self.drive(Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)));
+        }
+
+        fn redraw(&mut self) {
+            self.drive(Event::Window(window::Event::RedrawRequested(
+                Instant::now(),
+            )));
+        }
+
+        /// Whether the menu would put panels in the overlay tree right now.
+        fn has_overlay(&mut self) -> bool {
+            self.element
+                .as_widget_mut()
+                .overlay(
+                    &mut self.tree,
+                    Layout::new(&self.node),
+                    &(),
+                    &Rectangle::with_size(HOST_BOUNDS),
+                    Vector::ZERO,
+                )
+                .is_some()
+        }
+    }
+
+    /// A frame asks for the overlay twice, and the two answers have to match.
+    ///
+    /// `UserInterface` lays the overlay out once during `update` and caches
+    /// that layout; `draw` then rebuilds the overlay tree and hands it the
+    /// cached one, and `overlay::Group` pairs the two up by position. A menu
+    /// that decided it was showing for the layout and not for the draw takes
+    /// its layout node with it, and every sibling overlay — a `tooltip`, say —
+    /// is left drawing against a node belonging to something else. So the
+    /// answer comes from the frame rather than the clock. See [`State::frame`].
+    #[test]
+    fn a_closing_menu_answers_the_same_twice_within_one_frame() {
+        let mut host = Host::new(Menu::new(
+            iced::widget::container(iced::widget::text("Edit"))
+                .width(Length::Fixed(80.0))
+                .height(Length::Fixed(24.0)),
+            vec![item(iced::widget::text("Cut")).on_press(Message::Cut)],
+        ));
+
+        // Open it, then close it again. The panels are now animating out, and
+        // still showing.
+        host.press();
+        host.redraw();
+        host.press();
+        host.redraw();
+
+        let showing_for_the_layout = host.has_overlay();
+        assert!(showing_for_the_layout, "still fading out");
+
+        // However long the frame takes to get from its layout to its draw.
+        std::thread::sleep(Motion::QUICK.duration + Duration::from_millis(50));
+
+        assert_eq!(
+            host.has_overlay(),
+            showing_for_the_layout,
+            "the panels left the overlay tree without the layout being rebuilt"
+        );
+
+        // And the next frame does retire them, rather than pinning them open.
+        host.redraw();
+
+        assert!(!host.has_overlay());
     }
 
     #[test]

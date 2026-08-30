@@ -312,12 +312,28 @@ struct State {
     /// open transition both use the side actually in effect, not the requested
     /// one — they differ whenever the popover has flipped.
     side: Side,
+    /// The instant of the frame the popover was last updated in.
+    ///
+    /// Whether the surface is showing, and how far through its transition it
+    /// is, are both read from here rather than from the clock. A frame is not
+    /// an instant: `UserInterface` lays the overlay out once during `update`,
+    /// caches that layout, then rebuilds the overlay tree in `draw` and hands
+    /// it the cached one. Deciding visibility from `Instant::now()` lets a
+    /// transition finish *between* the two, at which point the surface leaves
+    /// the tree but not the layout — and `overlay::Group` pairs the two up by
+    /// position, so every sibling overlay is then drawn against a layout node
+    /// belonging to something else. A tooltip beside a closing popover panics
+    /// on the mismatch.
+    ///
+    /// `None` until the first frame, when nothing has opened yet.
+    frame: Option<Instant>,
 }
 
 impl State {
     /// Opens the popover.
     fn open(&mut self, now: Instant) {
         self.is_open = true;
+        self.frame = Some(now);
         self.transition.open(now);
     }
 
@@ -325,12 +341,26 @@ impl State {
     fn close(&mut self, now: Instant) {
         self.is_open = false;
         self.left_trigger_at = None;
+        self.frame = Some(now);
         self.transition.close(now);
     }
 
     /// Returns `true` when the popover should still be produced and drawn.
-    fn is_showing(&self, now: Instant) -> bool {
-        self.is_open || self.transition.is_visible(now)
+    ///
+    /// Answered as of the frame the popover was last updated in, so that one
+    /// frame gets one answer however many passes it takes. See
+    /// [`State::frame`].
+    fn is_showing(&self) -> bool {
+        self.is_open
+            || self
+                .frame
+                .is_some_and(|frame| self.transition.is_visible(frame))
+    }
+
+    /// How far open the surface is, as of that same frame.
+    fn progress(&self) -> f32 {
+        self.frame
+            .map_or(0.0, |frame| self.transition.progress(frame))
     }
 }
 
@@ -417,6 +447,28 @@ where
             let state = tree.state.downcast_mut::<State>();
             state.transition.sync(self.motion);
 
+            // The one place the transition is allowed to advance. Everything
+            // else reads the answer back off the state, so that a frame gets a
+            // single answer however many passes it takes. See [`State::frame`].
+            if let Event::Window(window::Event::RedrawRequested(now)) = event {
+                let was_showing = state.is_showing();
+
+                state.frame = Some(*now);
+
+                if state.transition.is_animating(*now) {
+                    shell.request_redraw();
+                }
+
+                // The frame a surface stops showing on is a frame the overlay
+                // has to be laid out on again: it is leaving the tree, and the
+                // layout cached for it would otherwise be handed to whichever
+                // overlay takes its place.
+                if was_showing != state.is_showing() {
+                    shell.invalidate_layout();
+                    shell.request_redraw();
+                }
+            }
+
             // Application-owned visibility wins over anything the widget
             // decided for itself.
             if let Some(is_open) = self.controlled
@@ -431,12 +483,6 @@ where
                 }
 
                 shell.invalidate_layout();
-                shell.request_redraw();
-            }
-
-            if let Event::Window(window::Event::RedrawRequested(now)) = event
-                && state.transition.is_animating(*now)
-            {
                 shell.request_redraw();
             }
         }
@@ -575,13 +621,14 @@ where
         let state = tree.state.downcast_mut::<State>();
         state.transition.sync(self.motion);
 
-        let now = Instant::now();
-
-        if !state.is_showing(now) {
+        // Deliberately the frame's instant and not the clock's: `overlay` is
+        // called once to lay the surface out and again to draw it, and the two
+        // have to agree. See [`State::frame`].
+        if !state.is_showing() {
             return None;
         }
 
-        let progress = state.transition.progress(now);
+        let progress = state.progress();
         let is_closing = !state.is_open;
 
         let mut trigger_bounds = layout.bounds();
@@ -975,8 +1022,13 @@ mod tests {
         let settled = start + Duration::from_millis(300);
         state.close(settled);
 
-        assert!(state.is_showing(settled), "still fading out");
-        assert!(!state.is_showing(settled + Duration::from_millis(300)));
+        assert!(state.is_showing(), "still fading out");
+
+        // Frames are what carry the transition forward, and `update` is where
+        // they land. Until one lands past the end of it, the surface shows.
+        state.frame = Some(settled + Motion::QUICK.duration + Duration::from_millis(1));
+
+        assert!(!state.is_showing());
     }
 
     /// Closing must forget where the cursor left the trigger, or the next open
@@ -1000,6 +1052,105 @@ mod tests {
         assert_eq!(popover.trigger_mode, Trigger::Press);
         assert_eq!(popover.placement.side, Side::Bottom);
         assert_eq!(popover.placement.align, Align::Center);
+    }
+
+    /// A closing popover must not vanish from the overlay tree *between* the
+    /// layout pass and the draw pass.
+    ///
+    /// `UserInterface` lays the overlay out once, during `update`, and caches
+    /// that layout. `draw` then rebuilds the overlay tree and hands it the
+    /// cached layout, and `overlay::Group` pairs the two up by position. If a
+    /// popover's transition happens to finish in the gap between the two, the
+    /// group loses a child and every sibling overlay — a tooltip, say — is
+    /// drawn against a layout node belonging to something else, which panics
+    /// as soon as that node has the wrong shape.
+    ///
+    /// So visibility has to be decided from the frame the widget was last
+    /// updated in, not from the wall clock.
+    #[test]
+    fn a_transition_finishing_mid_frame_does_not_desync_sibling_overlays() {
+        use iced::advanced::shell;
+        use iced::widget::{column, container, text, tooltip};
+        use iced::{Length, Point, Size};
+        use iced_runtime::user_interface::{Cache, UserInterface};
+
+        #[derive(Debug, Clone, PartialEq)]
+        enum Msg {}
+
+        fn view(is_open: bool) -> Element<'static, Msg, Theme, ()> {
+            column![
+                Element::from(
+                    popover(
+                        container(text("Trigger"))
+                            .width(Length::Fixed(120.0))
+                            .height(Length::Fixed(30.0)),
+                        // A leaf: its layout node has no children, so a
+                        // sibling handed it by mistake panics rather than
+                        // quietly drawing the wrong thing.
+                        text("Panel"),
+                    )
+                    .open(is_open)
+                ),
+                Element::from(tooltip(
+                    container(text("Cell"))
+                        .width(Length::Fixed(120.0))
+                        .height(Length::Fixed(30.0)),
+                    container(text("Tip")).padding(5),
+                    tooltip::Position::Bottom,
+                )),
+            ]
+            .into()
+        }
+
+        fn drive(
+            ui: &mut UserInterface<'_, Msg, Theme, ()>,
+            event: Event,
+            cursor: mouse::Cursor,
+            renderer: &mut (),
+        ) {
+            let mut bus = shell::Bus::new();
+
+            let _ = ui.update(
+                &iced::window::Headless,
+                &shell::Waker::noop(),
+                &[event],
+                cursor,
+                renderer,
+                &mut bus,
+            );
+        }
+
+        let bounds = Size::new(400.0, 400.0);
+        let mut renderer = ();
+
+        // Over the tooltip's trigger, which sits under the popover's.
+        let cursor = mouse::Cursor::Available(Point::new(60.0, 45.0));
+
+        let redraw = |now| Event::Window(window::Event::RedrawRequested(now));
+
+        // Open the popover, and hover the tooltip, so both overlays are live.
+        let mut cache = Cache::new();
+
+        for _ in 0..2 {
+            let mut ui = UserInterface::build(view(true), bounds, cache, &mut renderer);
+            drive(&mut ui, redraw(Instant::now()), cursor, &mut renderer);
+            cache = ui.into_cache();
+        }
+
+        // Close it. The surface is still showing — it is animating out — so
+        // the overlay laid out here holds both it and the tooltip.
+        let mut ui = UserInterface::build(view(false), bounds, cache, &mut renderer);
+        drive(&mut ui, redraw(Instant::now()), cursor, &mut renderer);
+
+        // The transition ends before the frame is drawn.
+        std::thread::sleep(Motion::QUICK.duration + Duration::from_millis(50));
+
+        ui.draw(
+            &mut renderer,
+            &iced::Theme::Dark,
+            &iced::advanced::renderer::Style::default(),
+            cursor,
+        );
     }
 
     #[test]
