@@ -2151,7 +2151,10 @@ mod tests {
             &mut bus,
         );
 
-        messages.extend(bus.drain());
+        // Each message comes with a `Receipt`, which reports back to whoever
+        // published it once the message has been processed. Dropping it here is
+        // that report: the test is the update logic.
+        messages.extend(bus.drain().map(|(message, _receipt)| message));
 
         result
     }
@@ -2191,7 +2194,7 @@ mod tests {
         }
 
         fn allocate_image(
-            &mut self,
+            &self,
             handle: &iced::advanced::image::Handle,
             callback: impl FnOnce(
                 Result<iced::advanced::image::Allocation, iced::advanced::image::Error>,

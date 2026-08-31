@@ -4,16 +4,30 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# Pinned to the rev admin_tools/networkmap uses so a consuming workspace shares
-# one iced build (floating `branch = "master"` otherwise).
-iced = { git = "https://github.com/iced-rs/iced", rev = "4cad51ba61e3d76a7e696ad5923d675a20994e34", features = ["tokio", "advanced", "debug"] }
+iced = { version = "0.15.0-dev", features = ["tokio", "advanced", "debug"] }
 chrono = { version = "0.4", optional = true }
 # Optional, behind `m3_theme`. Consumers that don't want Material Design 3
 # styling never pull this in.
 material_theme = { git = "https://github.com/A-Disruption/material_theme", optional = true }
 
 [dev-dependencies]
-iced_runtime = { git = "https://github.com/iced-rs/iced", rev = "4cad51ba61e3d76a7e696ad5923d675a20994e34" }
+iced_runtime = { version = "0.15.0-dev" }
+
+# `iced` is asked for by version above and pointed at a source here, so nothing
+# about where it comes from is baked into the dependency itself. A consumer can
+# aim this at another branch, a fork, or a local checkout without this crate
+# knowing, and every crate in the graph asking for `iced 0.15.0-dev` follows —
+# which is what keeps `Element` and `Theme` one type across all of them. Pinning
+# the same `rev` in every crate was the old way of getting that, and it meant
+# the whole graph had to move in lockstep.
+#
+# 0.15 is unreleased, so this block is not optional: cargo cannot resolve
+# `iced 0.15.0-dev` from crates.io without it. And cargo only honours `[patch]`
+# in the manifest of the workspace being built, so a crate that depends on this
+# one needs its own copy.
+[patch.crates-io]
+iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+iced_runtime = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
 
 [features]
 default = []
