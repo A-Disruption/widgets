@@ -1461,6 +1461,23 @@ where
             operation,
         );
     }
+
+    fn overlay<'a>(
+        &'a mut self,
+        layout: Layout<'a>,
+        renderer: &Renderer,
+    ) -> Option<overlay::Element<'a, Message, Theme, Renderer>> {
+        let surface = layout.children().next()?;
+        let bounds = surface.bounds();
+
+        self.content.as_widget_mut().overlay(
+            self.tree,
+            surface.children().next()?,
+            renderer,
+            &bounds,
+            Vector::ZERO,
+        )
+    }
 }
 
 impl<Message, Theme, Renderer> Surface<'_, '_, Message, Theme, Renderer>

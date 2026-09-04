@@ -937,6 +937,22 @@ where
             operation,
         );
     }
+
+    fn overlay<'a>(
+        &'a mut self,
+        layout: Layout<'a>,
+        renderer: &Renderer,
+    ) -> Option<overlay::Element<'a, Message, Theme, Renderer>> {
+        let bounds = layout.bounds();
+
+        self.content.as_widget_mut().overlay(
+            self.tree,
+            layout.children().next()?,
+            renderer,
+            &bounds,
+            Vector::ZERO,
+        )
+    }
 }
 
 /// The appearance of a [`Popover`].
