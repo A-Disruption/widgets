@@ -874,6 +874,22 @@ where
             return;
         }
 
+        // Over the surface, the surface owns the pointer.
+        //
+        // Set before the branches below rather than after them, because several
+        // of them return early — and this is not about what the popover does
+        // with the event, it is about the page underneath not also getting it.
+        // Without it a move across an open popover hovered rows behind it, a
+        // wheel over a gap between its items scrolled them, and a press on its
+        // own padding landed on whatever it was covering.
+        //
+        // A press *outside* is deliberately still let through: a popover is not
+        // modal, and the trigger has to see the press that toggles it. Callers
+        // wanting a press outside swallowed want a `layer` with a backdrop.
+        if cursor.is_over(bounds) && is_pointer_event(event) {
+            shell.capture_event();
+        }
+
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if self.trigger_mode == Trigger::Hover && !self.keeps_hover_alive(bounds, cursor) {
@@ -915,13 +931,23 @@ where
             return mouse::Interaction::None;
         }
 
-        self.content.as_widget().mouse_interaction(
+        let interaction = self.content.as_widget().mouse_interaction(
             self.tree,
             layout.children().next().expect("content layout"),
             cursor,
             &layout.bounds(),
             renderer,
-        )
+        );
+
+        // The shape over the surface is the surface's to decide even when its
+        // content has no opinion, or the widget underneath supplies one — an
+        // I-beam over a popover laid across a text field, for text nobody can
+        // reach.
+        if interaction == mouse::Interaction::None && cursor.is_over(layout.bounds()) {
+            return mouse::Interaction::Idle;
+        }
+
+        interaction
     }
 
     fn operate(
@@ -952,6 +978,21 @@ where
             &bounds,
             Vector::ZERO,
         )
+    }
+}
+
+/// Is this an event a surface should keep to itself when the pointer is over
+/// it?
+///
+/// Every mouse and touch event except `CursorLeft`: the cursor leaving the
+/// window is not over anything, and swallowing it is how the page underneath
+/// gets stuck hovered. Keyboard events are not included — focus decides those,
+/// not position.
+fn is_pointer_event(event: &Event) -> bool {
+    match event {
+        Event::Mouse(mouse::Event::CursorLeft) => false,
+        Event::Mouse(_) | Event::Touch(_) => true,
+        _ => false,
     }
 }
 

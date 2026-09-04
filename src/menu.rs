@@ -2426,6 +2426,22 @@ where
             return;
         }
 
+        // Over a panel, the panel owns the pointer.
+        //
+        // Set before the branches below rather than inside them: the move
+        // handling returns early in several places (aiming at a submenu, a
+        // hover that changed nothing), and every one of those used to let the
+        // move through to the page under the menu — so sliding down a menu
+        // hovered rows behind it, and the wheel, which the menu does not handle
+        // at all, scrolled them.
+        //
+        // A press *outside* every panel is still let through, unchanged: it is
+        // the trigger's to toggle with, and stealing it leaves the menu stuck
+        // open.
+        if self.is_over_any_panel(layout, cursor) && is_pointer_event(event) {
+            shell.capture_event();
+        }
+
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. })
             | Event::Touch(touch::Event::FingerMoved { .. }) => {
@@ -2555,11 +2571,18 @@ where
         cursor: mouse::Cursor,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
-        if !self.is_closing && self.row_at(layout, cursor).is_some() {
-            mouse::Interaction::Pointer
-        } else {
-            mouse::Interaction::None
+        if self.is_closing {
+            return mouse::Interaction::None;
         }
+        if self.row_at(layout, cursor).is_some() {
+            return mouse::Interaction::Pointer;
+        }
+        // Panel padding is still the menu's: without this the widget underneath
+        // decides the shape between two rows.
+        if self.is_over_any_panel(layout, cursor) {
+            return mouse::Interaction::Idle;
+        }
+        mouse::Interaction::None
     }
 
     fn operate(
@@ -2572,6 +2595,19 @@ where
 
     fn index(&self) -> f32 {
         1.0
+    }
+}
+
+/// Is this an event a panel should keep to itself when the pointer is over it?
+///
+/// Every mouse and touch event except `CursorLeft`: the cursor leaving the
+/// window is not over anything, and swallowing it is how the page underneath
+/// gets stuck hovered.
+fn is_pointer_event(event: &Event) -> bool {
+    match event {
+        Event::Mouse(mouse::Event::CursorLeft) => false,
+        Event::Mouse(_) | Event::Touch(_) => true,
+        _ => false,
     }
 }
 

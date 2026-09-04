@@ -209,6 +209,8 @@ where
     id: Option<widget::Id>,
     content: Element<'a, Message, Theme, Renderer>,
     anchor: Anchor,
+    /// An explicit position, overriding the anchor. `None` = anchored.
+    at: Option<Point>,
     margin: f32,
     is_open: bool,
     padding: f32,
@@ -240,6 +242,7 @@ where
             id: None,
             content: content.into(),
             anchor: Anchor::default(),
+            at: None,
             margin: DEFAULT_MARGIN,
             is_open: true,
             padding: DEFAULT_PADDING,
@@ -277,6 +280,21 @@ where
     ///
     /// A window the user has dragged or resized no longer follows this — see
     /// [`Layer::draggable`].
+    /// Places the surface at an explicit viewport position, overriding the
+    /// anchor.
+    ///
+    /// For a surface that belongs to a *place* rather than to an edge: a
+    /// context menu at the pointer, a tooltip beside a glyph. The position is
+    /// the surface's top-left corner and is clamped into the viewport, so a
+    /// menu opened near the right edge opens inward instead of off screen.
+    ///
+    /// A [`draggable`](Self::draggable) surface the user has since moved keeps
+    /// where they put it: an explicit position is where it *opens*, not a leash.
+    pub fn at(mut self, position: Point) -> Self {
+        self.at = Some(position);
+        self
+    }
+
     pub fn anchor(mut self, anchor: Anchor) -> Self {
         self.anchor = anchor;
         self
@@ -872,6 +890,7 @@ where
             tree: &mut tree.children[0],
             state,
             anchor: self.anchor,
+            at: self.at,
             margin: self.margin,
             padding: self.padding,
             radius: self.radius,
@@ -918,6 +937,7 @@ where
     /// moved it.
     state: &'a mut State,
     anchor: Anchor,
+    at: Option<Point>,
     margin: f32,
     padding: f32,
     radius: f32,
@@ -1174,12 +1194,15 @@ where
             }
             None => {
                 let (size, content) = self.measure(renderer, bounds);
+                let position = match self.at {
+                    // Clamped rather than honoured literally: a menu asked for
+                    // at the pointer near the right edge must open inward, not
+                    // half off screen.
+                    Some(at) => clamp_into(at, size, viewport),
+                    None => self.anchor.position(size, viewport, self.margin),
+                };
 
-                (
-                    size,
-                    self.anchor.position(size, viewport, self.margin),
-                    content,
-                )
+                (size, position, content)
             }
         };
 
@@ -1370,19 +1393,21 @@ where
             return;
         }
 
+        // What the surface owns: itself always, and, when it has a backdrop,
+        // which is what makes it modal, the whole viewport with it.
+        let owns = cursor.is_over(bounds) || self.backdrop.is_some();
+
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(_))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
-                if cursor.is_over(bounds) || self.backdrop.is_none() {
+                if !owns {
                     return;
                 }
 
-                if self.dismiss_on_backdrop {
+                if !cursor.is_over(bounds) && self.dismiss_on_backdrop {
                     self.dismiss(shell);
                 }
 
-                // Swallowed either way: a modal that let presses through to the
-                // page it is covering would not be modal.
                 shell.capture_event();
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
@@ -1392,6 +1417,10 @@ where
                 self.dismiss(shell);
                 shell.capture_event();
             }
+            // A cursor that has left the window is not over anything, and
+            // swallowing that is how the page underneath gets stuck hovered.
+            Event::Mouse(mouse::Event::CursorLeft) => {}
+            Event::Mouse(_) | Event::Touch(_) if owns => shell.capture_event(),
             _ => {}
         }
     }
@@ -1442,13 +1471,25 @@ where
             }
         }
 
-        self.content.as_widget().mouse_interaction(
+        let interaction = self.content.as_widget().mouse_interaction(
             self.tree,
             surface.children().next().expect("content layout"),
             cursor,
             &bounds,
             renderer,
-        )
+        );
+
+        // Over the surface (or anywhere over a modal) the shape is this
+        // surface's to decide, even when its content has no opinion --
+        // otherwise the widget underneath supplies one, and a dialog laid over
+        // a text field shows an I-beam for text nobody can reach.
+        if interaction == mouse::Interaction::None
+            && (cursor.is_over(bounds) || self.backdrop.is_some())
+        {
+            return mouse::Interaction::Idle;
+        }
+
+        interaction
     }
 
     fn operate(&mut self, layout: Layout<'_>, renderer: &Renderer, operation: &mut dyn Operation) {
