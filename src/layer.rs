@@ -226,6 +226,7 @@ where
     motion: Motion,
     backdrop: Option<f32>,
     dismiss_on_backdrop: bool,
+    dismiss_on_outside_press: bool,
     dismiss_on_escape: bool,
     on_dismiss: Option<Message>,
     class: Theme::Class<'a>,
@@ -258,6 +259,7 @@ where
             motion: Motion::SMOOTH,
             backdrop: None,
             dismiss_on_backdrop: true,
+            dismiss_on_outside_press: false,
             dismiss_on_escape: true,
             on_dismiss: None,
             class: <Theme as Catalog>::default(),
@@ -407,6 +409,24 @@ where
     /// that misses the surface is swallowed rather than reaching the page.
     pub fn backdrop(mut self, alpha: f32) -> Self {
         self.backdrop = Some(alpha.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Asks the layer to close when a press lands outside it, **without taking
+    /// the press**.
+    ///
+    /// For a surface that is *on top of* the page rather than *in front of* it:
+    /// a context menu the user should be able to dismiss and act in one click,
+    /// or right-click straight from onto another row. The press goes on to
+    /// whatever is underneath, which is the whole point — dismissing is not
+    /// supposed to cost a click.
+    ///
+    /// Has no effect on a layer with a [`backdrop`](Self::backdrop): a backdrop
+    /// makes the layer modal, and a modal swallows what lands outside it. Use
+    /// one or the other, and the choice is exactly "may the page underneath
+    /// react to the press that closed this".
+    pub fn dismiss_on_outside_press(mut self, dismiss: bool) -> Self {
+        self.dismiss_on_outside_press = dismiss;
         self
     }
 
@@ -907,6 +927,7 @@ where
             is_closing,
             backdrop: self.backdrop,
             dismiss_on_backdrop: self.dismiss_on_backdrop,
+            dismiss_on_outside_press: self.dismiss_on_outside_press,
             dismiss_on_escape: self.dismiss_on_escape,
             on_dismiss: self.on_dismiss.as_ref(),
             class: &self.class,
@@ -954,6 +975,7 @@ where
     is_closing: bool,
     backdrop: Option<f32>,
     dismiss_on_backdrop: bool,
+    dismiss_on_outside_press: bool,
     dismiss_on_escape: bool,
     on_dismiss: Option<&'a Message>,
     class: &'a Theme::Class<'b>,
@@ -1401,6 +1423,14 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(_))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
                 if !owns {
+                    // No backdrop, so this press is not the layer's to take.
+                    // It may still be the layer's cue to go: a context menu
+                    // closes on a press elsewhere and lets that press land, so
+                    // dismissing costs nothing and the next row can be
+                    // right-clicked straight from this one.
+                    if self.dismiss_on_outside_press {
+                        self.dismiss(shell);
+                    }
                     return;
                 }
 
