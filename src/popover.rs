@@ -621,6 +621,18 @@ where
         let state = tree.state.downcast_mut::<State>();
         state.transition.sync(self.motion);
 
+        // An application that owns the open flag has already decided, and the
+        // surface has to exist as soon as it says so — `update` only reconciles
+        // `controlled` on a redraw, which is a frame later. That frame matters:
+        // anything the application does in the same breath as opening, such as
+        // focusing a search box inside the surface, runs against a tree the
+        // surface is not in yet and quietly finds nothing.
+        if let Some(true) = self.controlled
+            && !state.is_open
+        {
+            state.open(Instant::now());
+        }
+
         // Deliberately the frame's instant and not the clock's: `overlay` is
         // called once to lay the surface out and again to draw it, and the two
         // have to agree. See [`State::frame`].
