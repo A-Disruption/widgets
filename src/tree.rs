@@ -17,7 +17,12 @@ use std::collections::{HashMap, HashSet};
 use crate::lucide;
 
 // Constants for layout
-const LINE_HEIGHT: f32 = 32.0;
+/// How thick the drop line is, and how big the dot that terminates it.
+const DROP_LINE_THICKNESS: f32 = 2.0;
+const DROP_LINE_DOT_RADIUS: f32 = 4.0;
+
+/// The row height a tree uses until it is told otherwise.
+const DEFAULT_LINE_HEIGHT: f32 = 32.0;
 const ARROW_X_PAD: f32 = 4.0;
 const ARROW_W: f32 = 16.0;
 const HANDLE_HOVER_W: f32 = 24.0;
@@ -79,6 +84,10 @@ where
     height: Length,
     spacing: f32,
     indent: f32,
+    /// The height every row gets, unless its content is taller.
+    line_height: f32,
+    /// Whether a drop target opens a gap in the list or is drawn as a line.
+    reflow_on_drop: bool,
     padding_x: f32,
     padding_y: f32,
     on_drop: Option<Box<dyn Fn(DropInfo) -> Message + 'a>>,
@@ -94,6 +103,8 @@ where
     easing: Easing,
     animation_duration: Option<Duration>,
     on_toggle: Option<Box<dyn Fn(usize, bool) -> Message + 'a>>,
+    /// Reports the row the keyboard is on, by external id.
+    on_focus: Option<Box<dyn Fn(Option<usize>) -> Message + 'a>>,
     initially_expanded_ext_ids: Option<HashSet<usize>>,
 }
 
@@ -136,6 +147,17 @@ struct TreeState {
     // Interaction state
     selected: HashSet<usize>,
     focused: Option<usize>,
+    /// Where a shift-extended selection counts from.
+    ///
+    /// Set by every selection that replaces the set rather than extending it,
+    /// so shift always reaches back to the last deliberate single pick — not to
+    /// wherever the arrow keys happen to have wandered since.
+    selection_anchor: Option<usize>,
+    /// The focus the application has already been told about.
+    ///
+    /// Focus moves on arrows, clicks and drags; comparing against this reports
+    /// each move once, from one place, rather than from each of them.
+    reported_focus: Option<usize>,
     hovered: Option<usize>,
     hovered_handle: Option<usize>,
 
@@ -305,6 +327,8 @@ where
             height,
             spacing: 4.0,
             indent: 20.0,
+            line_height: DEFAULT_LINE_HEIGHT,
+            reflow_on_drop: false,
             padding_x: 10.0,
             padding_y: 5.0,
             on_drop: None,
@@ -320,6 +344,7 @@ where
             easing: Easing::EaseInOut,
             animation_duration: None,
             on_toggle: None,
+            on_focus: None,
             initially_expanded_ext_ids: None,
         }
     }
@@ -350,6 +375,57 @@ where
         F: Fn(&[usize], Option<usize>, &DropPosition) -> bool + 'a,
     {
         self.on_can_drop = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the message to emit when the keyboard moves to a different row.
+    ///
+    /// The tree owns focus — it is the one that knows what order the rows are
+    /// in and which of them are on screen — so an application that wants to act
+    /// on "the current row" has to be told which one that is.
+    pub fn on_focus<F>(mut self, f: F) -> Self
+    where
+        F: Fn(Option<usize>) -> Message + 'a,
+    {
+        self.on_focus = Some(Box::new(f));
+        self
+    }
+
+    /// How much vertical space the drop indicator takes out of the list.
+    ///
+    /// Zero unless [`TreeHandle::reflow_on_drop`] asked for the ghost row, in
+    /// which case it is a full line. Every place that opens a gap for the
+    /// indicator — the layout pass, the drag simulation that keeps hit-testing
+    /// in step with it, and the draw pass — goes through here, so the two
+    /// behaviours cannot drift apart.
+    fn drop_indicator_space(&self) -> f32 {
+        if self.reflow_on_drop {
+            self.line_height + self.spacing
+        } else {
+            0.0
+        }
+    }
+
+    /// Draws the drop target as a full ghost row that the list opens up for,
+    /// rather than as a line between two rows.
+    ///
+    /// Off by default. The ghost row means every row below the target steps
+    /// down by a line the moment the target changes — so the list moves under
+    /// the cursor while you are aiming at it, and aiming at the row you just
+    /// pushed away is a chase.
+    pub fn reflow_on_drop(mut self, reflow: bool) -> Self {
+        self.reflow_on_drop = reflow;
+        self
+    }
+
+    /// Sets the height every row gets.
+    ///
+    /// This is a floor, not a cap: a branch whose content measures taller keeps
+    /// its own height. It used to be fixed at 32, which made a dense tree
+    /// impossible and left the expand/collapse icon centred against a height
+    /// the rows did not necessarily have.
+    pub fn line_height(mut self, height: f32) -> Self {
+        self.line_height = height.max(1.0);
         self
     }
 
@@ -727,6 +803,8 @@ where
                 visible_branches: Vec::new(),
                 selected: HashSet::new(),
                 focused: None,
+                selection_anchor: None,
+                reported_focus: None,
                 hovered: None,
                 hovered_handle: None,
                 drag_pending: None,
@@ -896,7 +974,7 @@ where
             // For invisible branches, keep default height so rows still occupy space for hover math
             if !combined_state.tree_state.visible_branches[i] {
                 cells[i] = layout::Node::new(Size::ZERO);
-                combined_state.tree_state.branch_heights[i] = LINE_HEIGHT;
+                combined_state.tree_state.branch_heights[i] = self.line_height;
                 combined_state.tree_state.branch_widths[i] = 0.0;
             }
 
@@ -934,7 +1012,7 @@ where
             let content_size =
                 content_limits.resolve(Length::Shrink, Length::Shrink, content_layout.size());
 
-            combined_state.tree_state.branch_heights[i] = content_size.height.max(LINE_HEIGHT);
+            combined_state.tree_state.branch_heights[i] = content_size.height.max(self.line_height);
             combined_state.tree_state.branch_widths[i] = content_size.width;
 
             let total_w = content_x + content_size.width;
@@ -1095,7 +1173,7 @@ where
         y = self.padding_y;
 
         let drop_indicator_space = if combined_state.tree_state.drag_active.is_some() {
-            LINE_HEIGHT + self.spacing
+            self.drop_indicator_space()
         } else {
             0.0
         };
@@ -1209,7 +1287,7 @@ where
         );
 
         // Lay out icon elements so their internal state (e.g. text paragraphs) gets populated
-        let icon_limits = layout::Limits::new(Size::ZERO, Size::new(ARROW_W, LINE_HEIGHT));
+        let icon_limits = layout::Limits::new(Size::ZERO, Size::new(ARROW_W, self.line_height));
         if let Some(ref mut expand_icon) = self.expand_icon {
             let icon_node =
                 expand_icon
@@ -1752,16 +1830,46 @@ where
                                 shell.request_redraw();
                             }
                         }
-                        keyboard::Key::Named(keyboard::key::Named::Space) => {
-                            if modifiers.control() || modifiers.command() {
+                        keyboard::Key::Named(
+                            keyboard::key::Named::Space | keyboard::key::Named::Enter,
+                        ) => {
+                            if modifiers.shift() {
+                                // Extend from the anchor to the focused row,
+                                // over the rows actually on screen — a range
+                                // that swept through a collapsed subtree would
+                                // select widgets the user cannot see.
+                                let anchor = combined_state
+                                    .tree_state
+                                    .selection_anchor
+                                    .unwrap_or(focused);
+
+                                let from = visible_ordered.iter().position(|&id| id == anchor);
+                                let to = visible_ordered.iter().position(|&id| id == focused);
+
+                                if let (Some(from), Some(to)) = (from, to) {
+                                    let (lo, hi) = if from <= to { (from, to) } else { (to, from) };
+
+                                    combined_state.tree_state.selected.clear();
+                                    combined_state
+                                        .tree_state
+                                        .selected
+                                        .extend(visible_ordered[lo..=hi].iter().copied());
+                                }
+                            } else if modifiers.control() || modifiers.command() {
                                 if combined_state.tree_state.selected.contains(&focused) {
                                     combined_state.tree_state.selected.remove(&focused);
                                 } else {
                                     combined_state.tree_state.selected.insert(focused);
                                 }
+
+                                // Toggling still moves the anchor: the row you
+                                // just added is where a following shift-range
+                                // should count from.
+                                combined_state.tree_state.selection_anchor = Some(focused);
                             } else {
                                 combined_state.tree_state.selected.clear();
                                 combined_state.tree_state.selected.insert(focused);
+                                combined_state.tree_state.selection_anchor = Some(focused);
                             }
 
                             if let Some(ref on_select) = self.on_select {
@@ -1823,6 +1931,22 @@ where
                 }
             }
             _ => {}
+        }
+
+        // Focus moves on arrows, on a click and at the end of a drag. Reporting
+        // it here rather than at each of those keeps the three in step and
+        // reports each move exactly once.
+        if let Some(ref on_focus) = self.on_focus
+            && combined_state.tree_state.focused != combined_state.tree_state.reported_focus
+        {
+            combined_state.tree_state.reported_focus = combined_state.tree_state.focused;
+
+            shell.publish(on_focus(
+                combined_state
+                    .tree_state
+                    .focused
+                    .map(|internal| self.preferred_id(internal)),
+            ));
         }
     }
 
@@ -1917,13 +2041,13 @@ where
                         if drag.drop_target == Some(id)
                             && drag.drop_position == DropPosition::Before
                         {
-                            sim_y += LINE_HEIGHT + self.spacing;
+                            sim_y += self.drop_indicator_space();
                         }
                     }
 
                     // Mirror: pending Into (expanded) adjustment for first child
                     if sim_pending_into {
-                        sim_y += LINE_HEIGHT + self.spacing;
+                        sim_y += self.drop_indicator_space();
                         sim_pending_into = false;
                     }
 
@@ -1979,7 +2103,7 @@ where
                     if let Some(ref drag) = state.drag_active {
                         if drag.drop_target == Some(id) && drag.drop_position == DropPosition::After
                         {
-                            sim_y += LINE_HEIGHT + self.spacing;
+                            sim_y += self.drop_indicator_space();
                         }
                     }
 
@@ -2061,55 +2185,108 @@ where
                 }
             }
 
-            // Helper to draw drop preview
+            // Helper to draw drop preview.
+            //
+            // Two shapes, chosen by `reflow_on_drop`. The ghost row is the
+            // original: a full-height outline in the gap the layout opened for
+            // it. The line is the default: two pixels drawn *between* two rows,
+            // in space the layout never opened, so nothing below the cursor
+            // moves while the target changes.
+            //
+            // The line's terminal dot sits at the indent the item would land
+            // at, which is what lets one flat line say "sibling of this" rather
+            // than "child of this" without a second kind of indicator.
             let draw_drop_preview =
                 |renderer: &mut Renderer, y: f32, depth: u16, width: f32, deny: bool| {
                     let preview_indent = bounds.x + self.padding_x + (depth as f32 * self.indent);
-                    let preview_height = LINE_HEIGHT;
                     let indicator_color = if deny {
                         tree_style.deny_drop_indicator_color
                     } else {
                         tree_style.accept_drop_indicator_color
                     };
 
-                    renderer.fill_quad(
-                        renderer::Quad {
-                            bounds: Rectangle {
-                                x: preview_indent,
-                                y,
-                                width: width - preview_indent + bounds.x,
-                                height: preview_height,
-                            },
-                            border: Border {
-                                color: indicator_color,
-                                width: 2.0,
-                                radius: Radius::from(4.0),
-                            },
-                            ..Default::default()
-                        },
-                        indicator_color.scale_alpha(0.1),
-                    );
+                    if self.reflow_on_drop {
+                        let preview_height = self.line_height;
 
-                    // Vertical marker aligned with the parent's connecting line.
-                    // The parent line runs at (depth-1)*indent + ARROW_W*0.5; for depth 0
-                    // (root-level previews) there is no parent line so fall back to ARROW_W*0.5.
-                    let marker_x = if depth > 0 {
-                        preview_indent - self.indent + ARROW_W * 0.5 + self.line_x_offset
-                    } else {
-                        bounds.x + self.padding_x + ARROW_W * 0.5 + self.line_x_offset
-                    };
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: preview_indent,
+                                    y,
+                                    width: width - preview_indent + bounds.x,
+                                    height: preview_height,
+                                },
+                                border: Border {
+                                    color: indicator_color,
+                                    width: 2.0,
+                                    radius: Radius::from(4.0),
+                                },
+                                ..Default::default()
+                            },
+                            indicator_color.scale_alpha(0.1),
+                        );
+
+                        // Vertical marker aligned with the parent's connecting line.
+                        // The parent line runs at (depth-1)*indent + ARROW_W*0.5; for depth 0
+                        // (root-level previews) there is no parent line so fall back to ARROW_W*0.5.
+                        let marker_x = if depth > 0 {
+                            preview_indent - self.indent + ARROW_W * 0.5 + self.line_x_offset
+                        } else {
+                            bounds.x + self.padding_x + ARROW_W * 0.5 + self.line_x_offset
+                        };
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: marker_x - 0.5,
+                                    y: y + 2.0,
+                                    width: 2.0,
+                                    height: preview_height - 4.0,
+                                },
+                                border: Border::default(),
+                                ..Default::default()
+                            },
+                            indicator_color.scale_alpha(0.3),
+                        );
+
+                        return;
+                    }
+
+                    // The line is centred on the gap between the two rows, so
+                    // it reads as belonging to neither.
+                    let line_y = (y - self.spacing * 0.5 - DROP_LINE_THICKNESS * 0.5).max(bounds.y);
+                    let dot_x = preview_indent + ARROW_W * 0.5 + self.line_x_offset;
+                    let line_start = dot_x + DROP_LINE_DOT_RADIUS;
+
                     renderer.fill_quad(
                         renderer::Quad {
                             bounds: Rectangle {
-                                x: marker_x - 0.5,
-                                y: y + 2.0,
-                                width: 2.0,
-                                height: preview_height - 4.0,
+                                x: line_start,
+                                y: line_y,
+                                width: (width + bounds.x - line_start - self.padding_x).max(0.0),
+                                height: DROP_LINE_THICKNESS,
                             },
                             border: Border::default(),
                             ..Default::default()
                         },
-                        indicator_color.scale_alpha(0.3),
+                        indicator_color,
+                    );
+
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: dot_x - DROP_LINE_DOT_RADIUS,
+                                y: line_y + DROP_LINE_THICKNESS * 0.5 - DROP_LINE_DOT_RADIUS,
+                                width: DROP_LINE_DOT_RADIUS * 2.0,
+                                height: DROP_LINE_DOT_RADIUS * 2.0,
+                            },
+                            border: Border {
+                                color: indicator_color,
+                                width: DROP_LINE_THICKNESS,
+                                radius: Radius::from(DROP_LINE_DOT_RADIUS),
+                            },
+                            ..Default::default()
+                        },
+                        iced::Color::TRANSPARENT,
                     );
                 };
 
@@ -2173,12 +2350,12 @@ where
                     if drag.drop_target == Some(id) && drag.drop_position == DropPosition::Before {
                         let preview_depth = effective_depth;
                         draw_drop_preview(renderer, y, preview_depth, bounds.width, !drop_is_valid);
-                        y += LINE_HEIGHT + self.spacing;
+                        y += self.drop_indicator_space();
                     }
                 }
 
                 if pending_into_adjustment {
-                    y += LINE_HEIGHT + self.spacing;
+                    y += self.drop_indicator_space();
                     pending_into_adjustment = false;
                 }
 
@@ -2359,8 +2536,16 @@ where
                                 iced::Alignment::Center,
                                 Size::new(ARROW_W, branch_height),
                             );
-                            let icon_layout = icon_layout
-                                .move_to(Point::new(indent_x, branch_y + (icon_h / 4.0)));
+
+                            // `align_mut` has already placed the icon centred
+                            // within the branch, so the node has to be *moved
+                            // by* the branch's origin rather than *moved to*
+                            // it: `move_to` would throw that offset away. It
+                            // used to, and stood in a quarter of the icon's own
+                            // height instead — which only looked centred at the
+                            // one row height the widget used to assume.
+                            let icon_layout =
+                                icon_layout.translate(Vector::new(indent_x, branch_y));
 
                             icon_element.as_widget().draw(
                                 &tree.children[icon_tree_index],
@@ -2468,7 +2653,7 @@ where
                     };
 
                     draw_drop_preview(renderer, y, preview_depth, bounds.width, !drop_is_valid);
-                    y += LINE_HEIGHT + self.spacing;
+                    y += self.drop_indicator_space();
                 }
 
                 // If this branch is an animating parent, register subtree clip start
@@ -2728,16 +2913,16 @@ where
                         + self.tree_handle.padding_x;
                     max_width = max_width.max(content_width);
 
-                    total_height += combined_state.tree_state.branch_heights[i].max(LINE_HEIGHT);
+                    total_height += combined_state.tree_state.branch_heights[i].max(self.tree_handle.line_height);
                     if i < self.dragged_indices.len() - 1 {
                         total_height += self.tree_handle.spacing;
                     }
                 }
             }
 
-            (max_width.max(200.0), total_height.max(LINE_HEIGHT))
+            (max_width.max(200.0), total_height.max(self.tree_handle.line_height))
         } else {
-            (310.0, LINE_HEIGHT)
+            (310.0, self.tree_handle.line_height)
         };
 
         layout::Node::new(Size::new(width, height)).move_to(position)
@@ -2786,7 +2971,7 @@ where
                                 if i < combined_state.tree_state.branch_heights.len() {
                                     combined_state.tree_state.branch_heights[i]
                                 } else {
-                                    LINE_HEIGHT
+                                    self.tree_handle.line_height
                                 };
 
                             Some((
@@ -3021,9 +3206,9 @@ where
             }
 
             let branch_height = if primary_index < combined_state.tree_state.branch_heights.len() {
-                combined_state.tree_state.branch_heights[primary_index].max(LINE_HEIGHT)
+                combined_state.tree_state.branch_heights[primary_index].max(self.tree_handle.line_height)
             } else {
-                LINE_HEIGHT
+                self.tree_handle.line_height
             };
 
             let effective_depth =
