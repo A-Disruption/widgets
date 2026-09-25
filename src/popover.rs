@@ -46,7 +46,7 @@
 use iced::advanced::widget::{self, Operation, tree::Tree};
 use iced::advanced::{
     Layout, Shell, Widget,
-    layout::{Limits, Node},
+    layout::Limits,
     overlay, renderer,
 };
 use iced::time::Instant;
@@ -396,17 +396,15 @@ where
         self.trigger.as_widget().size()
     }
 
-    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> Node {
+    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) {
         // Only the trigger takes part in the view layout; the popover is an
         // overlay and so never shifts the surrounding page.
-        let trigger = self
-            .trigger
-            .as_widget_mut()
-            .layout(&mut tree.children[TRIGGER], renderer, limits);
+        let trigger = &mut tree.children[TRIGGER];
 
-        let size = trigger.size();
+        self.trigger.as_widget_mut().layout(trigger, renderer, limits);
+        trigger.translation = Vector::ZERO;
 
-        Node::with_children(size, vec![trigger])
+        tree.size = trigger.size;
     }
 
     fn draw(
@@ -415,7 +413,7 @@ where
         renderer: &mut Renderer,
         theme: &Theme,
         style: &renderer::Style,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
@@ -424,7 +422,7 @@ where
             renderer,
             theme,
             style,
-            layout.children().next().expect("trigger layout"),
+            trigger_layout(layout, tree),
             cursor,
             viewport,
         );
@@ -434,14 +432,14 @@ where
         &mut self,
         tree: &mut Tree,
         event: &Event,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let trigger_layout = layout.children().next().expect("trigger layout");
+        let trigger_layout = trigger_layout(layout, tree);
 
         {
             let state = tree.state.downcast_mut::<State>();
@@ -577,14 +575,14 @@ where
     fn mouse_interaction(
         &self,
         tree: &Tree,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
         self.trigger.as_widget().mouse_interaction(
             &tree.children[TRIGGER],
-            layout.children().next().expect("trigger layout"),
+            trigger_layout(layout, tree),
             cursor,
             viewport,
             renderer,
@@ -594,16 +592,20 @@ where
     fn operate(
         &mut self,
         tree: &mut Tree,
-        layout: Layout<'_>,
+        layout: Layout,
+        viewport: &Rectangle,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        operation.container(self.id.as_ref(), layout.bounds());
+        operation.container(self.id.as_ref(), layout.bounds(), viewport);
+
+        let trigger_layout = trigger_layout(layout, tree);
 
         operation.traverse(&mut |operation| {
             self.trigger.as_widget_mut().operate(
                 &mut tree.children[TRIGGER],
-                layout.children().next().expect("trigger layout"),
+                trigger_layout,
+                viewport,
                 renderer,
                 operation,
             );
@@ -613,11 +615,12 @@ where
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'_>,
-        _renderer: &Renderer,
+        layout: Layout,
+        renderer: &Renderer,
         _viewport: &Rectangle,
         offset: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        window: Size,
+    ) -> Vec<overlay::Element<'b, Message, Theme, Renderer>> {
         let state = tree.state.downcast_mut::<State>();
         state.transition.sync(self.motion);
 
@@ -637,7 +640,7 @@ where
         // called once to lay the surface out and again to draw it, and the two
         // have to agree. See [`State::frame`].
         if !state.is_showing() {
-            return None;
+            return Vec::new();
         }
 
         let progress = state.progress();
@@ -649,10 +652,13 @@ where
 
         let (_, content_tree) = tree.children.split_at_mut(CONTENT);
 
-        Some(overlay::Element::new(Box::new(Surface {
+        let mut surface = Surface {
             state,
             content: &mut self.content,
             tree: &mut content_tree[0],
+            layout: Layout::new(Size::ZERO),
+            content_layout: Layout::new(Size::ZERO),
+            window,
             trigger_bounds,
             placement: self.placement,
             padding: self.padding,
@@ -668,8 +674,21 @@ where
             controlled: self.controlled.is_some(),
             on_toggle: self.on_toggle.as_deref(),
             class: &self.class,
-        })))
+        };
+
+        surface.layout(renderer);
+
+        vec![overlay::Element::new(Box::new(surface))]
     }
+}
+
+/// Returns the [`Layout`] of the trigger, the first child of a [`Popover`].
+fn trigger_layout(layout: Layout, tree: &Tree) -> Layout {
+    layout
+        .iter(&tree.children)
+        .next()
+        .expect("trigger layout")
+        .0
 }
 
 impl<'a, Message, Theme, Renderer> From<Popover<'a, Message, Theme, Renderer>>
@@ -692,6 +711,11 @@ where
     state: &'a mut State,
     content: &'a mut Element<'b, Message, Theme, Renderer>,
     tree: &'a mut Tree,
+    /// The bounds of the surface, set by [`Surface::layout`].
+    layout: Layout,
+    /// The content's layout inside the surface's padding.
+    content_layout: Layout,
+    window: Size,
     trigger_bounds: Rectangle,
     placement: Placement,
     padding: f32,
@@ -749,16 +773,9 @@ where
         shell.request_redraw();
     }
 
-}
-
-impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
-    for Surface<'_, '_, Message, Theme, Renderer>
-where
-    Message: Clone,
-    Theme: Catalog,
-    Renderer: iced::advanced::Renderer,
-{
-    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
+    /// Lays the surface out within the window, next to the trigger.
+    fn layout(&mut self, renderer: &Renderer) {
+        let bounds = self.window;
         let viewport = Rectangle::with_size(bounds);
         let padding = Padding::from(self.padding);
 
@@ -772,8 +789,8 @@ where
         // row is measured.
         let limits = Limits::new(Size::ZERO, available).width(Length::Shrink);
 
-        let mut content = self.content.as_widget_mut().layout(self.tree, renderer, &limits);
-        let mut width = content.size().width.max(self.min_width - self.padding * 2.0);
+        self.content.as_widget_mut().layout(self.tree, renderer, &limits);
+        let mut width = self.tree.size.width.max(self.min_width - self.padding * 2.0);
 
         if let Some(max) = self.max_width {
             width = width.min(max - self.padding * 2.0);
@@ -782,18 +799,20 @@ where
         width = width.min(available.width);
 
         // Re-laid out at the settled width so fluid content fills it.
-        if width != content.size().width {
+        if width != self.tree.size.width {
             let pinned = Limits::new(
                 Size::new(width, 0.0),
                 Size::new(width, available.height),
             );
 
-            content = self.content.as_widget_mut().layout(self.tree, renderer, &pinned);
+            self.content.as_widget_mut().layout(self.tree, renderer, &pinned);
         }
 
+        let content = self.tree.size;
+
         let size = Size::new(
-            content.size().width + self.padding * 2.0,
-            content.size().height + self.padding * 2.0,
+            content.width + self.padding * 2.0,
+            content.height + self.padding * 2.0,
         );
 
         let placed = anchor::place(self.trigger_bounds, size, viewport, self.placement);
@@ -803,23 +822,29 @@ where
         self.state.side = placed.side;
 
         let offset = animation::slide(placed.side, self.motion.slide, self.progress);
+        let position = placed.position + offset;
 
-        Node::with_children(
-            size,
-            vec![content.move_to(Point::new(padding.left, padding.top))],
-        )
-        .move_to(placed.position + offset)
+        self.layout = Layout::new(size).move_to(position);
+        self.content_layout =
+            Layout::new(content).move_to(position + Vector::new(padding.left, padding.top));
     }
+}
 
+impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
+    for Surface<'_, '_, Message, Theme, Renderer>
+where
+    Message: Clone,
+    Theme: Catalog,
+    Renderer: iced::advanced::Renderer,
+{
     fn draw(
         &self,
         renderer: &mut Renderer,
         theme: &Theme,
         _style: &renderer::Style,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
-        let bounds = layout.bounds();
+        let bounds = self.layout.bounds();
 
         // Deliberately not faded. A popover holds arbitrary content, and
         // widgets that paint themselves — `button`, `checkbox`, anything with
@@ -849,7 +874,7 @@ where
             &renderer::Style {
                 text_color: style.text_color,
             },
-            layout.children().next().expect("content layout"),
+            self.content_layout,
             cursor,
             &bounds,
         );
@@ -858,12 +883,11 @@ where
     fn update(
         &mut self,
         event: &Event,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
     ) {
-        let bounds = layout.bounds();
+        let bounds = self.layout.bounds();
 
         // A surface on its way out is a picture, not a control.
         if self.is_closing {
@@ -875,7 +899,7 @@ where
         self.content.as_widget_mut().update(
             self.tree,
             event,
-            layout.children().next().expect("content layout"),
+            self.content_layout,
             cursor,
             renderer,
             shell,
@@ -933,19 +957,16 @@ where
         }
     }
 
-    fn mouse_interaction(
-        &self,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &Renderer,
-    ) -> mouse::Interaction {
+    fn mouse_interaction(&self, cursor: mouse::Cursor, renderer: &Renderer) -> mouse::Interaction {
+        let layout = self.layout;
+
         if self.is_closing {
             return mouse::Interaction::None;
         }
 
         let interaction = self.content.as_widget().mouse_interaction(
             self.tree,
-            layout.children().next().expect("content layout"),
+            self.content_layout,
             cursor,
             &layout.bounds(),
             renderer,
@@ -962,15 +983,11 @@ where
         interaction
     }
 
-    fn operate(
-        &mut self,
-        layout: Layout<'_>,
-        renderer: &Renderer,
-        operation: &mut dyn Operation,
-    ) {
+    fn operate(&mut self, renderer: &Renderer, operation: &mut dyn Operation) {
         self.content.as_widget_mut().operate(
             self.tree,
-            layout.children().next().expect("content layout"),
+            self.content_layout,
+            &self.layout.bounds(),
             renderer,
             operation,
         );
@@ -978,19 +995,20 @@ where
 
     fn overlay<'a>(
         &'a mut self,
-        layout: Layout<'a>,
         renderer: &Renderer,
-    ) -> Option<overlay::Element<'a, Message, Theme, Renderer>> {
-        let bounds = layout.bounds();
+    ) -> Vec<overlay::Element<'a, Message, Theme, Renderer>> {
+        let bounds = self.layout.bounds();
 
         self.content.as_widget_mut().overlay(
             self.tree,
-            layout.children().next()?,
+            self.content_layout,
             renderer,
             &bounds,
             Vector::ZERO,
+            self.window,
         )
     }
+
 }
 
 /// Is this an event a surface should keep to itself when the pointer is over

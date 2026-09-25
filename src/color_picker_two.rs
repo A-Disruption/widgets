@@ -38,7 +38,7 @@ use iced::{
     advanced::{
         Layout, Overlay, Shell, Widget,
         clipboard::Content as ClipboardContent,
-        layout::{Limits, Node},
+        layout::Limits,
         overlay, renderer,
         widget::{self, tree::Tree},
     },
@@ -572,7 +572,7 @@ impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: Catalog,
-    Renderer: iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::text::Renderer,
 {
     fn tag(&self) -> widget::tree::Tag {
         widget::tree::Tag::of::<State>()
@@ -616,8 +616,8 @@ where
         Size::new(Length::Fixed(ANCHOR_SIZE), Length::Fixed(ANCHOR_SIZE))
     }
 
-    fn layout(&mut self, _tree: &mut Tree, _renderer: &Renderer, _limits: &Limits) -> Node {
-        Node::new(Size::new(ANCHOR_SIZE, ANCHOR_SIZE))
+    fn layout(&mut self, tree: &mut Tree, _renderer: &Renderer, _limits: &Limits) {
+        tree.size = Size::new(ANCHOR_SIZE, ANCHOR_SIZE);
     }
 
     fn draw(
@@ -626,7 +626,7 @@ where
         _renderer: &mut Renderer,
         _theme: &Theme,
         _style: &renderer::Style,
-        _layout: Layout<'_>,
+        _layout: Layout,
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
@@ -637,7 +637,7 @@ where
         &mut self,
         state: &mut Tree,
         event: &Event,
-        _layout: Layout<'_>,
+        _layout: Layout,
         _cursor: mouse::Cursor,
         _renderer: &Renderer,
         _shell: &mut Shell<'_, Message>,
@@ -655,11 +655,12 @@ where
     fn overlay<'b>(
         &'b mut self,
         state: &'b mut Tree,
-        _layout: Layout<'_>,
+        _layout: Layout,
         _renderer: &Renderer,
         viewport: &Rectangle,
         _translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        window: Size,
+    ) -> Vec<overlay::Element<'b, Message, Theme, Renderer>> {
         let state = state.state.downcast_mut::<State>();
 
         if !self.is_open {
@@ -667,7 +668,7 @@ where
             state.dragging_slider = None;
             state.is_dragging_overlay = false;
             state.open_menu = None;
-            return None;
+            return Vec::new();
         }
 
         if state.overlay_position == Point::ORIGIN {
@@ -689,8 +690,17 @@ where
                 clamp_overlay_position(self.position.unwrap_or(centered), viewport.size(), size);
         }
 
-        Some(
+        state.viewport_size = window;
+
+        let layout = Layout::new(overlay_size(
+            state.page,
+            state.active_group().colors.len(),
+        ))
+        .move_to(state.overlay_position);
+
+        vec![
             ColorPickerTwoOverlay {
+                layout,
                 state,
                 on_change: &self.on_change,
                 on_change_with_info: &self.on_change_with_info,
@@ -701,7 +711,7 @@ where
                 _renderer: PhantomData,
             }
             .into_overlay(),
-        )
+        ]
     }
 }
 
@@ -710,7 +720,7 @@ impl<'a, Message, Theme, Renderer> From<ColorPickerTwo<'a, Message, Theme, Rende
 where
     Message: Clone + 'a,
     Theme: Catalog + 'a,
-    Renderer: iced::advanced::text::Renderer<Font = iced::Font> + 'a,
+    Renderer: iced::advanced::text::Renderer + 'a,
 {
     fn from(picker: ColorPickerTwo<'a, Message, Theme, Renderer>) -> Self {
         Self::new(picker)
@@ -722,6 +732,8 @@ where
     Theme: Catalog,
     Renderer: iced::advanced::text::Renderer,
 {
+    /// Where the overlay sits, at the size of its current page.
+    layout: Layout,
     state: &'r mut State,
     on_change: &'r Option<Box<dyn Fn(Color) -> Message + 'w>>,
     on_change_with_info: &'r Option<Box<dyn Fn(ColorInfo) -> Message + 'w>>,
@@ -736,7 +748,7 @@ impl<'r, 'w, Message, Theme, Renderer> ColorPickerTwoOverlay<'r, 'w, Message, Th
 where
     Message: Clone + 'r,
     Theme: Catalog + 'r,
-    Renderer: iced::advanced::text::Renderer<Font = iced::Font> + 'r,
+    Renderer: iced::advanced::text::Renderer + 'r,
 {
     fn into_overlay(self) -> overlay::Element<'r, Message, Theme, Renderer> {
         overlay::Element::new(Box::new(self))
@@ -1135,25 +1147,16 @@ impl<'r, Message, Theme, Renderer> Overlay<Message, Theme, Renderer>
 where
     Message: Clone,
     Theme: Catalog + 'r,
-    Renderer: iced::advanced::text::Renderer<Font = iced::Font> + 'r,
+    Renderer: iced::advanced::text::Renderer + 'r,
 {
-    fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> Node {
-        self.state.viewport_size = bounds;
-        Node::new(overlay_size(
-            self.state.page,
-            self.state.active_group().colors.len(),
-        ))
-        .move_to(self.state.overlay_position)
-    }
-
     fn draw(
         &self,
         renderer: &mut Renderer,
         theme: &Theme,
         _style: &renderer::Style,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
+        let layout = self.layout;
         let bounds = layout.bounds();
         let status = if cursor.is_over(bounds) {
             Status::Hovered
@@ -1245,11 +1248,11 @@ where
     fn update(
         &mut self,
         event: &Event,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
     ) {
+        let layout = self.layout;
         let bounds = layout.bounds();
 
         match event {
@@ -1460,12 +1463,9 @@ where
         }
     }
 
-    fn mouse_interaction(
-        &self,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        _renderer: &Renderer,
-    ) -> mouse::Interaction {
+    fn mouse_interaction(&self, cursor: mouse::Cursor, _renderer: &Renderer) -> mouse::Interaction {
+        let layout = self.layout;
+
         let bounds = layout.bounds();
         let Some(cursor_pos) = cursor.position() else {
             return mouse::Interaction::default();
@@ -1536,7 +1536,7 @@ where
 
 fn draw_panel<Renderer>(renderer: &mut Renderer, bounds: Rectangle, style: Style)
 where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     renderer.fill_quad(
         renderer::Quad {
@@ -1557,7 +1557,7 @@ fn draw_header<Renderer>(
     feedback: Option<&'static str>,
     cursor: mouse::Cursor,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let header = header_rect(bounds);
     renderer.fill_quad(
@@ -1687,7 +1687,7 @@ fn draw_header<Renderer>(
 
 fn draw_preview<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color, style: Style)
 where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     renderer.fill_quad(
         renderer::Quad {
@@ -1707,7 +1707,7 @@ fn draw_contrast_summary<Renderer>(
     background: Color,
     style: Style,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let info = ContrastInfo::new(foreground, background, ContrastTarget::Foreground);
 
@@ -1774,7 +1774,7 @@ fn draw_contrast_wells<Renderer>(
     active_target: ContrastTarget,
     cursor: mouse::Cursor,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     for (target, color) in [
         (ContrastTarget::Foreground, foreground),
@@ -1962,7 +1962,7 @@ fn draw_controls<Renderer>(
     cursor: mouse::Cursor,
     page: PickerPage,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let hex_rect = hex_value_rect(bounds, page);
     let model_rect = model_button_rect(bounds, page);
@@ -2034,7 +2034,7 @@ fn draw_sliders<Renderer>(
     cursor: mouse::Cursor,
     page: PickerPage,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     for channel in SliderChannel::ALL {
         let row = slider_row_rect(bounds, page, channel);
@@ -2093,7 +2093,7 @@ fn draw_slider_track<Renderer>(
     model: ColorModel,
     channel: SliderChannel,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     if channel == SliderChannel::Alpha {
         renderer.fill_quad(
@@ -2125,7 +2125,7 @@ fn draw_slider_track<Renderer>(
 
 fn draw_checkerboard<Renderer>(renderer: &mut Renderer, bounds: Rectangle)
 where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let inset = 1.0;
     let bounds = Rectangle {
@@ -2174,7 +2174,7 @@ fn draw_swatches<Renderer>(
     cursor: mouse::Cursor,
     page: PickerPage,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let label_rect = swatch_group_label_rect(bounds, page);
     let active = &groups[active_group];
@@ -2270,7 +2270,7 @@ fn draw_menu<Renderer>(
     active_group: usize,
     cursor: mouse::Cursor,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let menu_bounds = menu_rect(bounds, page, menu, swatch_groups.len());
     renderer.fill_quad(
@@ -2359,7 +2359,7 @@ fn draw_text<Renderer>(
     color: Color,
     align_x: text::Alignment,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     draw_text_with_font(
         renderer,
@@ -2381,7 +2381,7 @@ fn draw_text_with_font<Renderer>(
     align_x: text::Alignment,
     font: iced::Font,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let anchor = match align_x {
         text::Alignment::Left | text::Alignment::Default | text::Alignment::Justified => {
@@ -2418,7 +2418,7 @@ fn draw_text_with_font<Renderer>(
 
 fn draw_copy_icon<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color)
 where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let stroke = Border {
         color,
@@ -2454,7 +2454,7 @@ where
 
 fn draw_magnifier_icon<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color)
 where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     renderer.fill_quad(
         renderer::Quad {
@@ -2521,7 +2521,7 @@ where
 
 fn draw_swap_icon<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color)
 where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let segments = [
         Rectangle {
@@ -2593,7 +2593,7 @@ where
 
 fn draw_picker_page_icon<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color)
 where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let tracks = [
         (
@@ -2662,7 +2662,7 @@ fn draw_contrast_page_icon<Renderer>(
     color: Color,
     background: Color,
 ) where
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     let diameter = (bounds.width.min(bounds.height) - 10.0).max(12.0);
     let circle = Rectangle {

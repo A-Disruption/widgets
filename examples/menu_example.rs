@@ -20,7 +20,7 @@ pub fn main() -> iced::Result {
         .theme(theme)
         // The menu draws its checkmark and submenu chevron from Lucide, so the
         // font has to be registered once at startup.
-        .font(widgets::lucide::FONT_BYTES)
+        .fonts([widgets::lucide::FONT_BYTES])
         .run()
 }
 

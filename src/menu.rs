@@ -53,7 +53,7 @@
 //!
 //! ```rust,ignore
 //! iced::application(App::new, App::update, App::view)
-//!     .font(widgets::lucide::FONT_BYTES)
+//!     .fonts([widgets::lucide::FONT_BYTES])
 //!     .run()
 //! ```
 //!
@@ -81,7 +81,7 @@
 use iced::advanced::widget::{self, Operation, tree::Tree};
 use iced::advanced::{
     Layout, Shell, Widget, layout,
-    layout::{Limits, Node},
+    layout::Limits,
     overlay, renderer, text,
 };
 use iced::alignment::Vertical;
@@ -156,7 +156,7 @@ pub fn menu<'a, Message, Theme, Renderer>(
 ) -> Menu<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + text::Renderer,
 {
     Menu::new(trigger, items)
 }
@@ -352,7 +352,7 @@ impl<'a, Message, Theme, Renderer> Item<'a, Message, Theme, Renderer> {
     /// them, which makes the shape of the state tree mirror the menu.
     fn tree(&self) -> Tree
     where
-        Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+        Renderer: iced::advanced::Renderer + text::Renderer,
     {
         match self {
             Self::Entry { content, icon, .. } => Tree {
@@ -378,7 +378,7 @@ impl<'a, Message, Theme, Renderer> Item<'a, Message, Theme, Renderer> {
     /// Reconciles an existing state [`Tree`] with this [`Item`].
     fn diff(&mut self, tree: &mut Tree)
     where
-        Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+        Renderer: iced::advanced::Renderer + text::Renderer,
     {
         match self {
             Self::Entry { content, icon, .. } => {
@@ -436,7 +436,7 @@ const ITEM_ROWS: usize = 2;
 /// is a constant offset rather than one that depends on the row.
 fn icon_tree<Message, Theme, Renderer>(icon: &Option<Element<'_, Message, Theme, Renderer>>) -> Tree
 where
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + text::Renderer,
 {
     match icon {
         Some(icon) => Tree::new(icon.as_widget()),
@@ -486,7 +486,7 @@ pub enum CheckSide {
 impl<'a, Message, Theme, Renderer> Menu<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + text::Renderer,
 {
     /// Creates a new [`Menu`] with the given trigger and rows.
     pub fn new(
@@ -1037,7 +1037,7 @@ impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font> + 'a,
+    Renderer: iced::advanced::Renderer + text::Renderer + 'a,
 {
     fn tag(&self) -> widget::tree::Tag {
         widget::tree::Tag::of::<State>()
@@ -1069,19 +1069,20 @@ where
         self.trigger.as_widget().size()
     }
 
-    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> Node {
+    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) {
         // Only the trigger occupies space in the view layer; the panels live
         // entirely in the overlay.
         let size = self.trigger.as_widget().size();
         let padding = self.resolved_trigger_padding();
         let trigger = &mut self.trigger;
-        let trigger_tree = &mut tree.children[0];
 
-        layout::padded(limits, size.width, size.height, padding, |limits| {
-            trigger
-                .as_widget_mut()
-                .layout(trigger_tree, renderer, limits)
-        })
+        // `padded` lays the trigger out in the first child tree, which is the
+        // trigger's.
+        layout::padded(tree, limits, size.width, size.height, padding, |tree, limits| {
+            trigger.as_widget_mut().layout(tree, renderer, limits);
+
+            tree.size
+        });
     }
 
     fn draw(
@@ -1090,7 +1091,7 @@ where
         renderer: &mut Renderer,
         theme: &Theme,
         style: &renderer::Style,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
@@ -1130,7 +1131,7 @@ where
             renderer,
             theme,
             &style,
-            layout.children().next().expect("trigger layout"),
+            trigger_layout(layout, tree),
             cursor,
             viewport,
         );
@@ -1140,13 +1141,13 @@ where
         &mut self,
         tree: &mut Tree,
         event: &Event,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let trigger_layout = layout.children().next().expect("trigger layout");
+        let trigger_layout = trigger_layout(layout, tree);
 
         {
             let state = tree.state.downcast_mut::<State>();
@@ -1249,14 +1250,14 @@ where
     fn mouse_interaction(
         &self,
         tree: &Tree,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
         self.trigger.as_widget().mouse_interaction(
             &tree.children[0],
-            layout.children().next().expect("trigger layout"),
+            trigger_layout(layout, tree),
             cursor,
             viewport,
             renderer,
@@ -1266,16 +1267,20 @@ where
     fn operate(
         &mut self,
         tree: &mut Tree,
-        layout: Layout<'_>,
+        layout: Layout,
+        viewport: &Rectangle,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        operation.container(self.id.as_ref(), layout.bounds());
+        operation.container(self.id.as_ref(), layout.bounds(), viewport);
+
+        let trigger_layout = trigger_layout(layout, tree);
 
         operation.traverse(&mut |operation| {
             self.trigger.as_widget_mut().operate(
                 &mut tree.children[0],
-                layout.children().next().expect("trigger layout"),
+                trigger_layout,
+                viewport,
                 renderer,
                 operation,
             );
@@ -1285,11 +1290,12 @@ where
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'_>,
-        _renderer: &Renderer,
+        layout: Layout,
+        renderer: &Renderer,
         _viewport: &Rectangle,
         offset: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        window: Size,
+    ) -> Vec<overlay::Element<'b, Message, Theme, Renderer>> {
         let state = tree.state.downcast_mut::<State>();
         state.transition.sync(self.motion);
 
@@ -1299,7 +1305,7 @@ where
         // called once to lay the panels out and again to draw them, and the two
         // have to agree. See [`State::frame`].
         if !state.is_showing() {
-            return None;
+            return Vec::new();
         }
 
         // Read the transition out before `state` is handed to the overlay.
@@ -1312,10 +1318,11 @@ where
 
         let (_, item_trees) = tree.children.split_at_mut(1);
 
-        Some(overlay::Element::new(Box::new(Panels {
+        let mut panels = Panels {
             state,
             items: &mut self.items,
             trees: item_trees,
+            root: Node::default(),
             trigger_bounds,
             placement: self.placement,
             submenu_gap: self.submenu_gap,
@@ -1331,8 +1338,21 @@ where
             is_closing,
             on_toggle: self.on_toggle.as_deref(),
             class: &self.class,
-        })))
+        };
+
+        panels.root = panels.place(renderer, window);
+
+        vec![overlay::Element::new(Box::new(panels))]
     }
+}
+
+/// Returns the [`Layout`] of a menu's trigger, its first child.
+fn trigger_layout(layout: Layout, tree: &Tree) -> Layout {
+    layout
+        .iter(&tree.children)
+        .next()
+        .expect("trigger layout")
+        .0
 }
 
 impl<'a, Message, Theme, Renderer> From<Menu<'a, Message, Theme, Renderer>>
@@ -1340,7 +1360,7 @@ impl<'a, Message, Theme, Renderer> From<Menu<'a, Message, Theme, Renderer>>
 where
     Message: Clone + 'a,
     Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font> + 'a,
+    Renderer: iced::advanced::Renderer + text::Renderer + 'a,
 {
     fn from(menu: Menu<'a, Message, Theme, Renderer>) -> Self {
         Element::new(menu)
@@ -1353,7 +1373,7 @@ pub fn menu_bar<'a, Message, Theme, Renderer>(
 ) -> MenuBar<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + text::Renderer,
 {
     MenuBar::new(menus)
 }
@@ -1380,7 +1400,7 @@ where
 impl<'a, Message, Theme, Renderer> MenuBar<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + text::Renderer,
 {
     /// Creates a new [`MenuBar`] from a row of menus.
     pub fn new(menus: Vec<Menu<'a, Message, Theme, Renderer>>) -> Self {
@@ -1453,7 +1473,7 @@ impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font> + 'a,
+    Renderer: iced::advanced::Renderer + text::Renderer + 'a,
 {
     fn diff(&mut self, tree: &mut Tree) {
         tree.diff_children(
@@ -1469,7 +1489,7 @@ where
         Size::new(Length::Shrink, Length::Shrink)
     }
 
-    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> Node {
+    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) {
         let padding = self.padding;
         let spacing = self.spacing;
 
@@ -1477,7 +1497,6 @@ where
 
         let mut x = padding.left;
         let mut height: f32 = 0.0;
-        let mut triggers = Vec::with_capacity(self.menus.len());
 
         for (index, (menu, child)) in self
             .menus
@@ -1489,16 +1508,16 @@ where
                 x += spacing;
             }
 
-            let node = menu.layout(child, renderer, &inner);
-            let size = node.size();
+            menu.layout(child, renderer, &inner);
+            let size = child.size;
 
-            triggers.push(node.move_to(Point::new(x, padding.top)));
+            child.translation = Vector::new(x, padding.top);
 
             x += size.width;
             height = height.max(size.height);
         }
 
-        Node::with_children(Size::new(x + padding.right, height + padding.y()), triggers)
+        tree.size = Size::new(x + padding.right, height + padding.y());
     }
 
     fn draw(
@@ -1507,12 +1526,11 @@ where
         renderer: &mut Renderer,
         theme: &Theme,
         style: &renderer::Style,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        for ((menu, child), trigger) in self.menus.iter().zip(&tree.children).zip(layout.children())
-        {
+        for (menu, (trigger, child)) in self.menus.iter().zip(layout.iter(&tree.children)) {
             menu.draw(child, renderer, theme, style, trigger, cursor, viewport);
         }
     }
@@ -1521,7 +1539,7 @@ where
         &mut self,
         tree: &mut Tree,
         event: &Event,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
@@ -1552,11 +1570,13 @@ where
         // Once one menu is open, sliding the cursor onto another trigger opens
         // that one instead. This is what makes a bar feel like a bar rather
         // than a row of unrelated buttons.
+        let hovered_trigger = layout
+            .iter(&tree.children)
+            .position(|(trigger, _)| cursor.is_over(trigger.bounds()));
+
         if matches!(event, Event::Mouse(mouse::Event::CursorMoved { .. }))
             && let Some(open) = self.open_index(tree)
-            && let Some(hovered) = layout
-                .children()
-                .position(|trigger| cursor.is_over(trigger.bounds()))
+            && let Some(hovered) = hovered_trigger
             && hovered != open
         {
             self.close_others(tree, hovered);
@@ -1566,11 +1586,10 @@ where
             shell.request_redraw();
         }
 
-        for ((menu, child), trigger) in self
+        for (menu, (trigger, child)) in self
             .menus
             .iter_mut()
-            .zip(tree.children.iter_mut())
-            .zip(layout.children())
+            .zip(layout.iter_mut(&mut tree.children))
         {
             menu.update(child, event, trigger, cursor, renderer, shell, viewport);
 
@@ -1583,16 +1602,15 @@ where
     fn mouse_interaction(
         &self,
         tree: &Tree,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
         self.menus
             .iter()
-            .zip(&tree.children)
-            .zip(layout.children())
-            .map(|((menu, child), trigger)| {
+            .zip(layout.iter(&tree.children))
+            .map(|(menu, (trigger, child))| {
                 menu.mouse_interaction(child, trigger, cursor, viewport, renderer)
             })
             .max()
@@ -1602,20 +1620,20 @@ where
     fn operate(
         &mut self,
         tree: &mut Tree,
-        layout: Layout<'_>,
+        layout: Layout,
+        viewport: &Rectangle,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        operation.container(None, layout.bounds());
+        operation.container(None, layout.bounds(), viewport);
 
         operation.traverse(&mut |operation| {
-            for ((menu, child), trigger) in self
+            for (menu, (trigger, child)) in self
                 .menus
                 .iter_mut()
-                .zip(tree.children.iter_mut())
-                .zip(layout.children())
+                .zip(layout.iter_mut(&mut tree.children))
             {
-                menu.operate(child, trigger, renderer, operation);
+                menu.operate(child, trigger, viewport, renderer, operation);
             }
         });
     }
@@ -1623,22 +1641,19 @@ where
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'b>,
+        layout: Layout,
         renderer: &Renderer,
         viewport: &Rectangle,
         offset: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        let panels: Vec<_> = self
-            .menus
+        window: Size,
+    ) -> Vec<overlay::Element<'b, Message, Theme, Renderer>> {
+        self.menus
             .iter_mut()
-            .zip(tree.children.iter_mut())
-            .zip(layout.children())
-            .filter_map(|((menu, child), trigger)| {
-                menu.overlay(child, trigger, renderer, viewport, offset)
+            .zip(layout.iter_mut(&mut tree.children))
+            .flat_map(|(menu, (trigger, child))| {
+                menu.overlay(child, trigger, renderer, viewport, offset, window)
             })
-            .collect();
-
-        (!panels.is_empty()).then(|| overlay::Group::with_children(panels).overlay())
+            .collect()
     }
 }
 
@@ -1647,10 +1662,92 @@ impl<'a, Message, Theme, Renderer> From<MenuBar<'a, Message, Theme, Renderer>>
 where
     Message: Clone + 'a,
     Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font> + 'a,
+    Renderer: iced::advanced::Renderer + text::Renderer + 'a,
 {
     fn from(bar: MenuBar<'a, Message, Theme, Renderer>) -> Self {
         Element::new(bar)
+    }
+}
+
+/// The geometry of the menu's own chrome: panels, the rows in them, and the
+/// icon and content slots of a row.
+///
+/// iced keeps a widget's geometry in its [`Tree`], but panels and rows are not
+/// widgets, so they keep theirs here, in the shape `layout::Node` used to have.
+#[derive(Debug, Clone, Default)]
+struct Node {
+    bounds: Rectangle,
+    children: Vec<Node>,
+}
+
+impl Node {
+    fn new(size: Size) -> Self {
+        Self {
+            bounds: Rectangle::with_size(size),
+            children: Vec::new(),
+        }
+    }
+
+    fn with_children(size: Size, children: Vec<Node>) -> Self {
+        Self {
+            bounds: Rectangle::with_size(size),
+            children,
+        }
+    }
+
+    fn size(&self) -> Size {
+        self.bounds.size()
+    }
+
+    fn bounds(&self) -> Rectangle {
+        self.bounds
+    }
+
+    fn children(&self) -> &[Node] {
+        &self.children
+    }
+
+    fn move_to(mut self, position: impl Into<Point>) -> Self {
+        let position = position.into();
+
+        self.bounds.x = position.x;
+        self.bounds.y = position.y;
+        self
+    }
+}
+
+/// A [`Node`] placed on screen.
+///
+/// Its bounds are absolute and its children's are relative to it, the way
+/// `Layout` used to walk a `layout::Node`.
+#[derive(Debug, Clone, Copy)]
+struct Placed<'a> {
+    node: &'a Node,
+    position: Point,
+}
+
+impl<'a> Placed<'a> {
+    fn new(node: &'a Node) -> Self {
+        Self {
+            node,
+            position: node.bounds.position(),
+        }
+    }
+
+    fn bounds(&self) -> Rectangle {
+        Rectangle::new(self.position, self.node.size())
+    }
+
+    fn children(self) -> impl DoubleEndedIterator<Item = Placed<'a>> + ExactSizeIterator {
+        self.node.children.iter().map(move |child| Placed {
+            node: child,
+            position: self.position + Vector::new(child.bounds.x, child.bounds.y),
+        })
+    }
+
+    /// The [`Layout`] to hand the widget laid out at this node.
+    fn layout(self) -> Layout {
+        Layout::new(self.node.size()).move_to(self.position)
     }
 }
 
@@ -1666,6 +1763,8 @@ where
     state: &'a mut State,
     items: &'a mut Vec<Item<'b, Message, Theme, Renderer>>,
     trees: &'a mut [Tree],
+    /// Every open panel, set by [`Panels::place`].
+    root: Node,
     trigger_bounds: Rectangle,
     placement: Placement,
     submenu_gap: f32,
@@ -1690,7 +1789,7 @@ impl<'a, 'b, Message, Theme, Renderer> Panels<'a, 'b, Message, Theme, Renderer>
 where
     Message: Clone,
     Theme: Catalog,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + text::Renderer,
 {
     /// The number of panels currently on screen.
     fn depth(&self) -> usize {
@@ -1747,21 +1846,18 @@ where
             }
 
             if let Some(icon) = item.icon_mut() {
-                let width = icon
-                    .as_widget_mut()
-                    .layout(&mut tree.children[ITEM_ICON], renderer, &measure)
-                    .size()
-                    .width;
+                icon.as_widget_mut()
+                    .layout(&mut tree.children[ITEM_ICON], renderer, &measure);
+                let width = tree.children[ITEM_ICON].size.width;
 
                 leading_gutter = leading_gutter.max(width);
             }
 
             if let Some(content) = item.content_mut() {
-                let width = content
+                content
                     .as_widget_mut()
-                    .layout(&mut tree.children[ITEM_CONTENT], renderer, &measure)
-                    .size()
-                    .width;
+                    .layout(&mut tree.children[ITEM_CONTENT], renderer, &measure);
+                let width = tree.children[ITEM_CONTENT].size.width;
 
                 widest_content = widest_content.max(width);
             }
@@ -1808,16 +1904,19 @@ where
             let icon_node = match item.icon_mut() {
                 Some(icon) => {
                     icon.as_widget_mut()
-                        .layout(&mut tree.children[ITEM_ICON], renderer, &measure)
+                        .layout(&mut tree.children[ITEM_ICON], renderer, &measure);
+
+                    Node::new(tree.children[ITEM_ICON].size)
                 }
                 None => Node::new(Size::ZERO),
             };
 
-            let content_node = item
-                .content_mut()
+            item.content_mut()
                 .expect("checked above")
                 .as_widget_mut()
                 .layout(&mut tree.children[ITEM_CONTENT], renderer, &pinned);
+
+            let content_node = Node::new(tree.children[ITEM_CONTENT].size);
 
             let row_height = content_node
                 .size()
@@ -1884,7 +1983,7 @@ where
     }
 
     /// Returns the panel depth and row index under the cursor, if any.
-    fn row_at(&self, layout: Layout<'_>, cursor: mouse::Cursor) -> Option<(usize, usize)> {
+    fn row_at(&self, layout: Placed<'_>, cursor: mouse::Cursor) -> Option<(usize, usize)> {
         let position = cursor.position()?;
 
         // Fading panels are still on screen but are not targets.
@@ -1918,7 +2017,7 @@ where
     ///
     /// Fading panels are excluded for the same reason [`Panels::row_at`]
     /// excludes them: they are on screen but no longer targets.
-    fn panel_at(&self, layout: Layout<'_>, position: Point) -> Option<usize> {
+    fn panel_at(&self, layout: Placed<'_>, position: Point) -> Option<usize> {
         layout
             .children()
             .take(self.state.live_depth(Instant::now()) + 1)
@@ -1941,7 +2040,7 @@ where
     /// The apex moves with the cursor, so the triangle narrows as the submenu
     /// gets closer and a path that turns away falls out of it immediately. The
     /// case that needs [`AIM_TIMEOUT`] is the cursor that stops inside it.
-    fn is_aiming_at_submenu(&self, layout: Layout<'_>, position: Point) -> bool {
+    fn is_aiming_at_submenu(&self, layout: Placed<'_>, position: Point) -> bool {
         let Some(previous) = self.state.last_cursor else {
             return false;
         };
@@ -2163,22 +2262,15 @@ where
     }
 
     /// Returns `true` when the cursor is over any open panel.
-    fn is_over_any_panel(&self, layout: Layout<'_>, cursor: mouse::Cursor) -> bool {
+    fn is_over_any_panel(&self, layout: Placed<'_>, cursor: mouse::Cursor) -> bool {
         layout
             .children()
             .take(self.state.live_depth(Instant::now()) + 1)
             .any(|panel| cursor.is_over(panel.bounds()))
     }
-}
 
-impl<'a, 'b, Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
-    for Panels<'a, 'b, Message, Theme, Renderer>
-where
-    Message: Clone,
-    Theme: Catalog,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
-{
-    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
+    /// Lays out and places every open panel within the window `bounds`.
+    fn place(&mut self, renderer: &Renderer, bounds: Size) -> Node {
         let viewport = Rectangle::with_size(bounds);
         let now = Instant::now();
 
@@ -2228,7 +2320,15 @@ where
 
         Node::with_children(bounds, panels)
     }
+}
 
+impl<'a, 'b, Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
+    for Panels<'a, 'b, Message, Theme, Renderer>
+where
+    Message: Clone,
+    Theme: Catalog,
+    Renderer: iced::advanced::Renderer + text::Renderer,
+{
     fn draw(
         &self,
         renderer: &mut Renderer,
@@ -2236,9 +2336,9 @@ where
         // A panel resolves the text color of every row from its own `Style`,
         // so the inherited one is deliberately dropped.
         _style: &renderer::Style,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
+        let layout = Placed::new(&self.root);
         let style = theme.style(self.class);
 
         for (depth, panel) in layout.children().take(self.depth()).enumerate() {
@@ -2345,7 +2445,7 @@ where
                         renderer,
                         theme,
                         &renderer::Style { text_color },
-                        icon_layout,
+                        icon_layout.layout(),
                         cursor,
                         &row_bounds,
                     );
@@ -2404,7 +2504,7 @@ where
                     renderer,
                     theme,
                     &renderer::Style { text_color },
-                    content_layout,
+                    content_layout.layout(),
                     cursor,
                     &row_bounds,
                 );
@@ -2415,11 +2515,14 @@ where
     fn update(
         &mut self,
         event: &Event,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
     ) {
+        // A copy, so the panels can be read while the state below changes.
+        let root = self.root.clone();
+        let layout = Placed::new(&root);
+
         // A panel on its way out is a picture, not a control: it must not
         // highlight, activate, or swallow the press that follows a dismissal.
         if self.is_closing {
@@ -2565,12 +2668,9 @@ where
         }
     }
 
-    fn mouse_interaction(
-        &self,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        _renderer: &Renderer,
-    ) -> mouse::Interaction {
+    fn mouse_interaction(&self, cursor: mouse::Cursor, _renderer: &Renderer) -> mouse::Interaction {
+        let layout = Placed::new(&self.root);
+
         if self.is_closing {
             return mouse::Interaction::None;
         }
@@ -2585,13 +2685,8 @@ where
         mouse::Interaction::None
     }
 
-    fn operate(
-        &mut self,
-        _layout: Layout<'_>,
-        _renderer: &Renderer,
-        _operation: &mut dyn Operation,
-    ) {
-    }
+    fn operate(&mut self, _renderer: &Renderer, _operation: &mut dyn Operation) {}
+
 
     fn index(&self) -> f32 {
         1.0
@@ -2619,7 +2714,7 @@ fn glyph_size<Renderer>(renderer: &Renderer) -> f32
 where
     Renderer: text::Renderer,
 {
-    renderer.default_size().0 * GLYPH_SCALE
+    renderer.text_size().0 * GLYPH_SCALE
 }
 
 /// Draws a Lucide glyph centered in `slot`.
@@ -2635,7 +2730,7 @@ fn draw_glyph<Renderer>(
     color: Color,
     clip: Rectangle,
 ) where
-    Renderer: text::Renderer<Font = iced::Font>,
+    Renderer: text::Renderer,
 {
     renderer.fill_text(
         text::Text {
@@ -2819,7 +2914,6 @@ mod tests {
     struct Host<'a> {
         element: Element<'a, Message, Theme, ()>,
         tree: Tree,
-        node: Node,
     }
 
     impl<'a> Host<'a> {
@@ -2828,7 +2922,7 @@ mod tests {
             let mut tree = Tree::new(element.as_widget());
             element.as_widget_mut().diff(&mut tree);
 
-            let node = element.as_widget_mut().layout(
+            element.as_widget_mut().layout(
                 &mut tree,
                 &(),
                 &Limits::new(Size::ZERO, HOST_BOUNDS),
@@ -2837,7 +2931,6 @@ mod tests {
             Self {
                 element,
                 tree,
-                node,
             }
         }
 
@@ -2851,10 +2944,12 @@ mod tests {
             let mut bus = shell::Bus::new();
             let mut shell = Shell::new(&iced::window::Headless, shell::Waker::noop(), &mut bus);
 
+            let layout = Layout::new(self.tree.size);
+
             self.element.as_widget_mut().update(
                 &mut self.tree,
                 &event,
-                Layout::new(&self.node),
+                layout,
                 Self::cursor(),
                 &(),
                 &mut shell,
@@ -2874,16 +2969,20 @@ mod tests {
 
         /// Whether the menu would put panels in the overlay tree right now.
         fn has_overlay(&mut self) -> bool {
-            self.element
+            let layout = Layout::new(self.tree.size);
+
+            !self
+                .element
                 .as_widget_mut()
                 .overlay(
                     &mut self.tree,
-                    Layout::new(&self.node),
+                    layout,
                     &(),
                     &Rectangle::with_size(HOST_BOUNDS),
                     Vector::ZERO,
+                    HOST_BOUNDS,
                 )
-                .is_some()
+                .is_empty()
         }
     }
 

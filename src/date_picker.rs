@@ -32,7 +32,7 @@ use iced::{
     Border, Color, Element, Event, Length, Point, Rectangle, Shadow, Size, Vector,
     advanced::{
         Layout, Overlay, Shell, Widget,
-        layout::{Limits, Node},
+        layout::Limits,
         overlay, renderer,
         widget::{self, tree::Tree},
     },
@@ -380,7 +380,7 @@ impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: Catalog,
-    Renderer: iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::text::Renderer,
 {
     fn tag(&self) -> widget::tree::Tag {
         widget::tree::Tag::of::<State>()
@@ -409,8 +409,8 @@ where
         Size::new(Length::Fixed(ANCHOR_SIZE), Length::Fixed(ANCHOR_SIZE))
     }
 
-    fn layout(&mut self, _tree: &mut Tree, _renderer: &Renderer, _limits: &Limits) -> Node {
-        Node::new(Size::new(ANCHOR_SIZE, ANCHOR_SIZE))
+    fn layout(&mut self, tree: &mut Tree, _renderer: &Renderer, _limits: &Limits) {
+        tree.size = Size::new(ANCHOR_SIZE, ANCHOR_SIZE);
     }
 
     fn draw(
@@ -419,7 +419,7 @@ where
         _renderer: &mut Renderer,
         _theme: &Theme,
         _style: &renderer::Style,
-        _layout: Layout<'_>,
+        _layout: Layout,
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
@@ -430,7 +430,7 @@ where
         &mut self,
         state: &mut Tree,
         event: &Event,
-        _layout: Layout<'_>,
+        _layout: Layout,
         _cursor: mouse::Cursor,
         _renderer: &Renderer,
         _shell: &mut Shell<'_, Message>,
@@ -447,11 +447,12 @@ where
     fn overlay<'b>(
         &'b mut self,
         state: &'b mut Tree,
-        _layout: Layout<'_>,
+        _layout: Layout,
         _renderer: &Renderer,
         viewport: &Rectangle,
         _translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        window: Size,
+    ) -> Vec<overlay::Element<'b, Message, Theme, Renderer>> {
         let s = state.state.downcast_mut::<State>();
 
         if !self.is_open {
@@ -462,7 +463,7 @@ where
             s.time_input.clear();
             s.time_press = None;
             s.time_drag = None;
-            return None;
+            return Vec::new();
         }
 
         // First frame after opening: initialise position and view.
@@ -487,11 +488,15 @@ where
             });
         }
 
+        s.viewport_size = window;
+
         let viewport_size = s.viewport_size;
         let show_time = self.show_time;
+        let layout = Layout::new(overlay_size(show_time)).move_to(s.overlay_position);
 
-        Some(
+        vec![
             DatePickerOverlay {
+                layout,
                 state: s,
                 selection: &mut self.selection,
                 on_change: &self.on_change,
@@ -504,7 +509,7 @@ where
                 _renderer: PhantomData,
             }
             .into_overlay(),
-        )
+        ]
     }
 }
 
@@ -513,7 +518,7 @@ impl<'a, Message, Theme, Renderer> From<DatePicker<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: Catalog + 'a,
-    Renderer: iced::advanced::text::Renderer<Font = iced::Font> + 'a,
+    Renderer: iced::advanced::text::Renderer + 'a,
 {
     fn from(picker: DatePicker<'a, Message, Theme, Renderer>) -> Self {
         Self::new(picker)
@@ -530,6 +535,8 @@ where
     Theme: Catalog,
     Renderer: iced::advanced::text::Renderer,
 {
+    /// Where the overlay sits, at its fixed size.
+    layout: Layout,
     state: &'r mut State,
     selection: &'r mut DateSelection,
     on_change: &'r Option<Box<dyn Fn(DateSelection) -> Message + 'w>>,
@@ -547,7 +554,7 @@ impl<'r, 'w, Message, Theme, Renderer> DatePickerOverlay<'r, 'w, Message, Theme,
 where
     Message: Clone + 'r,
     Theme: Catalog + 'r,
-    Renderer: iced::advanced::text::Renderer<Font = iced::Font> + 'r,
+    Renderer: iced::advanced::text::Renderer + 'r,
 {
     fn into_overlay(self) -> overlay::Element<'r, Message, Theme, Renderer> {
         overlay::Element::new(Box::new(self))
@@ -831,22 +838,16 @@ impl<'r, Message, Theme, Renderer> Overlay<Message, Theme, Renderer>
 where
     Message: Clone,
     Theme: Catalog + 'r,
-    Renderer: iced::advanced::text::Renderer<Font = iced::Font> + 'r,
+    Renderer: iced::advanced::text::Renderer + 'r,
 {
-    fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> Node {
-        self.state.viewport_size = bounds;
-        let size = overlay_size(self.show_time);
-        Node::new(size).move_to(self.state.overlay_position)
-    }
-
     fn draw(
         &self,
         renderer: &mut Renderer,
         theme: &Theme,
         _style: &renderer::Style,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
+        let layout = self.layout;
         let style = theme.style(self.class, Status::Active);
         let bounds = layout.bounds();
         let header = header_rect(bounds);
@@ -900,12 +901,11 @@ where
     fn update(
         &mut self,
         event: &Event,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
     ) {
-        let bounds = layout.bounds();
+        let bounds = self.layout.bounds();
 
         match event {
             // ── Left click ───────────────────────────────────────────────
@@ -1165,13 +1165,9 @@ where
         }
     }
 
-    fn mouse_interaction(
-        &self,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        _renderer: &Renderer,
-    ) -> mouse::Interaction {
-        let bounds = layout.bounds();
+    fn mouse_interaction(&self, cursor: mouse::Cursor, _renderer: &Renderer) -> mouse::Interaction {
+        let bounds = self.layout.bounds();
+
         if !cursor.is_over(bounds) {
             return mouse::Interaction::default();
         }
@@ -1249,7 +1245,7 @@ impl<'r, Message, Theme, Renderer> DatePickerOverlay<'r, '_, Message, Theme, Ren
 where
     Message: Clone,
     Theme: Catalog + 'r,
-    Renderer: iced::advanced::text::Renderer<Font = iced::Font> + 'r,
+    Renderer: iced::advanced::text::Renderer + 'r,
 {
     fn draw_header(
         &self,
@@ -1895,7 +1891,7 @@ fn fill_text_centered<R>(
     cell: Rectangle,
     clip: Rectangle,
 ) where
-    R: iced::advanced::text::Renderer<Font = iced::Font>,
+    R: iced::advanced::text::Renderer,
 {
     renderer.fill_text(
         iced::advanced::Text {
@@ -1925,7 +1921,7 @@ fn fill_text_bold_centered<R>(
     cell: Rectangle,
     clip: Rectangle,
 ) where
-    R: iced::advanced::text::Renderer<Font = iced::Font>,
+    R: iced::advanced::text::Renderer,
 {
     renderer.fill_text(
         iced::advanced::Text {
@@ -2209,7 +2205,6 @@ mod tests {
     }
 
     impl text::Renderer for RecordingRenderer {
-        type Font = Font;
         type Paragraph = ();
         type Editor = ();
 
@@ -2222,12 +2217,16 @@ mod tests {
         const SCROLL_RIGHT_ICON: char = '0';
         const ICED_LOGO: char = '0';
 
-        fn default_font(&self) -> Self::Font {
+        fn font(&self) -> Font {
             Font::default()
         }
 
-        fn default_size(&self) -> Pixels {
+        fn text_size(&self) -> Pixels {
             Pixels(16.0)
+        }
+
+        fn line_height(&self) -> text::LineHeight {
+            text::LineHeight::default()
         }
 
         fn fill_paragraph(

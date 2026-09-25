@@ -12,7 +12,7 @@
 //!
 //! ```rust,ignore
 //! iced::application(App::new, App::update, App::view)
-//!     .font(widgets::lucide::FONT_BYTES)
+//!     .fonts([widgets::lucide::FONT_BYTES])
 //!     .run()
 //! ```
 //!
@@ -134,10 +134,9 @@ impl Icon {
 }
 
 /// Creates a text widget containing a Lucide [`Icon`].
-pub fn icon<'a, Theme, Renderer>(icon: Icon) -> text::Text<'a, Theme, Renderer>
+pub fn icon<'a, Theme>(icon: Icon) -> text::Text<'a, Theme>
 where
     Theme: text::Catalog + 'a,
-    Renderer: iced::advanced::text::Renderer<Font = Font>,
 {
     text(icon.character()).font(FONT)
 }

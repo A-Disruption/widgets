@@ -63,7 +63,7 @@ use iced::advanced::text;
 use iced::advanced::widget::{self, Operation, tree::Tree};
 use iced::advanced::{
     Layout, Shell, Widget,
-    layout::{Limits, Node},
+    layout::Limits,
     overlay, renderer,
 };
 use iced::border::Radius;
@@ -785,7 +785,7 @@ where
         Size::new(Length::Fixed(0.0), Length::Fixed(0.0))
     }
 
-    fn layout(&mut self, _tree: &mut Tree, _renderer: &Renderer, _limits: &Limits) -> Node {
+    fn layout(&mut self, tree: &mut Tree, _renderer: &Renderer, _limits: &Limits) {
         // The host holds a place in the tree so it can produce an overlay, and
         // takes up no room doing it.
         //
@@ -793,7 +793,7 @@ where
         // before they get the chance to produce an overlay. A `Column` or `Row`
         // with spacing will therefore still count this as a child — put it in a
         // `Stack` where that matters.
-        Node::new(Size::ZERO)
+        tree.size = Size::ZERO;
     }
 
     fn draw(
@@ -802,7 +802,7 @@ where
         _renderer: &mut Renderer,
         _theme: &Theme,
         _style: &renderer::Style,
-        _layout: Layout<'_>,
+        _layout: Layout,
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
@@ -813,7 +813,7 @@ where
         &mut self,
         tree: &mut Tree,
         event: &Event,
-        _layout: Layout<'_>,
+        _layout: Layout,
         _cursor: mouse::Cursor,
         _renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
@@ -869,22 +869,24 @@ where
     fn operate(
         &mut self,
         tree: &mut Tree,
-        layout: Layout<'_>,
+        layout: Layout,
+        viewport: &Rectangle,
         _renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
         let _ = tree;
-        operation.container(self.id.as_ref(), layout.bounds());
+        operation.container(self.id.as_ref(), layout.bounds(), viewport);
     }
 
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        _layout: Layout<'_>,
-        _renderer: &Renderer,
+        _layout: Layout,
+        renderer: &Renderer,
         _viewport: &Rectangle,
         _offset: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        window: Size,
+    ) -> Vec<overlay::Element<'b, Message, Theme, Renderer>> {
         let state = tree.state.downcast_mut::<State>();
         state.transition.sync(self.motion);
 
@@ -894,7 +896,7 @@ where
         // called once to lay the surface out and again to draw it, and the two
         // have to agree. See [`State::frame`].
         if !state.is_showing(self.is_open) {
-            return None;
+            return Vec::new();
         }
 
         // Read the transition out before `state` is handed to the overlay.
@@ -905,9 +907,13 @@ where
         // nothing to report to would be a lie.
         let close_button = self.close_button && self.on_dismiss.is_some();
 
-        Some(overlay::Element::new(Box::new(Surface {
+        let mut surface = Surface {
             content: &mut self.content,
             tree: &mut tree.children[0],
+            viewport: Rectangle::with_size(window),
+            surface: Layout::new(Size::ZERO),
+            content_layout: Layout::new(Size::ZERO),
+            window,
             state,
             anchor: self.anchor,
             at: self.at,
@@ -931,7 +937,11 @@ where
             dismiss_on_escape: self.dismiss_on_escape,
             on_dismiss: self.on_dismiss.as_ref(),
             class: &self.class,
-        })))
+        };
+
+        surface.layout(renderer);
+
+        vec![overlay::Element::new(Box::new(surface))]
     }
 }
 
@@ -954,6 +964,14 @@ where
 {
     content: &'a mut Element<'b, Message, Theme, Renderer>,
     tree: &'a mut Tree,
+    /// The whole window: the backdrop fills it, and presses outside the
+    /// surface still land inside this overlay.
+    viewport: Rectangle,
+    /// The surface itself, set by [`Surface::layout`].
+    surface: Layout,
+    /// The content's layout inside the surface's chrome.
+    content_layout: Layout,
+    window: Size,
     /// The layer's own state, so a drag or resize can outlive the event that
     /// moved it.
     state: &'a mut State,
@@ -1104,7 +1122,7 @@ where
     /// The width is pinned exactly; the height is only capped, so content that
     /// wants to fill does, and content that does not keeps its own height and
     /// leaves the rest of a resized window empty.
-    fn layout_content(&mut self, renderer: &Renderer, inner: Size) -> Node {
+    fn layout_content(&mut self, renderer: &Renderer, inner: Size) -> Size {
         let limits = Limits::new(
             Size::new(inner.width, 0.0),
             Size::new(inner.width, inner.height),
@@ -1112,11 +1130,15 @@ where
 
         self.content
             .as_widget_mut()
-            .layout(self.tree, renderer, &limits)
+            .layout(self.tree, renderer, &limits);
+
+        self.tree.size
     }
 
     /// Takes the surface size from its content, and lays that content out.
-    fn measure(&mut self, renderer: &Renderer, bounds: Size) -> (Size, Node) {
+    ///
+    /// Returns the surface size and the content size.
+    fn measure(&mut self, renderer: &Renderer, bounds: Size) -> (Size, Size) {
         let chrome = self.chrome();
 
         let available = Size::new(
@@ -1127,10 +1149,10 @@ where
         // Measured compressed so fluid content reports its intrinsic width
         // rather than swallowing the viewport.
         let limits = Limits::new(Size::ZERO, available).width(Length::Shrink);
-        let measured = self
-            .content
+        self.content
             .as_widget_mut()
             .layout(self.tree, renderer, &limits);
+        let measured = self.tree.size;
 
         // A stretched surface fills the edge it hugs, which is what makes a
         // sheet read as a panel sliding out rather than a floating card. Which
@@ -1145,7 +1167,7 @@ where
         let width = if spans_width {
             bounds.width
         } else {
-            let mut width = measured.size().width.max(self.min_width - chrome.width);
+            let mut width = measured.width.max(self.min_width - chrome.width);
 
             if let Some(max) = self.max_width {
                 width = width.min(max - chrome.width);
@@ -1158,11 +1180,11 @@ where
 
         // Nothing moved, so the measuring pass stands and its height is the
         // surface's.
-        if inner_width == measured.size().width && !spans_height {
+        if inner_width == measured.width && !spans_height {
             return (
                 Size::new(
                     width,
-                    (measured.size().height + chrome.height).max(self.min_height),
+                    (measured.height + chrome.height).max(self.min_height),
                 ),
                 measured,
             );
@@ -1181,21 +1203,16 @@ where
         let height = if spans_height {
             bounds.height
         } else {
-            (content.size().height + chrome.height).max(self.min_height)
+            (content.height + chrome.height).max(self.min_height)
         };
 
         (Size::new(width, height), content)
     }
-}
 
-impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
-    for Surface<'_, '_, Message, Theme, Renderer>
-where
-    Message: Clone,
-    Theme: Catalog,
-    Renderer: iced::advanced::Renderer + text::Renderer,
-{
-    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
+    /// Lays the surface out within the window, into `surface` and
+    /// `content_layout`.
+    fn layout(&mut self, renderer: &Renderer) {
+        let bounds = self.window;
         let viewport = Rectangle::with_size(bounds);
 
         // A surface the user has taken over is placed outright; only one still
@@ -1241,30 +1258,30 @@ where
         };
 
         let offset = animation::slide_from_edge(side, travel, self.progress);
+        let position = position + offset;
 
-        let surface = Node::with_children(
-            size,
-            vec![content.move_to(Point::new(
-                self.padding,
-                self.padding + self.header_height(),
-            ))],
-        )
-        .move_to(position + offset);
-
-        // The root spans the viewport so the backdrop has something to fill and
-        // presses outside the surface are still inside this overlay.
-        Node::with_children(bounds, vec![surface])
+        self.surface = Layout::new(size).move_to(position);
+        self.content_layout = Layout::new(content).move_to(
+            position + Vector::new(self.padding, self.padding + self.header_height()),
+        );
     }
+}
 
+impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
+    for Surface<'_, '_, Message, Theme, Renderer>
+where
+    Message: Clone,
+    Theme: Catalog,
+    Renderer: iced::advanced::Renderer + text::Renderer,
+{
     fn draw(
         &self,
         renderer: &mut Renderer,
         theme: &Theme,
         _style: &renderer::Style,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
-        let surface = layout.children().next().expect("surface layout");
+        let surface = self.surface;
         let bounds = surface.bounds();
         let style = theme.style(self.class);
 
@@ -1273,7 +1290,7 @@ where
         if let Some(alpha) = self.backdrop {
             renderer.fill_quad(
                 renderer::Quad {
-                    bounds: layout.bounds(),
+                    bounds: self.viewport,
                     ..renderer::Quad::default()
                 },
                 animation::fade(
@@ -1301,7 +1318,7 @@ where
 
         self.draw_header(renderer, &style, bounds, cursor);
 
-        let content = surface.children().next().expect("content layout");
+        let content = self.content_layout;
 
         // Clipped to the surface: a window resized smaller than its content
         // asked for has to cut that content off rather than let it paint across
@@ -1324,14 +1341,13 @@ where
     fn update(
         &mut self,
         event: &Event,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
     ) {
-        let surface = layout.children().next().expect("surface layout");
+        let surface = self.surface;
         let bounds = surface.bounds();
-        let viewport = layout.bounds();
+        let viewport = self.viewport;
 
         // A surface on its way out is a picture, not a control.
         if self.is_closing {
@@ -1404,7 +1420,7 @@ where
         self.content.as_widget_mut().update(
             self.tree,
             event,
-            surface.children().next().expect("content layout"),
+            self.content_layout,
             cursor,
             renderer,
             shell,
@@ -1455,17 +1471,12 @@ where
         }
     }
 
-    fn mouse_interaction(
-        &self,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &Renderer,
-    ) -> mouse::Interaction {
+    fn mouse_interaction(&self, cursor: mouse::Cursor, renderer: &Renderer) -> mouse::Interaction {
         if self.is_closing {
             return mouse::Interaction::None;
         }
 
-        let surface = layout.children().next().expect("surface layout");
+        let surface = self.surface;
         let bounds = surface.bounds();
 
         // A drag in flight keeps its cursor wherever the pointer wanders, which
@@ -1503,7 +1514,7 @@ where
 
         let interaction = self.content.as_widget().mouse_interaction(
             self.tree,
-            surface.children().next().expect("content layout"),
+            self.content_layout,
             cursor,
             &bounds,
             renderer,
@@ -1522,12 +1533,11 @@ where
         interaction
     }
 
-    fn operate(&mut self, layout: Layout<'_>, renderer: &Renderer, operation: &mut dyn Operation) {
-        let surface = layout.children().next().expect("surface layout");
-
+    fn operate(&mut self, renderer: &Renderer, operation: &mut dyn Operation) {
         self.content.as_widget_mut().operate(
             self.tree,
-            surface.children().next().expect("content layout"),
+            self.content_layout,
+            &self.surface.bounds(),
             renderer,
             operation,
         );
@@ -1535,20 +1545,20 @@ where
 
     fn overlay<'a>(
         &'a mut self,
-        layout: Layout<'a>,
         renderer: &Renderer,
-    ) -> Option<overlay::Element<'a, Message, Theme, Renderer>> {
-        let surface = layout.children().next()?;
-        let bounds = surface.bounds();
+    ) -> Vec<overlay::Element<'a, Message, Theme, Renderer>> {
+        let bounds = self.surface.bounds();
 
         self.content.as_widget_mut().overlay(
             self.tree,
-            surface.children().next()?,
+            self.content_layout,
             renderer,
             &bounds,
             Vector::ZERO,
+            self.window,
         )
     }
+
 }
 
 impl<Message, Theme, Renderer> Surface<'_, '_, Message, Theme, Renderer>
@@ -1625,7 +1635,7 @@ where
                     bounds: close.size(),
                     size: iced::Pixels(CLOSE_SIZE * 0.8),
                     line_height: text::LineHeight::default(),
-                    font: renderer.default_font(),
+                    font: renderer.font(),
                     align_x: text::Alignment::Center,
                     align_y: alignment::Vertical::Center,
                     shaping: text::Shaping::Basic,
@@ -1662,7 +1672,7 @@ where
                 bounds: bounds.size(),
                 size: iced::Pixels(TITLE_SIZE),
                 line_height: text::LineHeight::default(),
-                font: renderer.default_font(),
+                font: renderer.font(),
                 // `Default` rather than `Left`, so a right-to-left title lands
                 // on the side of the bar it belongs on.
                 align_x: text::Alignment::Default,
@@ -1787,7 +1797,6 @@ mod tests {
     struct Host<'a> {
         element: Element<'a, (), Theme, ()>,
         tree: Tree,
-        node: Node,
     }
 
     impl<'a> Host<'a> {
@@ -1799,7 +1808,7 @@ mod tests {
             let mut element = Element::from(Self::layer(is_open));
             element.as_widget_mut().diff(&mut self.tree);
 
-            self.node = element.as_widget_mut().layout(
+            element.as_widget_mut().layout(
                 &mut self.tree,
                 &(),
                 &Limits::new(Size::ZERO, HOST_BOUNDS),
@@ -1817,7 +1826,7 @@ mod tests {
             let mut tree = Tree::new(element.as_widget());
             element.as_widget_mut().diff(&mut tree);
 
-            let node = element.as_widget_mut().layout(
+            element.as_widget_mut().layout(
                 &mut tree,
                 &(),
                 &Limits::new(Size::ZERO, HOST_BOUNDS),
@@ -1826,7 +1835,6 @@ mod tests {
             Self {
                 element,
                 tree,
-                node,
             }
         }
 
@@ -1834,10 +1842,12 @@ mod tests {
             let mut bus = shell::Bus::new();
             let mut shell = Shell::new(&iced::window::Headless, shell::Waker::noop(), &mut bus);
 
+            let layout = Layout::new(self.tree.size);
+
             self.element.as_widget_mut().update(
                 &mut self.tree,
                 &Event::Window(window::Event::RedrawRequested(Instant::now())),
-                Layout::new(&self.node),
+                layout,
                 mouse::Cursor::Unavailable,
                 &(),
                 &mut shell,
@@ -1847,16 +1857,20 @@ mod tests {
 
         /// Whether the layer would put a surface in the overlay tree right now.
         fn has_overlay(&mut self) -> bool {
-            self.element
+            let layout = Layout::new(self.tree.size);
+
+            !self
+                .element
                 .as_widget_mut()
                 .overlay(
                     &mut self.tree,
-                    Layout::new(&self.node),
+                    layout,
                     &(),
                     &Rectangle::with_size(HOST_BOUNDS),
                     Vector::ZERO,
+                    HOST_BOUNDS,
                 )
-                .is_some()
+                .is_empty()
         }
     }
 

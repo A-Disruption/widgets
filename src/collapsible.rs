@@ -84,7 +84,7 @@ where
     padding: Padding,
     content_padding: Padding,
     text_size: Option<Pixels>,
-    font: Option<Renderer::Font>,
+    font: Option<iced::Font>,
     class: Theme::Class<'a>,
     initially_expanded: bool,
     easing: Easing,
@@ -221,7 +221,7 @@ where
     }
 
     /// Sets the font.
-    pub fn font(mut self, font: impl Into<Renderer::Font>) -> Self {
+    pub fn font(mut self, font: impl Into<iced::Font>) -> Self {
         self.font = Some(font.into());
         self
     }
@@ -337,6 +337,33 @@ where
     animation: State,
     text: widget::text::State<P>,
     icon_text: widget::text::State<P>,
+    header: Header,
+}
+
+/// Where the parts of a [`Collapsible`]'s header sit, relative to the widget.
+///
+/// Only the custom icons, the action icon and the content have trees of their
+/// own; the title and the default chevron are drawn straight from paragraphs,
+/// so their geometry is kept here instead.
+#[derive(Debug, Clone, Copy, Default)]
+struct Header {
+    icon: Rectangle,
+    title: Rectangle,
+    /// Zero-sized at the origin when there is no action icon.
+    action: Rectangle,
+}
+
+/// Places a `relative` rectangle of a widget at the widget's `layout`.
+fn place(layout: Layout, relative: Rectangle) -> Layout {
+    Layout::new(relative.size()).move_to(layout.position() + Vector::new(relative.x, relative.y))
+}
+
+/// Returns the [`Layout`] of the child at `index`.
+fn child_layout(layout: Layout, children: &[Tree], index: usize) -> Option<Layout> {
+    layout
+        .iter(children)
+        .nth(index)
+        .map(|(layout, _)| layout)
 }
 
 impl Default for State {
@@ -359,7 +386,7 @@ where
     Theme: Catalog,
     // `Font = iced::Font` so the default chevron can come from the embedded
     // Lucide font, matching `crate::menu`, which carries the same bound.
-    Renderer: text::Renderer<Font = iced::Font>,
+    Renderer: text::Renderer,
 {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<CombinedState<Renderer::Paragraph>>()
@@ -385,6 +412,7 @@ where
             },
             text: widget::text::State::<Renderer::Paragraph>::default(),
             icon_text: widget::text::State::<Renderer::Paragraph>::default(),
+            header: Header::default(),
         })
     }
 
@@ -415,19 +443,17 @@ where
         }
     }
 
-    fn layout(
-        &mut self,
-        tree: &mut Tree,
-        renderer: &Renderer,
-        limits: &layout::Limits,
-    ) -> layout::Node {
+    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &layout::Limits) {
         let combined_state = tree
             .state
             .downcast_mut::<CombinedState<Renderer::Paragraph>>();
         let state = &combined_state.animation;
+        let progress = state.progress;
         let limits = limits.width(self.width).height(self.height);
 
-        let icon_node = if self.expand_icon.is_none() && self.collapse_icon.is_none() {
+        let (icon_size, icon_tree_index) = if self.expand_icon.is_none()
+            && self.collapse_icon.is_none()
+        {
             // The same chevrons `crate::menu` draws, from the embedded Lucide
             // font, so every disclosure control in the crate matches. The
             // application has to register `lucide::FONT_BYTES` once at startup
@@ -448,7 +474,7 @@ where
                 Size::new(self.header_height, self.header_height),
             );
 
-            widget::text::layout(
+            let size = widget::text::layout(
                 &mut combined_state.icon_text,
                 renderer,
                 &icon_limits,
@@ -456,7 +482,7 @@ where
                 widget::text::Format {
                     width: Length::Shrink,
                     height: Length::Shrink,
-                    line_height: text::LineHeight::default(),
+                    line_height: None,
                     size: self.text_size,
                     // The glyph comes from Lucide, not from the header font.
                     font: Some(lucide::FONT),
@@ -467,7 +493,9 @@ where
                     wrapping: text::Wrapping::default(),
                     ellipsis: text::Ellipsis::None,
                 },
-            )
+            );
+
+            (size, None)
         } else {
             // Layout custom icon Element
             let (expand_index, collapse_index, _, _) = self.child_indices();
@@ -496,51 +524,48 @@ where
                 Size::new(self.header_height, self.header_height),
             );
 
-            icon_element.as_widget_mut().layout(
-                &mut tree.children[icon_tree_index],
-                renderer,
-                &icon_limits,
-            )
-        };
+            let icon_tree = &mut tree.children[icon_tree_index];
+            icon_element
+                .as_widget_mut()
+                .layout(icon_tree, renderer, &icon_limits);
 
-        let icon_size = icon_node.size();
+            (icon_tree.size, Some(icon_tree_index))
+        };
 
         // Layout action icon if present
         let (_, _, action_index, _) = self.child_indices();
-        let action_node_opt = if let Some(ref mut action_icon) = self.action_icon {
+        let action_size_opt = if let Some(ref mut action_icon) = self.action_icon {
             let icon_limits = layout::Limits::new(
                 Size::ZERO,
                 Size::new(self.header_height, self.header_height),
             );
 
-            Some((
-                action_icon.as_widget_mut().layout(
-                    &mut tree.children[action_index.unwrap()],
-                    renderer,
-                    &icon_limits,
-                ),
-                action_index.unwrap(),
-            ))
+            let action_tree = &mut tree.children[action_index.unwrap()];
+            action_icon
+                .as_widget_mut()
+                .layout(action_tree, renderer, &icon_limits);
+
+            Some((action_tree.size, action_index.unwrap()))
         } else {
             None
         };
 
-        let action_icon_width = action_node_opt
+        let _action_icon_width = action_size_opt
             .as_ref()
-            .map(|(node, _)| node.size().width + Self::ICON_SPACING)
+            .map(|(size, _)| size.width + Self::ICON_SPACING)
             .unwrap_or(0.0);
 
         // Layout title text after icon
         let title_x = self.header_height + Self::ICON_SPACING;
-        //let available_title_width = limits.max().width - title_x - self.padding.right - action_icon_width;
-        let available_title_width = limits.max().width;
+        //let available_title_width = limits.bounds().width - title_x - self.padding.right - action_icon_width;
+        let available_title_width = limits.bounds().width;
 
         let title_limits = layout::Limits::new(
             Size::ZERO,
             Size::new(available_title_width, self.header_height),
         );
 
-        let title_node = widget::text::layout(
+        let title_size = widget::text::layout(
             &mut combined_state.text,
             renderer,
             &title_limits,
@@ -548,7 +573,7 @@ where
             widget::text::Format {
                 width: Length::Shrink,
                 height: Length::Shrink,
-                line_height: text::LineHeight::default(),
+                line_height: None,
                 size: self.text_size,
                 font: self.font,
                 align_x: text::Alignment::Default,
@@ -559,7 +584,6 @@ where
             },
         );
 
-        let title_size = title_node.size();
 
         // Align icon and title vertically relative to each other
         let (icon_y, title_y) = if icon_size.height > title_size.height {
@@ -572,37 +596,58 @@ where
         let content_height = icon_size.height.max(title_size.height);
         let header_offset = (self.header_height - content_height) / 2.0;
 
-        let positioned_icon =
-            icon_node.move_to(Point::new(self.padding.left, header_offset + icon_y));
+        let icon = Rectangle::new(
+            Point::new(self.padding.left, header_offset + icon_y),
+            icon_size,
+        );
 
-        // Always create action icon node (zero-sized if not present)
-        let positioned_action = if let Some((node, _)) = action_node_opt {
-            let action_x = limits.max().width - self.padding.right - node.size().width;
-            let action_size = node.size();
+        if let Some(index) = icon_tree_index {
+            tree.children[index].translation = Vector::new(icon.x, icon.y);
+        }
+
+        // Always place the action icon (zero-sized if not present)
+        let action = if let Some((action_size, index)) = action_size_opt {
+            let action_x = limits.bounds().width - self.padding.right - action_size.width;
             let action_y = if action_size.height > title_size.height {
                 0.0
             } else {
                 (title_size.height - action_size.height) / 2.0
             };
 
-            node.move_to(Point::new(action_x, header_offset + action_y))
+            let action = Rectangle::new(
+                Point::new(action_x, header_offset + action_y),
+                action_size,
+            );
+
+            tree.children[index].translation = Vector::new(action.x, action.y);
+
+            action
         } else {
             // Zero-sized placeholder
-            layout::Node::new(Size::ZERO)
+            Rectangle::default()
         };
 
-        let mut positioned_title = if self.title_alignment == Alignment::Center {
-            title_node.move_to(Point::new(0.0, header_offset + title_y))
+        let mut title = if self.title_alignment == Alignment::Center {
+            Rectangle::new(Point::new(0.0, header_offset + title_y), title_size)
         } else {
-            title_node.move_to(Point::new(title_x, header_offset + title_y))
+            Rectangle::new(Point::new(title_x, header_offset + title_y), title_size)
         };
 
-        // Apply horizontal alignment within available space
-        positioned_title.align_mut(
-            self.title_alignment,
-            Alignment::Center, // Keep vertical center alignment
-            Size::new(available_title_width, content_height),
-        );
+        // Apply horizontal alignment within available space, keeping the
+        // vertical center alignment.
+        match self.title_alignment {
+            Alignment::Start => {}
+            Alignment::Center => title.x += (available_title_width - title.width) / 2.0,
+            Alignment::End => title.x += available_title_width - title.width,
+        }
+
+        title.y += (content_height - title.height) / 2.0;
+
+        combined_state.header = Header {
+            icon,
+            title,
+            action,
+        };
 
         // Layout content below header
         let content_limits = limits
@@ -619,38 +664,28 @@ where
         // panics when CollapsibleGroup mutated `progress` externally before this layout ran.
         // The animation already clips draw output to `animated_height`; always laying out is safe.
         let (_, _, _, content_index) = self.child_indices();
-        let mut content_node = self.content.as_widget_mut().layout(
-            &mut tree.children[content_index],
-            renderer,
-            &content_limits,
-        );
-        content_node.move_to_mut(Point::new(
+        let content_tree = &mut tree.children[content_index];
+        self.content
+            .as_widget_mut()
+            .layout(content_tree, renderer, &content_limits);
+        content_tree.translation = Vector::new(
             self.content_padding.left,
             self.header_height + self.content_padding.top,
-        ));
+        );
 
-        let full_content_height = content_node.size().height + self.content_padding.y();
-        let animated_height = full_content_height * state.progress;
+        let full_content_height = content_tree.size.height + self.content_padding.y();
+        let animated_height = full_content_height * progress;
 
         let total_height = self.header_height + animated_height;
 
-        // Return node with icon, title, action_icon, and content as layout children
-        layout::Node::with_children(
-            Size::new(limits.max().width, total_height),
-            vec![
-                positioned_icon,
-                positioned_title,
-                positioned_action,
-                content_node,
-            ],
-        )
+        tree.size = Size::new(limits.bounds().width, total_height);
     }
 
     fn update(
         &mut self,
         tree: &mut Tree,
         event: &Event,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
@@ -669,12 +704,11 @@ where
             height: state.header_height,
         };
 
-        // Icon bounds from first layout child
-        let mut children = layout.children();
-        let icon_layout = children.next().unwrap();
-        let _title_layout = children.next();
-        let action_layout = children.next().unwrap();
-        let content_layout = children.next();
+        let header = combined_state.header;
+        let (_, _, _, content_index) = self.child_indices();
+        let icon_layout = place(layout, header.icon);
+        let action_layout = place(layout, header.action);
+        let content_layout = child_layout(layout, &tree.children, content_index);
 
         let icon_bounds = icon_layout.bounds();
         let action_bounds = action_layout.bounds();
@@ -765,7 +799,7 @@ where
         renderer: &mut Renderer,
         theme: &Theme,
         defaults: &renderer::Style,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
@@ -806,12 +840,12 @@ where
             height: state.header_height,
         };
 
-        // Get layout children: icon, title, content
-        let mut layout_children = layout.children();
-        let icon_layout = layout_children.next().unwrap();
-        let title_layout = layout_children.next().unwrap();
-        let action_layout = layout_children.next().unwrap();
-        let content_layout_opt = layout_children.next();
+        // The header parts, and the content below them
+        let header = combined_state.header;
+        let icon_layout = place(layout, header.icon);
+        let title_layout = place(layout, header.title);
+        let action_layout = place(layout, header.action);
+        let content_layout_opt = child_layout(layout, &tree.children, self.child_indices().3);
 
         let content_bounds = if state.progress > 0.0 {
             content_layout_opt.map(|l| {
@@ -1015,7 +1049,7 @@ where
     fn mouse_interaction(
         &self,
         tree: &Tree,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
         renderer: &Renderer,
@@ -1033,12 +1067,10 @@ where
             height: state.header_height,
         };
 
-        // Get icon bounds from first layout child
-        let mut children = layout.children();
-        let icon_layout = children.next().unwrap();
-        let _title_layout = children.next();
-        let action_layout = children.next().unwrap();
-        let content_layout = children.next();
+        let header = combined_state.header;
+        let icon_layout = place(layout, header.icon);
+        let action_layout = place(layout, header.action);
+        let content_layout = child_layout(layout, &tree.children, self.child_indices().3);
 
         let icon_bounds = icon_layout.bounds();
         let action_bounds = action_layout.bounds();
@@ -1076,7 +1108,8 @@ where
     fn operate(
         &mut self,
         tree: &mut Tree,
-        layout: Layout<'_>,
+        layout: Layout,
+        viewport: &Rectangle,
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
@@ -1087,16 +1120,13 @@ where
 
         if state.progress > 0.0 {
             let (_, _, _, content_index) = self.child_indices();
-            let mut children = layout.children();
-            let _icon_layout = children.next().unwrap();
-            let _title_layout = children.next();
-            let _action_layout = children.next().unwrap();
-            let content_layout = children.next();
+            let content_layout = child_layout(layout, &tree.children, content_index);
 
             if let Some(content_layout) = content_layout {
                 self.content.as_widget_mut().operate(
                     &mut tree.children[content_index],
                     content_layout,
+                    viewport,
                     renderer,
                     operation,
                 );
@@ -1107,54 +1137,55 @@ where
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'b>,
+        layout: Layout,
         renderer: &Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        window: Size,
+    ) -> Vec<overlay::Element<'b, Message, Theme, Renderer>> {
         let combined_state = tree
             .state
             .downcast_mut::<CombinedState<Renderer::Paragraph>>();
-        let state = &mut combined_state.animation;
+        let progress = combined_state.animation.progress;
+        let action_layout = place(layout, combined_state.header.action);
         let (_, _, action_index, content_index) = self.child_indices();
 
-        let mut children = layout.children();
-        let _icon_layout = children.next().unwrap();
-        let _title_layout = children.next();
-        let action_layout = children.next().unwrap();
-        let content_layout = children.next();
+        let content_layout = child_layout(layout, &tree.children, content_index);
 
         // Split tree.children to get non-overlapping mutable slices
         let (left_tree, right_tree) = tree.children.split_at_mut(content_index);
 
-        // Check action_icon for overlay first (if present)
+        let mut overlays = Vec::new();
+
+        // The action icon's overlays (if present)
         if let Some(ref mut action_icon) = self.action_icon
             && let Some(action_idx) = action_index
-            && let Some(overlay) = action_icon.as_widget_mut().overlay(
+        {
+            overlays.extend(action_icon.as_widget_mut().overlay(
                 &mut left_tree[action_idx],
                 action_layout,
                 renderer,
                 viewport,
                 translation,
-            )
-        {
-            return Some(overlay);
+                window,
+            ));
         }
 
-        // Return child overlays if expanded
-        if state.progress > 0.0
+        // And the content's, if expanded
+        if progress > 0.0
             && let Some(content_layout) = content_layout
         {
-            return self.content.as_widget_mut().overlay(
+            overlays.extend(self.content.as_widget_mut().overlay(
                 &mut right_tree[0],
                 content_layout,
                 renderer,
                 viewport,
                 translation,
-            );
+                window,
+            ));
         }
 
-        None
+        overlays
     }
 }
 
@@ -1243,16 +1274,10 @@ where
         }
     }
 
-    fn layout(
-        &mut self,
-        tree: &mut Tree,
-        renderer: &Renderer,
-        limits: &layout::Limits,
-    ) -> layout::Node {
+    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &layout::Limits) {
         let group_state = tree.state.downcast_mut::<GroupState>();
         let limits = limits.width(self.width).height(self.height);
 
-        let mut nodes = Vec::new();
         let mut y_offset = 0.0;
 
         let mut header_heights = Vec::new();
@@ -1274,23 +1299,22 @@ where
             }
             header_heights.push(child_state.header_height);
 
-            let mut node = item.as_widget_mut().layout(child_tree, renderer, &limits);
+            item.as_widget_mut().layout(child_tree, renderer, &limits);
 
-            node.move_to_mut(Point::new(0.0, y_offset));
-            y_offset += node.size().height + self.spacing;
-            nodes.push(node);
+            child_tree.translation = Vector::new(0.0, y_offset);
+            y_offset += child_tree.size.height + self.spacing;
         }
 
         let total_height = y_offset - self.spacing.max(0.0);
 
-        layout::Node::with_children(Size::new(limits.max().width, total_height.max(0.0)), nodes)
+        tree.size = Size::new(limits.bounds().width, total_height.max(0.0));
     }
 
     fn update(
         &mut self,
         tree: &mut Tree,
         event: &Event,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
@@ -1299,11 +1323,10 @@ where
         let group_state = tree.state.downcast_mut::<GroupState>();
 
         // Check if any child was clicked
-        for (index, ((item, child_tree), child_layout)) in self
+        for (index, (item, (child_layout, child_tree))) in self
             .items
             .iter_mut()
-            .zip(&mut tree.children)
-            .zip(layout.children())
+            .zip(layout.iter_mut(&mut tree.children))
             .enumerate()
         {
             if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
@@ -1321,16 +1344,8 @@ where
 
                     // Check if in header area
                     if relative_y < child_header_height {
-                        let mut child_children = child_layout.children();
-                        let _icon = child_children.next();
-                        let _title = child_children.next();
-                        let action_layout = child_children.next();
-
-                        let is_over_action = if let Some(action_layout) = action_layout {
-                            cursor.is_over(action_layout.bounds())
-                        } else {
-                            false
-                        };
+                        let action_layout = place(child_layout, child_combined.header.action);
+                        let is_over_action = cursor.is_over(action_layout.bounds());
 
                         // Only toggle if not clicking action icon
                         if !is_over_action {
@@ -1367,13 +1382,11 @@ where
         renderer: &mut Renderer,
         theme: &Theme,
         defaults: &renderer::Style,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        for ((item, child_tree), child_layout) in
-            self.items.iter().zip(&tree.children).zip(layout.children())
-        {
+        for (item, (child_layout, child_tree)) in self.items.iter().zip(layout.iter(&tree.children)) {
             item.as_widget().draw(
                 child_tree,
                 renderer,
@@ -1389,16 +1402,15 @@ where
     fn mouse_interaction(
         &self,
         tree: &Tree,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
         self.items
             .iter()
-            .zip(&tree.children)
-            .zip(layout.children())
-            .map(|((item, child_tree), child_layout)| {
+            .zip(layout.iter(&tree.children))
+            .map(|(item, (child_layout, child_tree))| {
                 item.as_widget().mouse_interaction(
                     child_tree,
                     child_layout,
@@ -1414,29 +1426,30 @@ where
     fn operate(
         &mut self,
         tree: &mut Tree,
-        layout: Layout<'_>,
+        layout: Layout,
+        viewport: &Rectangle,
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        for ((item, child_tree), child_layout) in self
+        for (item, (child_layout, child_tree)) in self
             .items
             .iter_mut()
-            .zip(&mut tree.children)
-            .zip(layout.children())
+            .zip(layout.iter_mut(&mut tree.children))
         {
             item.as_widget_mut()
-                .operate(child_tree, child_layout, renderer, operation);
+                .operate(child_tree, child_layout, viewport, renderer, operation);
         }
     }
 
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'b>,
+        layout: Layout,
         renderer: &Renderer,
         viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        window: Size,
+    ) -> Vec<overlay::Element<'b, Message, Theme, Renderer>> {
         overlay::from_children(
             &mut self.items,
             tree,
@@ -1444,8 +1457,10 @@ where
             renderer,
             viewport,
             translation,
+            window,
         )
     }
+
 }
 
 impl<'a, Message, Theme, Renderer> From<Collapsible<'a, Message, Theme, Renderer>>
@@ -1454,7 +1469,7 @@ where
     Message: 'a + Clone,
     Theme: Catalog + 'a,
     // Matches the `Widget` impl, which draws its chevron from Lucide.
-    Renderer: text::Renderer<Font = iced::Font> + 'a,
+    Renderer: text::Renderer + 'a,
 {
     fn from(
         collapsible: Collapsible<'a, Message, Theme, Renderer>,

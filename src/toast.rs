@@ -46,7 +46,7 @@
 use iced::advanced::widget::{self, Operation, tree::Tree};
 use iced::advanced::{
     Layout, Shell, Widget,
-    layout::{Limits, Node},
+    layout::Limits,
     overlay, renderer, text,
 };
 use iced::time::{Duration, Instant};
@@ -441,7 +441,7 @@ impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font> + 'a,
+    Renderer: iced::advanced::Renderer + text::Renderer + 'a,
 {
     fn tag(&self) -> widget::tree::Tag {
         widget::tree::Tag::of::<State>()
@@ -501,9 +501,9 @@ where
         Size::new(Length::Fixed(0.0), Length::Fixed(0.0))
     }
 
-    fn layout(&mut self, _tree: &mut Tree, _renderer: &Renderer, _limits: &Limits) -> Node {
+    fn layout(&mut self, tree: &mut Tree, _renderer: &Renderer, _limits: &Limits) {
         // The stack lives entirely in an overlay, so the host takes no room.
-        Node::new(Size::ZERO)
+        tree.size = Size::ZERO;
     }
 
     fn draw(
@@ -512,7 +512,7 @@ where
         _renderer: &mut Renderer,
         _theme: &Theme,
         _style: &renderer::Style,
-        _layout: Layout<'_>,
+        _layout: Layout,
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
@@ -522,7 +522,7 @@ where
         &mut self,
         tree: &mut Tree,
         event: &Event,
-        _layout: Layout<'_>,
+        _layout: Layout,
         _cursor: mouse::Cursor,
         _renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
@@ -573,34 +573,37 @@ where
     fn operate(
         &mut self,
         _tree: &mut Tree,
-        layout: Layout<'_>,
+        layout: Layout,
+        viewport: &Rectangle,
         _renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        operation.container(self.id.as_ref(), layout.bounds());
+        operation.container(self.id.as_ref(), layout.bounds(), viewport);
     }
 
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        _layout: Layout<'_>,
-        _renderer: &Renderer,
+        _layout: Layout,
+        renderer: &Renderer,
         _viewport: &Rectangle,
         _offset: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        window: Size,
+    ) -> Vec<overlay::Element<'b, Message, Theme, Renderer>> {
         // Read before `self` is split apart for the overlay.
         let grows_upward = self.grows_upward();
 
         let state = tree.state.downcast_mut::<State>();
 
         if state.entries.is_empty() {
-            return None;
+            return Vec::new();
         }
 
-        Some(overlay::Element::new(Box::new(Stack {
+        let mut stack = Stack {
             state,
             items: &mut self.items,
             trees: &mut tree.children,
+            placements: Vec::new(),
             anchor: self.anchor,
             margin: self.margin,
             spacing: self.spacing,
@@ -610,7 +613,11 @@ where
             motion: self.motion,
             grows_upward,
             class: &self.class,
-        })))
+        };
+
+        stack.layout(renderer, window);
+
+        vec![overlay::Element::new(Box::new(stack))]
     }
 }
 
@@ -619,7 +626,7 @@ impl<'a, Message, Theme, Renderer> From<Toasts<'a, Message, Theme, Renderer>>
 where
     Message: Clone + 'a,
     Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font> + 'a,
+    Renderer: iced::advanced::Renderer + text::Renderer + 'a,
 {
     fn from(toasts: Toasts<'a, Message, Theme, Renderer>) -> Self {
         Element::new(toasts)
@@ -634,6 +641,9 @@ where
     state: &'a mut State,
     items: &'a mut Vec<Toast<'b, Message, Theme, Renderer>>,
     trees: &'a mut Vec<Tree>,
+    /// Each toast's bounds and its content's layout, filled by
+    /// [`Stack::layout`] and read in the same order as `items`.
+    placements: Vec<(Rectangle, Layout)>,
     anchor: Anchor,
     margin: f32,
     spacing: f32,
@@ -645,14 +655,13 @@ where
     class: &'a Theme::Class<'b>,
 }
 
-impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
-    for Stack<'_, '_, Message, Theme, Renderer>
+impl<Message, Theme, Renderer> Stack<'_, '_, Message, Theme, Renderer>
 where
-    Message: Clone,
     Theme: Catalog,
-    Renderer: iced::advanced::Renderer + text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + text::Renderer,
 {
-    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
+    /// Lays the toasts out within the window `bounds`, into `placements`.
+    fn layout(&mut self, renderer: &Renderer, bounds: Size) {
         let viewport = Rectangle::with_size(bounds);
         let now = Instant::now();
 
@@ -674,10 +683,11 @@ where
                 Size::new(content_width, bounds.height),
             );
 
-            let content = item.content.as_widget_mut().layout(tree, renderer, &limits);
-            let height = content.size().height + self.padding * 2.0 + COUNTDOWN_HEIGHT;
+            item.content.as_widget_mut().layout(tree, renderer, &limits);
+            let content = tree.size;
+            let height = content.height + self.padding * 2.0 + COUNTDOWN_HEIGHT;
 
-            nodes.push((item.id, height, content.move_to(Point::new(indent, 0.0))));
+            nodes.push((item.id, height, content, indent));
             extent += height + self.spacing;
         }
 
@@ -685,7 +695,7 @@ where
         let mut cursor = 0.0_f32;
         let mut placed = Vec::with_capacity(nodes.len());
 
-        for (id, height, content) in nodes {
+        for (id, height, content, indent) in nodes {
             let target = cursor;
             cursor += height + self.spacing;
 
@@ -703,15 +713,15 @@ where
                 target
             };
 
-            placed.push((height, offset, content));
+            placed.push((height, offset, content, indent));
         }
 
         let total = Size::new(width, (extent - self.spacing).max(0.0));
         let origin = self.anchor.position(total, viewport, self.margin);
 
-        let children = placed
+        self.placements = placed
             .into_iter()
-            .map(|(height, offset, content)| {
+            .map(|(height, offset, content, indent)| {
                 // Growing upward means the first toast sits at the bottom of
                 // the stack, so offsets run backwards from the far edge.
                 let y = if self.grows_upward {
@@ -720,29 +730,42 @@ where
                     offset
                 };
 
-                Node::with_children(
+                let toast = Rectangle::new(
+                    Point::new(origin.x, origin.y + y),
                     Size::new(width, height),
-                    vec![content.translate(Vector::new(self.padding, self.padding))],
-                )
-                .move_to(Point::new(origin.x, origin.y + y))
+                );
+
+                let content = Layout::new(content).move_to(
+                    toast.position() + Vector::new(indent + self.padding, self.padding),
+                );
+
+                (toast, content)
             })
             .collect();
-
-        Node::with_children(total, children).move_to(Point::ORIGIN)
     }
+}
 
+impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
+    for Stack<'_, '_, Message, Theme, Renderer>
+where
+    Message: Clone,
+    Theme: Catalog,
+    Renderer: iced::advanced::Renderer + text::Renderer,
+{
     fn draw(
         &self,
         renderer: &mut Renderer,
         theme: &Theme,
         _style: &renderer::Style,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
         let now = Instant::now();
 
-        for ((item, tree), toast_layout) in
-            self.items.iter().zip(self.trees.iter()).zip(layout.children())
+        for ((item, tree), (bounds, content_layout)) in self
+            .items
+            .iter()
+            .zip(self.trees.iter())
+            .zip(self.placements.iter().copied())
         {
             let Some(entry) = self.state.entry(item.id) else {
                 continue;
@@ -750,7 +773,6 @@ where
 
             let progress = entry.transition.progress(now);
             let style = theme.style(self.class, item.variant);
-            let bounds = toast_layout.bounds();
 
             // Slide only, as everywhere else: a toast holds arbitrary content,
             // and children that paint themselves would not fade with it.
@@ -830,8 +852,6 @@ where
                 );
             }
 
-            let content_layout = toast_layout.children().next().expect("toast content");
-
             renderer.with_translation(slide, |renderer| {
                 item.content.as_widget().draw(
                     tree,
@@ -851,23 +871,20 @@ where
     fn update(
         &mut self,
         event: &Event,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
     ) {
-        for ((item, tree), toast_layout) in self
+        for ((item, tree), (bounds, content_layout)) in self
             .items
             .iter_mut()
             .zip(self.trees.iter_mut())
-            .zip(layout.children())
+            .zip(self.placements.iter().copied())
         {
-            let bounds = toast_layout.bounds();
-
             item.content.as_widget_mut().update(
                 tree,
                 event,
-                toast_layout.children().next().expect("toast content"),
+                content_layout,
                 cursor,
                 renderer,
                 shell,
@@ -885,28 +902,26 @@ where
             event,
             Event::Mouse(mouse::Event::ButtonPressed(_))
                 | Event::Touch(touch::Event::FingerPressed { .. })
-        ) && layout.children().any(|toast| cursor.is_over(toast.bounds()))
+        ) && self
+            .placements
+            .iter()
+            .any(|(toast, _)| cursor.is_over(*toast))
         {
             shell.capture_event();
         }
     }
 
-    fn mouse_interaction(
-        &self,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &Renderer,
-    ) -> mouse::Interaction {
+    fn mouse_interaction(&self, cursor: mouse::Cursor, renderer: &Renderer) -> mouse::Interaction {
         self.items
             .iter()
             .zip(self.trees.iter())
-            .zip(layout.children())
-            .map(|((item, tree), toast_layout)| {
+            .zip(self.placements.iter().copied())
+            .map(|((item, tree), (bounds, content_layout))| {
                 item.content.as_widget().mouse_interaction(
                     tree,
-                    toast_layout.children().next().expect("toast content"),
+                    content_layout,
                     cursor,
-                    &toast_layout.bounds(),
+                    &bounds,
                     renderer,
                 )
             })
@@ -914,21 +929,17 @@ where
             .unwrap_or_default()
     }
 
-    fn operate(
-        &mut self,
-        layout: Layout<'_>,
-        renderer: &Renderer,
-        operation: &mut dyn Operation,
-    ) {
-        for ((item, tree), toast_layout) in self
+    fn operate(&mut self, renderer: &Renderer, operation: &mut dyn Operation) {
+        for ((item, tree), (bounds, content_layout)) in self
             .items
             .iter_mut()
             .zip(self.trees.iter_mut())
-            .zip(layout.children())
+            .zip(self.placements.iter().copied())
         {
             item.content.as_widget_mut().operate(
                 tree,
-                toast_layout.children().next().expect("toast content"),
+                content_layout,
+                &bounds,
                 renderer,
                 operation,
             );
@@ -959,7 +970,7 @@ fn glyph_size<Renderer>(renderer: &Renderer) -> f32
 where
     Renderer: text::Renderer,
 {
-    renderer.default_size().0 * 1.15
+    renderer.text_size().0 * 1.15
 }
 
 /// Returns how far a toast's content is indented past its variant glyph.

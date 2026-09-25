@@ -752,7 +752,7 @@ impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
 where
     Message: Clone,
     Theme: Catalog,
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
     fn size(&self) -> Size<Length> {
         Size {
@@ -840,12 +840,7 @@ where
         state.diff_children(&mut children);
     }
 
-    fn layout(
-        &mut self,
-        tree: &mut widget::Tree,
-        renderer: &Renderer,
-        limits: &layout::Limits,
-    ) -> layout::Node {
+    fn layout(&mut self, tree: &mut widget::Tree, renderer: &Renderer, limits: &layout::Limits) {
         let combined_state = tree
             .state
             .downcast_mut::<CombinedState<Renderer::Paragraph>>();
@@ -934,7 +929,7 @@ where
         let branch_count = self.branches.len();
 
         let limits = limits.width(self.width).height(self.height);
-        let available = limits.max();
+        let available = limits.bounds();
         let tree_fluid = if self.width.is_fill() {
             Length::Fill
         } else {
@@ -949,8 +944,9 @@ where
                 self.is_branch_visible(i, &combined_state.tree_state);
         }
 
-        let mut cells = Vec::with_capacity(branch_count);
-        cells.resize(branch_count, layout::Node::default());
+        // Each branch's content, relative to the tree; written into the
+        // branch trees once every pass has had its say.
+        let mut cells = vec![Rectangle::default(); branch_count];
 
         combined_state.tree_state.branch_heights = vec![0.0; branch_count];
         combined_state.tree_state.branch_widths = vec![0.0; branch_count];
@@ -973,7 +969,7 @@ where
 
             // For invisible branches, keep default height so rows still occupy space for hover math
             if !combined_state.tree_state.visible_branches[i] {
-                cells[i] = layout::Node::new(Size::ZERO);
+                cells[i] = Rectangle::default();
                 combined_state.tree_state.branch_heights[i] = self.line_height;
                 combined_state.tree_state.branch_widths[i] = 0.0;
             }
@@ -1005,10 +1001,10 @@ where
                 Size::new(avail_w, (available.height - y).max(0.0)),
             );
 
-            let content_layout =
-                content
-                    .as_widget_mut()
-                    .layout(child_state, renderer, &content_limits);
+            content
+                .as_widget_mut()
+                .layout(child_state, renderer, &content_limits);
+            let content_layout = Rectangle::with_size(child_state.size);
             let content_size =
                 content_limits.resolve(Length::Shrink, Length::Shrink, content_layout.size());
 
@@ -1103,10 +1099,10 @@ where
 
             let content_limits = layout::Limits::new(Size::ZERO, Size::new(avail_w, max_h));
 
-            let content_layout =
-                content
-                    .as_widget_mut()
-                    .layout(child_state, renderer, &content_limits);
+            content
+                .as_widget_mut()
+                .layout(child_state, renderer, &content_limits);
+            let content_layout = Rectangle::with_size(child_state.size);
 
             let content_size = content_limits.resolve(
                 if is_width_fluid {
@@ -1235,12 +1231,14 @@ where
             let indent_x = self.padding_x + (effective_depth as f32 * self.indent);
             let content_x = indent_x + ARROW_W + CONTENT_GAP;
 
-            cells[i].move_to_mut((content_x, y));
+            cells[i].x = content_x;
+            cells[i].y = y;
 
             let Branch_ {
                 align_x, align_y, ..
             } = branch;
-            cells[i].align_mut(
+            align(
+                &mut cells[i],
                 *align_x,
                 *align_y,
                 Size::new(
@@ -1289,36 +1287,38 @@ where
         // Lay out icon elements so their internal state (e.g. text paragraphs) gets populated
         let icon_limits = layout::Limits::new(Size::ZERO, Size::new(ARROW_W, self.line_height));
         if let Some(ref mut expand_icon) = self.expand_icon {
-            let icon_node =
-                expand_icon
-                    .as_widget_mut()
-                    .layout(&mut tree.children[0], renderer, &icon_limits);
-            combined_state.tree_state.icon_layout_height = Some(icon_node.size().height);
+            expand_icon
+                .as_widget_mut()
+                .layout(&mut tree.children[0], renderer, &icon_limits);
+            combined_state.tree_state.icon_layout_height = Some(tree.children[0].size.height);
         }
         if let Some(ref mut collapse_icon) = self.collapse_icon {
             let idx = if self.expand_icon.is_some() { 1 } else { 0 };
-            let icon_node = collapse_icon.as_widget_mut().layout(
-                &mut tree.children[idx],
-                renderer,
-                &icon_limits,
-            );
+            collapse_icon
+                .as_widget_mut()
+                .layout(&mut tree.children[idx], renderer, &icon_limits);
+            let icon_height = tree.children[idx].size.height;
             // Use the larger of the two icon heights
             if let Some(existing) = combined_state.tree_state.icon_layout_height {
-                combined_state.tree_state.icon_layout_height =
-                    Some(existing.max(icon_node.size().height));
+                combined_state.tree_state.icon_layout_height = Some(existing.max(icon_height));
             } else {
-                combined_state.tree_state.icon_layout_height = Some(icon_node.size().height);
+                combined_state.tree_state.icon_layout_height = Some(icon_height);
             }
         }
 
-        layout::Node::with_children(intrinsic, cells)
+        for (cell, child) in cells.iter().zip(&mut tree.children[content_offset..]) {
+            child.size = cell.size();
+            child.translation = Vector::new(cell.x, cell.y);
+        }
+
+        tree.size = intrinsic;
     }
 
     fn update(
         &mut self,
         tree: &mut widget::Tree,
         event: &Event,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
@@ -1345,9 +1345,9 @@ where
                 continue;
             }
 
+            let child_layout = nth_layout(layout, &tree.children, i + child_layout_index);
             let branch = &mut self.branch_content[i];
             let child_state = &mut tree.children[i + child_layout_index];
-            let child_layout = layout.children().nth(i).unwrap();
 
             branch.as_widget_mut().update(
                 child_state,
@@ -1956,7 +1956,7 @@ where
         renderer: &mut Renderer,
         theme: &Theme,
         style: &renderer::Style,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
@@ -2530,29 +2530,32 @@ where
                             };
 
                             let icon_h = state.icon_layout_height.unwrap_or(16.0);
-                            let mut icon_layout = layout::Node::new(Size::new(ARROW_W, icon_h));
-                            icon_layout.align_mut(
+                            let mut icon_bounds =
+                                Rectangle::with_size(Size::new(ARROW_W, icon_h));
+                            align(
+                                &mut icon_bounds,
                                 iced::Alignment::Center,
                                 iced::Alignment::Center,
                                 Size::new(ARROW_W, branch_height),
                             );
 
-                            // `align_mut` has already placed the icon centred
-                            // within the branch, so the node has to be *moved
+                            // `align` has already placed the icon centred
+                            // within the branch, so the icon has to be *moved
                             // by* the branch's origin rather than *moved to*
                             // it: `move_to` would throw that offset away. It
                             // used to, and stood in a quarter of the icon's own
                             // height instead — which only looked centred at the
                             // one row height the widget used to assume.
-                            let icon_layout =
-                                icon_layout.translate(Vector::new(indent_x, branch_y));
+                            let icon_layout = Layout::new(icon_bounds.size()).move_to(
+                                icon_bounds.position() + Vector::new(indent_x, branch_y),
+                            );
 
                             icon_element.as_widget().draw(
                                 &tree.children[icon_tree_index],
                                 renderer,
                                 theme,
                                 style,
-                                Layout::new(&icon_layout),
+                                icon_layout,
                                 cursor,
                                 viewport,
                             );
@@ -2563,7 +2566,8 @@ where
                     if let Some(ref drag) = state.drag_active {
                         if !drag.dragged_nodes.contains(&id) {
                             let child_state = &tree.children[i + child_layout_index];
-                            let child_layout = layout.children().nth(i).unwrap();
+                            let child_layout =
+                                nth_layout(layout, &tree.children, i + child_layout_index);
                             self.branch_content[i].as_widget().draw(
                                 child_state,
                                 renderer,
@@ -2576,7 +2580,8 @@ where
                         }
                     } else {
                         let child_state = &tree.children[i + child_layout_index];
-                        let child_layout = layout.children().nth(i).unwrap();
+                        let child_layout =
+                            nth_layout(layout, &tree.children, i + child_layout_index);
                         self.branch_content[i].as_widget().draw(
                             child_state,
                             renderer,
@@ -2708,7 +2713,7 @@ where
     fn mouse_interaction(
         &self,
         tree: &widget::Tree,
-        layout: Layout<'_>,
+        layout: Layout,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
         renderer: &Renderer,
@@ -2722,11 +2727,10 @@ where
         let child_interaction = self
             .branch_content
             .iter()
-            .zip(&tree.children[child_layout_index..])
-            .zip(layout.children())
+            .zip(layout.iter(&tree.children[child_layout_index..]))
             .enumerate()
             .filter(|(i, _)| state.visible_branches.get(*i).copied().unwrap_or(false))
-            .map(|(_, ((branch, child_state), child_layout))| {
+            .map(|(_, (branch, (child_layout, child_state)))| {
                 branch.as_widget().mouse_interaction(
                     child_state,
                     child_layout,
@@ -2754,32 +2758,33 @@ where
     fn operate(
         &mut self,
         tree: &mut widget::Tree,
-        layout: Layout<'_>,
+        layout: Layout,
+        viewport: &Rectangle,
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
         let child_layout_index = self.get_child_content_index();
 
-        for i in 0..self.branch_content.len() {
-            if let Some(child_layout) = layout.children().nth(i) {
-                self.branch_content[i].as_widget_mut().operate(
-                    &mut tree.children[i + child_layout_index],
-                    child_layout,
-                    renderer,
-                    operation,
-                );
-            }
+        for (branch, (child_layout, child_tree)) in self
+            .branch_content
+            .iter_mut()
+            .zip(layout.iter_mut(&mut tree.children[child_layout_index..]))
+        {
+            branch
+                .as_widget_mut()
+                .operate(child_tree, child_layout, viewport, renderer, operation);
         }
     }
 
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut widget::Tree,
-        layout: Layout<'b>,
+        layout: Layout,
         renderer: &Renderer,
         viewport: &Rectangle,
         translation: iced::Vector,
-    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+        window: Size,
+    ) -> Vec<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
         let drag_active_clone = {
             let combined_state = tree
                 .state
@@ -2798,49 +2803,69 @@ where
 
             let child_layout_index = self.get_child_content_index();
 
-            for (i, ((branch, child_state), child_layout)) in self
-                .branch_content
-                .iter_mut()
-                .zip(&mut tree.children[child_layout_index..])
-                .zip(layout.children())
-                .enumerate()
-            {
-                if dragged_indices.contains(&i) {
-                    return Some(iced::advanced::overlay::Element::new(Box::new(
-                        DragOverlay {
-                            tree_handle: self,
-                            state: tree,
-                            layout: child_layout,
-                            tree_layout: layout,
-                            viewport: *viewport,
-                            dragged_indices,
-                            translation,
-                        },
-                    )));
-                }
+            if let Some(i) = (0..self.branch_content.len()).find(|i| dragged_indices.contains(i)) {
+                let child_layout = nth_layout(layout, &tree.children, i + child_layout_index);
+
+                let mut overlay = DragOverlay {
+                    tree_handle: self,
+                    state: tree,
+                    bounds: Layout::new(Size::ZERO),
+                    layout: child_layout,
+                    tree_layout: layout,
+                    viewport: *viewport,
+                    dragged_indices,
+                    translation,
+                };
+
+                overlay.bounds = overlay.place();
+
+                return vec![iced::advanced::overlay::Element::new(Box::new(overlay))];
             }
         } else {
             let child_layout_index = self.get_child_content_index();
 
-            for (i, ((branch, child_tree), child_layout)) in self
+            return self
                 .branch_content
                 .iter_mut()
-                .zip(&mut tree.children[child_layout_index..])
-                .zip(layout.children())
-                .enumerate()
-            {
-                if let Some(overlay) = branch.as_widget_mut().overlay(
-                    child_tree,
-                    child_layout,
-                    renderer,
-                    viewport,
-                    translation,
-                ) {
-                    return Some(overlay);
-                }
-            }
+                .zip(layout.iter_mut(&mut tree.children[child_layout_index..]))
+                .flat_map(|(branch, (child_layout, child_tree))| {
+                    branch.as_widget_mut().overlay(
+                        child_tree,
+                        child_layout,
+                        renderer,
+                        viewport,
+                        translation,
+                        window,
+                    )
+                })
+                .collect();
         }
-        None
+
+        Vec::new()
+    }
+}
+
+/// Returns the [`Layout`] of the tree child at `index`.
+fn nth_layout(layout: Layout, children: &[widget::Tree], index: usize) -> Layout {
+    layout
+        .iter(children)
+        .nth(index)
+        .expect("child layout")
+        .0
+}
+
+/// Aligns `bounds` within the `space` that starts at its current position.
+fn align(bounds: &mut Rectangle, align_x: iced::Alignment, align_y: iced::Alignment, space: Size) {
+    match align_x {
+        iced::Alignment::Start => {}
+        iced::Alignment::Center => bounds.x += (space.width - bounds.width) / 2.0,
+        iced::Alignment::End => bounds.x += space.width - bounds.width,
+    }
+
+    match align_y {
+        iced::Alignment::Start => {}
+        iced::Alignment::Center => bounds.y += (space.height - bounds.height) / 2.0,
+        iced::Alignment::End => bounds.y += space.height - bounds.height,
     }
 }
 
@@ -2853,21 +2878,24 @@ where
 {
     tree_handle: &'a mut TreeHandle<'b, Message, Theme, Renderer>,
     state: &'a mut widget::Tree,
-    layout: Layout<'a>,
-    tree_layout: Layout<'a>,
+    /// Where the dragged rows float, set by [`DragOverlay::place`].
+    bounds: Layout,
+    /// The layout of the first dragged branch, where it sits in the tree.
+    layout: Layout,
+    tree_layout: Layout,
     viewport: Rectangle,
     dragged_indices: Vec<usize>,
     translation: Vector,
 }
 
-impl<'a, Message, Theme, Renderer> iced::advanced::overlay::Overlay<Message, Theme, Renderer>
-    for DragOverlay<'_, '_, Message, Theme, Renderer>
+impl<Message, Theme, Renderer> DragOverlay<'_, '_, Message, Theme, Renderer>
 where
     Message: Clone,
     Theme: Catalog,
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
-    fn layout(&mut self, _renderer: &Renderer, _bounds: Size) -> layout::Node {
+    /// Returns where the dragged rows float: under the cursor, sized to fit.
+    fn place(&mut self) -> Layout {
         let combined_state = self
             .state
             .state
@@ -2925,13 +2953,20 @@ where
             (310.0, self.tree_handle.line_height)
         };
 
-        layout::Node::new(Size::new(width, height)).move_to(position)
+        Layout::new(Size::new(width, height)).move_to(position)
     }
+}
 
+impl<'a, Message, Theme, Renderer> iced::advanced::overlay::Overlay<Message, Theme, Renderer>
+    for DragOverlay<'_, '_, Message, Theme, Renderer>
+where
+    Message: Clone,
+    Theme: Catalog,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
+{
     fn update(
         &mut self,
         event: &Event,
-        _layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
         shell: &mut Shell<'_, Message>,
@@ -3176,9 +3211,9 @@ where
         renderer: &mut Renderer,
         theme: &Theme,
         style: &renderer::Style,
-        layout: Layout<'_>,
         cursor: mouse::Cursor,
     ) {
+        let layout = self.bounds;
         let combined_state = self
             .state
             .state
@@ -3283,7 +3318,9 @@ where
                     let content_tree_index = primary_index + child_layout_index;
                     let branch_tree = &self.state.children[content_tree_index];
 
-                    if let Some(child_layout) = self.tree_layout.children().nth(primary_index) {
+                    if let Some((child_layout, _)) =
+                        self.tree_layout.iter(&self.state.children).nth(content_tree_index)
+                    {
                         branch_content.as_widget().draw(
                             branch_tree,
                             renderer,
@@ -3299,12 +3336,8 @@ where
         });
     }
 
-    fn mouse_interaction(
-        &self,
-        _layout: Layout<'_>,
-        _cursor: mouse::Cursor,
-        _renderer: &Renderer,
-    ) -> mouse::Interaction {
+    fn mouse_interaction(&self, _cursor: mouse::Cursor, _renderer: &Renderer) -> mouse::Interaction {
+
         mouse::Interaction::Grabbing
     }
 
@@ -3317,7 +3350,7 @@ impl<'a, 'b, Message, Theme, Renderer> DragOverlay<'a, 'b, Message, Theme, Rende
 where
     Message: Clone,
     Theme: Catalog,
-    Renderer: iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: iced::advanced::text::Renderer,
 {
     fn reorder_branches(
         &mut self,
@@ -3557,7 +3590,7 @@ impl<'a, Message, Theme, Renderer> From<TreeHandle<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer<Font = iced::Font> + 'a,
+    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer + 'a,
 {
     fn from(tree: TreeHandle<'a, Message, Theme, Renderer>) -> Self {
         Element::new(tree)

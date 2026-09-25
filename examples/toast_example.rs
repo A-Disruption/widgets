@@ -25,7 +25,7 @@ pub fn main() -> iced::Result {
         .title("toast")
         .theme(theme)
         // Toasts draw their variant icons from Lucide.
-        .font(widgets::lucide::FONT_BYTES)
+        .fonts([widgets::lucide::FONT_BYTES])
         .run()
 }
 
