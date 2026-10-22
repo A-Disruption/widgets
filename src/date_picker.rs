@@ -843,55 +843,60 @@ where
         _style: &renderer::Style,
         cursor: mouse::Cursor,
     ) {
-        let layout = self.layout;
-        let style = theme.style(self.class, Status::Active);
-        let bounds = layout.bounds();
-        let header = header_rect(bounds);
+        // Overlays are drawn into the base layer, and a layer renders its text
+        // after its quads: without a layer of its own, this surface would sit
+        // beneath every piece of text in the window.
+        renderer.with_layer(iced::Rectangle::INFINITE, |renderer| {
+            let layout = self.layout;
+            let style = theme.style(self.class, Status::Active);
+            let bounds = layout.bounds();
+            let header = header_rect(bounds);
 
-        // Panel background + shadow
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds,
-                border: style.border,
-                shadow: style.shadow,
-                snap: true,
-            },
-            style.background,
-        );
-
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: header,
-                border: Border {
-                    color: Color::TRANSPARENT,
-                    width: 0.0,
-                    radius: iced::border::Radius {
-                        top_left: 10.0,
-                        top_right: 10.0,
-                        bottom_right: 0.0,
-                        bottom_left: 0.0,
-                    },
+            // Panel background + shadow
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds,
+                    border: style.border,
+                    shadow: style.shadow,
+                    snap: true,
                 },
-                shadow: Shadow::default(),
-                snap: true,
-            },
-            style.header_background,
-        );
+                style.background,
+            );
 
-        let dow = dow_header_rect(bounds);
-        let grid = grid_rect(bounds);
-        let footer = footer_rect(bounds, self.show_time);
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: header,
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: iced::border::Radius {
+                            top_left: 10.0,
+                            top_right: 10.0,
+                            bottom_right: 0.0,
+                            bottom_left: 0.0,
+                        },
+                    },
+                    shadow: Shadow::default(),
+                    snap: true,
+                },
+                style.header_background,
+            );
 
-        self.draw_header(renderer, &style, header, cursor);
-        self.draw_dow_header(renderer, &style, dow);
-        self.draw_grid(renderer, &style, grid, cursor);
+            let dow = dow_header_rect(bounds);
+            let grid = grid_rect(bounds);
+            let footer = footer_rect(bounds, self.show_time);
 
-        if self.show_time {
-            let tr = time_rect(bounds);
-            self.draw_time_row(renderer, &style, tr, cursor);
-        }
+            self.draw_header(renderer, &style, header, cursor);
+            self.draw_dow_header(renderer, &style, dow);
+            self.draw_grid(renderer, &style, grid, cursor);
 
-        self.draw_footer(renderer, &style, footer, cursor);
+            if self.show_time {
+                let tr = time_rect(bounds);
+                self.draw_time_row(renderer, &style, tr, cursor);
+            }
+
+            self.draw_footer(renderer, &style, footer, cursor);
+        });
     }
 
     fn update(

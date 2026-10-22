@@ -2326,178 +2326,184 @@ where
         _style: &renderer::Style,
         cursor: mouse::Cursor,
     ) {
-        let layout = Placed::new(&self.root);
-        let style = theme.style(self.class);
+        // Overlays are drawn into the base layer, and a layer renders its text
+        // after its quads: without a layer of its own, this surface would sit
+        // beneath every piece of text in the window.
+        renderer.with_layer(iced::Rectangle::INFINITE, |renderer| {
+            let layout = Placed::new(&self.root);
+            let style = theme.style(self.class);
 
-        for (depth, panel) in layout.children().take(self.depth()).enumerate() {
-            let panel_bounds = panel.bounds();
+            for (depth, panel) in layout.children().take(self.depth()).enumerate() {
+                let panel_bounds = panel.bounds();
 
-            // Every color a panel draws is faded by its own transition, so a
-            // submenu fades in independently of the parent it opened from.
-            // Children that inherit `text_color` come with it; one that sets
-            // its own color does not — see `crate::animation`.
-            let appearance = self.faded_style(
-                style,
-                self.state.panel_progress.get(depth).copied().unwrap_or(1.0),
-            );
+                // Every color a panel draws is faded by its own transition, so a
+                // submenu fades in independently of the parent it opened from.
+                // Children that inherit `text_color` come with it; one that sets
+                // its own color does not — see `crate::animation`.
+                let appearance = self.faded_style(
+                    style,
+                    self.state.panel_progress.get(depth).copied().unwrap_or(1.0),
+                );
 
-            let Some(items) = panel_items(self.items, &self.state.path, depth) else {
-                continue;
-            };
+                let Some(items) = panel_items(self.items, &self.state.path, depth) else {
+                    continue;
+                };
 
-            let Some(trees) = panel_trees_ref(self.trees, &self.state.path, depth) else {
-                continue;
-            };
+                let Some(trees) = panel_trees_ref(self.trees, &self.state.path, depth) else {
+                    continue;
+                };
 
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: panel_bounds,
-                    border: Border {
-                        radius: self.radius.into(),
-                        ..appearance.border
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: panel_bounds,
+                        border: Border {
+                            radius: self.radius.into(),
+                            ..appearance.border
+                        },
+                        shadow: appearance.shadow,
+                        ..renderer::Quad::default()
                     },
-                    shadow: appearance.shadow,
-                    ..renderer::Quad::default()
-                },
-                appearance.background,
-            );
+                    appearance.background,
+                );
 
-            // A submenu stays highlighted while its own panel is open, so the
-            // chain of open rows reads as a single connected path.
-            let open_row = self.state.path.get(depth).copied();
+                // A submenu stays highlighted while its own panel is open, so the
+                // chain of open rows reads as a single connected path.
+                let open_row = self.state.path.get(depth).copied();
 
-            for ((index, row), (item, tree)) in panel
-                .children()
-                .enumerate()
-                .zip(items.iter().zip(trees.iter()))
-            {
-                let row_bounds = row.bounds();
+                for ((index, row), (item, tree)) in panel
+                    .children()
+                    .enumerate()
+                    .zip(items.iter().zip(trees.iter()))
+                {
+                    let row_bounds = row.bounds();
 
-                let Some(content) = item.content() else {
-                    let rule = Rectangle {
-                        x: row_bounds.x,
-                        y: row_bounds.y + (row_bounds.height - SEPARATOR_THICKNESS) / 2.0,
-                        width: row_bounds.width,
-                        height: SEPARATOR_THICKNESS,
+                    let Some(content) = item.content() else {
+                        let rule = Rectangle {
+                            x: row_bounds.x,
+                            y: row_bounds.y + (row_bounds.height - SEPARATOR_THICKNESS) / 2.0,
+                            width: row_bounds.width,
+                            height: SEPARATOR_THICKNESS,
+                        };
+
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: rule,
+                                ..renderer::Quad::default()
+                            },
+                            appearance.separator_color,
+                        );
+
+                        continue;
                     };
 
-                    renderer.fill_quad(
-                        renderer::Quad {
-                            bounds: rule,
-                            ..renderer::Quad::default()
-                        },
-                        appearance.separator_color,
-                    );
+                    let is_highlighted =
+                        self.state.highlighted == Some((depth, index)) || open_row == Some(index);
 
-                    continue;
-                };
-
-                let is_highlighted =
-                    self.state.highlighted == Some((depth, index)) || open_row == Some(index);
-
-                if is_highlighted && item.is_interactive() {
-                    renderer.fill_quad(
-                        renderer::Quad {
-                            bounds: row_bounds,
-                            border: Border {
-                                radius: appearance.item_radius.into(),
-                                ..Border::default()
+                    if is_highlighted && item.is_interactive() {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: row_bounds,
+                                border: Border {
+                                    radius: appearance.item_radius.into(),
+                                    ..Border::default()
+                                },
+                                ..renderer::Quad::default()
                             },
-                            ..renderer::Quad::default()
-                        },
-                        appearance.hovered_item_background,
-                    );
-                }
+                            appearance.hovered_item_background,
+                        );
+                    }
 
-                let text_color = if !item.is_interactive() {
-                    appearance.disabled_text_color
-                } else if is_highlighted {
-                    appearance.hovered_text_color
-                } else {
-                    appearance.text_color
-                };
+                    let text_color = if !item.is_interactive() {
+                        appearance.disabled_text_color
+                    } else if is_highlighted {
+                        appearance.hovered_text_color
+                    } else {
+                        appearance.text_color
+                    };
 
-                // The layout can be one frame behind the items — a hover that
-                // opens a submenu changes the panel chain before the next
-                // layout pass runs. A row whose node does not match the item
-                // is simply skipped; the following frame draws it correctly.
-                let mut slots = row.children();
+                    // The layout can be one frame behind the items — a hover that
+                    // opens a submenu changes the panel chain before the next
+                    // layout pass runs. A row whose node does not match the item
+                    // is simply skipped; the following frame draws it correctly.
+                    let mut slots = row.children();
 
-                let (Some(icon_layout), Some(content_layout)) = (slots.next(), slots.next()) else {
-                    continue;
-                };
+                    let (Some(icon_layout), Some(content_layout)) = (slots.next(), slots.next())
+                    else {
+                        continue;
+                    };
 
-                if let Some(icon) = item.icon_element() {
-                    icon.draw(
-                        &tree.children[ITEM_ICON],
+                    if let Some(icon) = item.icon_element() {
+                        icon.draw(
+                            &tree.children[ITEM_ICON],
+                            renderer,
+                            theme,
+                            &renderer::Style { text_color },
+                            icon_layout.layout(),
+                            cursor,
+                            &row_bounds,
+                        );
+                    }
+
+                    // The gutters are recovered from where pass 2 placed the
+                    // content, which keeps the panel geometry in one place rather
+                    // than duplicated into the widget state.
+                    let content_bounds = content_layout.bounds();
+                    let glyph = glyph_size(renderer);
+
+                    let leading_slot = || Rectangle {
+                        x: row_bounds.x + self.item_padding.left,
+                        width: content_bounds.x
+                            - self.gutter_spacing
+                            - (row_bounds.x + self.item_padding.left),
+                        ..row_bounds
+                    };
+
+                    let trailing_slot = || Rectangle {
+                        x: content_bounds.x + content_bounds.width + self.gutter_spacing,
+                        width: (row_bounds.x + row_bounds.width - self.item_padding.right)
+                            - (content_bounds.x + content_bounds.width + self.gutter_spacing),
+                        ..row_bounds
+                    };
+
+                    if item.check() == Some(true) {
+                        let slot = match self.check_side {
+                            CheckSide::Leading => leading_slot(),
+                            CheckSide::Trailing => trailing_slot(),
+                        };
+
+                        draw_glyph(
+                            renderer,
+                            lucide::Icon::Check,
+                            slot,
+                            glyph,
+                            text_color,
+                            row_bounds,
+                        );
+                    }
+
+                    if item.opens_submenu() {
+                        draw_glyph(
+                            renderer,
+                            lucide::Icon::ChevronRight,
+                            trailing_slot(),
+                            glyph,
+                            text_color,
+                            row_bounds,
+                        );
+                    }
+
+                    content.draw(
+                        &tree.children[ITEM_CONTENT],
                         renderer,
                         theme,
                         &renderer::Style { text_color },
-                        icon_layout.layout(),
+                        content_layout.layout(),
                         cursor,
                         &row_bounds,
                     );
                 }
-
-                // The gutters are recovered from where pass 2 placed the
-                // content, which keeps the panel geometry in one place rather
-                // than duplicated into the widget state.
-                let content_bounds = content_layout.bounds();
-                let glyph = glyph_size(renderer);
-
-                let leading_slot = || Rectangle {
-                    x: row_bounds.x + self.item_padding.left,
-                    width: content_bounds.x
-                        - self.gutter_spacing
-                        - (row_bounds.x + self.item_padding.left),
-                    ..row_bounds
-                };
-
-                let trailing_slot = || Rectangle {
-                    x: content_bounds.x + content_bounds.width + self.gutter_spacing,
-                    width: (row_bounds.x + row_bounds.width - self.item_padding.right)
-                        - (content_bounds.x + content_bounds.width + self.gutter_spacing),
-                    ..row_bounds
-                };
-
-                if item.check() == Some(true) {
-                    let slot = match self.check_side {
-                        CheckSide::Leading => leading_slot(),
-                        CheckSide::Trailing => trailing_slot(),
-                    };
-
-                    draw_glyph(
-                        renderer,
-                        lucide::Icon::Check,
-                        slot,
-                        glyph,
-                        text_color,
-                        row_bounds,
-                    );
-                }
-
-                if item.opens_submenu() {
-                    draw_glyph(
-                        renderer,
-                        lucide::Icon::ChevronRight,
-                        trailing_slot(),
-                        glyph,
-                        text_color,
-                        row_bounds,
-                    );
-                }
-
-                content.draw(
-                    &tree.children[ITEM_CONTENT],
-                    renderer,
-                    theme,
-                    &renderer::Style { text_color },
-                    content_layout.layout(),
-                    cursor,
-                    &row_bounds,
-                );
             }
-        }
+        });
     }
 
     fn update(

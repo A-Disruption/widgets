@@ -1152,93 +1152,98 @@ where
         _style: &renderer::Style,
         cursor: mouse::Cursor,
     ) {
-        let layout = self.layout;
-        let bounds = layout.bounds();
-        let status = if cursor.is_over(bounds) {
-            Status::Hovered
-        } else {
-            Status::Active
-        };
-        let style = theme.style(self.class, status);
+        // Overlays are drawn into the base layer, and a layer renders its text
+        // after its quads: without a layer of its own, this surface would sit
+        // beneath every piece of text in the window.
+        renderer.with_layer(iced::Rectangle::INFINITE, |renderer| {
+            let layout = self.layout;
+            let bounds = layout.bounds();
+            let status = if cursor.is_over(bounds) {
+                Status::Hovered
+            } else {
+                Status::Active
+            };
+            let style = theme.style(self.class, status);
 
-        draw_panel(renderer, bounds, style);
-        draw_header(
-            renderer,
-            bounds,
-            style,
-            self.state.page,
-            self.state.feedback_message(),
-            cursor,
-        );
-        match self.state.page {
-            PickerPage::Picker => {
-                draw_preview(
-                    renderer,
-                    preview_rect(bounds, self.state.page),
-                    self.state.color,
-                    style,
-                );
-            }
-            PickerPage::Contrast => {
-                draw_contrast_summary(
-                    renderer,
-                    contrast_summary_rect(bounds),
-                    self.state.foreground_color,
-                    self.state.background_color,
-                    style,
-                );
-                draw_contrast_wells(
-                    renderer,
-                    bounds,
-                    style,
-                    self.state.foreground_color,
-                    self.state.background_color,
-                    self.state.contrast_target,
-                    cursor,
-                );
-            }
-        }
-        draw_controls(
-            renderer,
-            bounds,
-            style,
-            self.state.color,
-            self.state.model,
-            cursor,
-            self.state.page,
-        );
-        draw_sliders(
-            renderer,
-            bounds,
-            style,
-            self.state.color,
-            self.state.model,
-            cursor,
-            self.state.page,
-        );
-        draw_swatches(
-            renderer,
-            bounds,
-            style,
-            &self.state.swatch_groups,
-            self.state.active_swatch_group,
-            self.state.color,
-            cursor,
-            self.state.page,
-        );
-        if let Some(menu) = self.state.open_menu {
-            draw_menu(
+            draw_panel(renderer, bounds, style);
+            draw_header(
                 renderer,
                 bounds,
                 style,
                 self.state.page,
-                menu,
-                self.state.model,
-                &self.state.swatch_groups,
-                self.state.active_swatch_group,
+                self.state.feedback_message(),
                 cursor,
             );
-        }
+            match self.state.page {
+                PickerPage::Picker => {
+                    draw_preview(
+                        renderer,
+                        preview_rect(bounds, self.state.page),
+                        self.state.color,
+                        style,
+                    );
+                }
+                PickerPage::Contrast => {
+                    draw_contrast_summary(
+                        renderer,
+                        contrast_summary_rect(bounds),
+                        self.state.foreground_color,
+                        self.state.background_color,
+                        style,
+                    );
+                    draw_contrast_wells(
+                        renderer,
+                        bounds,
+                        style,
+                        self.state.foreground_color,
+                        self.state.background_color,
+                        self.state.contrast_target,
+                        cursor,
+                    );
+                }
+            }
+            draw_controls(
+                renderer,
+                bounds,
+                style,
+                self.state.color,
+                self.state.model,
+                cursor,
+                self.state.page,
+            );
+            draw_sliders(
+                renderer,
+                bounds,
+                style,
+                self.state.color,
+                self.state.model,
+                cursor,
+                self.state.page,
+            );
+            draw_swatches(
+                renderer,
+                bounds,
+                style,
+                &self.state.swatch_groups,
+                self.state.active_swatch_group,
+                self.state.color,
+                cursor,
+                self.state.page,
+            );
+            if let Some(menu) = self.state.open_menu {
+                draw_menu(
+                    renderer,
+                    bounds,
+                    style,
+                    self.state.page,
+                    menu,
+                    self.state.model,
+                    &self.state.swatch_groups,
+                    self.state.active_swatch_group,
+                    cursor,
+                );
+            }
+        });
     }
 
     fn update(

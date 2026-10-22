@@ -837,40 +837,45 @@ where
         _style: &renderer::Style,
         cursor: mouse::Cursor,
     ) {
-        let bounds = self.layout.bounds();
+        // Overlays are drawn into the base layer, and a layer renders its text
+        // after its quads: without a layer of its own, this surface would sit
+        // beneath every piece of text in the window.
+        renderer.with_layer(iced::Rectangle::INFINITE, |renderer| {
+            let bounds = self.layout.bounds();
 
-        // Deliberately not faded. A popover holds arbitrary content, and
-        // widgets that paint themselves — `button`, `checkbox`, anything with
-        // its own `Catalog` — ignore the inherited text color and so would stay
-        // at full strength while the surface behind them faded in. Half-faded
-        // reads as broken; sliding the whole thing reads as deliberate. See
-        // `crate::animation` for why real opacity is not available here.
-        let style = theme.style(self.class);
+            // Deliberately not faded. A popover holds arbitrary content, and
+            // widgets that paint themselves — `button`, `checkbox`, anything with
+            // its own `Catalog` — ignore the inherited text color and so would stay
+            // at full strength while the surface behind them faded in. Half-faded
+            // reads as broken; sliding the whole thing reads as deliberate. See
+            // `crate::animation` for why real opacity is not available here.
+            let style = theme.style(self.class);
 
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds,
-                border: Border {
-                    radius: self.radius.into(),
-                    ..style.border
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds,
+                    border: Border {
+                        radius: self.radius.into(),
+                        ..style.border
+                    },
+                    shadow: style.shadow,
+                    ..renderer::Quad::default()
                 },
-                shadow: style.shadow,
-                ..renderer::Quad::default()
-            },
-            style.background,
-        );
+                style.background,
+            );
 
-        self.content.draw(
-            self.tree,
-            renderer,
-            theme,
-            &renderer::Style {
-                text_color: style.text_color,
-            },
-            self.content_layout,
-            cursor,
-            &bounds,
-        );
+            self.content.draw(
+                self.tree,
+                renderer,
+                theme,
+                &renderer::Style {
+                    text_color: style.text_color,
+                },
+                self.content_layout,
+                cursor,
+                &bounds,
+            );
+        });
     }
 
     fn update(

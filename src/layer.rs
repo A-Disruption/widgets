@@ -1273,60 +1273,65 @@ where
         _style: &renderer::Style,
         cursor: mouse::Cursor,
     ) {
-        let surface = self.surface;
-        let bounds = surface.bounds();
-        let style = theme.style(self.class);
+        // Overlays are drawn into the base layer, and a layer renders its text
+        // after its quads: without a layer of its own, this surface would sit
+        // beneath every piece of text in the window.
+        renderer.with_layer(iced::Rectangle::INFINITE, |renderer| {
+            let surface = self.surface;
+            let bounds = surface.bounds();
+            let style = theme.style(self.class);
 
-        // The backdrop is the one thing here with no children of its own, so it
-        // is the one thing that can honestly be faded.
-        if let Some(alpha) = self.backdrop {
+            // The backdrop is the one thing here with no children of its own, so it
+            // is the one thing that can honestly be faded.
+            if let Some(alpha) = self.backdrop {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: self.viewport,
+                        ..renderer::Quad::default()
+                    },
+                    animation::fade(
+                        Color {
+                            a: alpha,
+                            ..style.backdrop_color
+                        },
+                        self.progress,
+                    ),
+                );
+            }
+
             renderer.fill_quad(
                 renderer::Quad {
-                    bounds: self.viewport,
+                    bounds,
+                    border: Border {
+                        radius: self.radius.into(),
+                        ..style.border
+                    },
+                    shadow: style.shadow,
                     ..renderer::Quad::default()
                 },
-                animation::fade(
-                    Color {
-                        a: alpha,
-                        ..style.backdrop_color
+                style.background,
+            );
+
+            self.draw_header(renderer, &style, bounds, cursor);
+
+            let content = self.content_layout;
+
+            // Clipped to the surface: a window resized smaller than its content
+            // asked for has to cut that content off rather than let it paint across
+            // the page.
+            renderer.with_layer(bounds, |renderer| {
+                self.content.draw(
+                    self.tree,
+                    renderer,
+                    theme,
+                    &renderer::Style {
+                        text_color: style.text_color,
                     },
-                    self.progress,
-                ),
-            );
-        }
-
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds,
-                border: Border {
-                    radius: self.radius.into(),
-                    ..style.border
-                },
-                shadow: style.shadow,
-                ..renderer::Quad::default()
-            },
-            style.background,
-        );
-
-        self.draw_header(renderer, &style, bounds, cursor);
-
-        let content = self.content_layout;
-
-        // Clipped to the surface: a window resized smaller than its content
-        // asked for has to cut that content off rather than let it paint across
-        // the page.
-        renderer.with_layer(bounds, |renderer| {
-            self.content.draw(
-                self.tree,
-                renderer,
-                theme,
-                &renderer::Style {
-                    text_color: style.text_color,
-                },
-                content,
-                cursor,
-                &bounds,
-            );
+                    content,
+                    cursor,
+                    &bounds,
+                );
+            });
         });
     }
 

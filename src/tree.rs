@@ -3198,125 +3198,135 @@ where
         style: &renderer::Style,
         cursor: mouse::Cursor,
     ) {
-        let layout = self.bounds;
-        let combined_state = self
-            .state
-            .state
-            .downcast_ref::<CombinedState<Renderer::Paragraph>>();
-        let child_layout_index = self.tree_handle.get_child_content_index();
-        let drag_bounds = layout.bounds();
-        let tree_style = theme.style(&self.tree_handle.class);
+        // Overlays are drawn into the base layer, and a layer renders its text
+        // after its quads: without a layer of its own, this surface would sit
+        // beneath every piece of text in the window.
+        renderer.with_layer(iced::Rectangle::INFINITE, |renderer| {
+            let layout = self.bounds;
+            let combined_state = self
+                .state
+                .state
+                .downcast_ref::<CombinedState<Renderer::Paragraph>>();
+            let child_layout_index = self.tree_handle.get_child_content_index();
+            let drag_bounds = layout.bounds();
+            let tree_style = theme.style(&self.tree_handle.class);
 
-        renderer.with_layer(self.viewport, |renderer| {
-            let primary_index = self
-                .tree_handle
-                .branches
-                .iter()
-                .position(|b| {
-                    if let Some(ref drag) = combined_state.tree_state.drag_active {
-                        b.id == drag.primary_node
+            renderer.with_layer(self.viewport, |renderer| {
+                let primary_index = self
+                    .tree_handle
+                    .branches
+                    .iter()
+                    .position(|b| {
+                        if let Some(ref drag) = combined_state.tree_state.drag_active {
+                            b.id == drag.primary_node
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or_else(|| self.dragged_indices.first().copied().unwrap_or(0));
+
+                if primary_index >= self.tree_handle.branch_content.len() {
+                    return;
+                }
+
+                let branch_height =
+                    if primary_index < combined_state.tree_state.branch_heights.len() {
+                        combined_state.tree_state.branch_heights[primary_index]
+                            .max(self.tree_handle.line_height)
                     } else {
-                        false
-                    }
-                })
-                .unwrap_or_else(|| self.dragged_indices.first().copied().unwrap_or(0));
+                        self.tree_handle.line_height
+                    };
 
-            if primary_index >= self.tree_handle.branch_content.len() {
-                return;
-            }
+                let effective_depth =
+                    if let Some(ref branch_order) = combined_state.tree_state.branch_order {
+                        branch_order
+                            .iter()
+                            .find(|bs| {
+                                self.tree_handle
+                                    .branches
+                                    .get(primary_index)
+                                    .map(|b| b.id == bs.id)
+                                    .unwrap_or(false)
+                            })
+                            .map(|bs| bs.depth)
+                            .unwrap_or_else(|| {
+                                self.tree_handle
+                                    .branches
+                                    .get(primary_index)
+                                    .map(|b| b.depth)
+                                    .unwrap_or(0)
+                            })
+                    } else {
+                        self.tree_handle
+                            .branches
+                            .get(primary_index)
+                            .map(|b| b.depth)
+                            .unwrap_or(0)
+                    };
 
-            let branch_height = if primary_index < combined_state.tree_state.branch_heights.len() {
-                combined_state.tree_state.branch_heights[primary_index].max(self.tree_handle.line_height)
-            } else {
-                self.tree_handle.line_height
-            };
-
-            let effective_depth =
-                if let Some(ref branch_order) = combined_state.tree_state.branch_order {
-                    branch_order
-                        .iter()
-                        .find(|bs| {
-                            self.tree_handle
-                                .branches
-                                .get(primary_index)
-                                .map(|b| b.id == bs.id)
-                                .unwrap_or(false)
-                        })
-                        .map(|bs| bs.depth)
-                        .unwrap_or_else(|| {
-                            self.tree_handle
-                                .branches
-                                .get(primary_index)
-                                .map(|b| b.depth)
-                                .unwrap_or(0)
-                        })
-                } else {
-                    self.tree_handle
-                        .branches
-                        .get(primary_index)
-                        .map(|b| b.depth)
-                        .unwrap_or(0)
+                let branch_bounds = Rectangle {
+                    x: drag_bounds.x,
+                    y: drag_bounds.y,
+                    width: combined_state
+                        .tree_state
+                        .drag_active
+                        .as_ref()
+                        .unwrap()
+                        .drag_start_bounds
+                        .width,
+                    height: branch_height,
                 };
 
-            let branch_bounds = Rectangle {
-                x: drag_bounds.x,
-                y: drag_bounds.y,
-                width: combined_state
-                    .tree_state
-                    .drag_active
-                    .as_ref()
-                    .unwrap()
-                    .drag_start_bounds
-                    .width,
-                height: branch_height,
-            };
-
-            // Draw the branch background with decorations
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: branch_bounds,
-                    border: Border {
-                        color: tree_style.selection_border.scale_alpha(0.9),
-                        width: 2.0,
-                        radius: Radius::from(2.0),
+                // Draw the branch background with decorations
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: branch_bounds,
+                        border: Border {
+                            color: tree_style.selection_border.scale_alpha(0.9),
+                            width: 2.0,
+                            radius: Radius::from(2.0),
+                        },
+                        ..Default::default()
                     },
-                    ..Default::default()
-                },
-                tree_style.selection_background.scale_alpha(0.9),
-            );
+                    tree_style.selection_background.scale_alpha(0.9),
+                );
 
-            // Draw the content
-            let indent_x =
-                self.tree_handle.padding_x + (effective_depth as f32 * self.tree_handle.indent);
-            let content_x = indent_x + ARROW_W + CONTENT_GAP;
-            let translation = Vector::new(
-                (drag_bounds.x + content_x) - self.layout.bounds().x,
-                drag_bounds.y - self.layout.bounds().y,
-            );
+                // Draw the content
+                let indent_x =
+                    self.tree_handle.padding_x + (effective_depth as f32 * self.tree_handle.indent);
+                let content_x = indent_x + ARROW_W + CONTENT_GAP;
+                let translation = Vector::new(
+                    (drag_bounds.x + content_x) - self.layout.bounds().x,
+                    drag_bounds.y - self.layout.bounds().y,
+                );
 
-            let transparent_style = renderer::Style {
-                text_color: style.text_color.scale_alpha(0.9),
-            };
+                let transparent_style = renderer::Style {
+                    text_color: style.text_color.scale_alpha(0.9),
+                };
 
-            renderer.with_translation(translation, |renderer| {
-                if let Some(branch_content) = self.tree_handle.branch_content.get(primary_index) {
-                    let content_tree_index = primary_index + child_layout_index;
-                    let branch_tree = &self.state.children[content_tree_index];
-
-                    if let Some((child_layout, _)) =
-                        self.tree_layout.iter(&self.state.children).nth(content_tree_index)
+                renderer.with_translation(translation, |renderer| {
+                    if let Some(branch_content) = self.tree_handle.branch_content.get(primary_index)
                     {
-                        branch_content.draw(
-                            branch_tree,
-                            renderer,
-                            theme,
-                            &transparent_style,
-                            child_layout,
-                            cursor,
-                            &self.tree_layout.bounds(),
-                        );
+                        let content_tree_index = primary_index + child_layout_index;
+                        let branch_tree = &self.state.children[content_tree_index];
+
+                        if let Some((child_layout, _)) = self
+                            .tree_layout
+                            .iter(&self.state.children)
+                            .nth(content_tree_index)
+                        {
+                            branch_content.draw(
+                                branch_tree,
+                                renderer,
+                                theme,
+                                &transparent_style,
+                                child_layout,
+                                cursor,
+                                &self.tree_layout.bounds(),
+                            );
+                        }
                     }
-                }
+                });
             });
         });
     }

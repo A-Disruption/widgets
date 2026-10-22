@@ -755,113 +755,118 @@ where
         _style: &renderer::Style,
         cursor: mouse::Cursor,
     ) {
-        let now = Instant::now();
+        // Overlays are drawn into the base layer, and a layer renders its text
+        // after its quads: without a layer of its own, this surface would sit
+        // beneath every piece of text in the window.
+        renderer.with_layer(iced::Rectangle::INFINITE, |renderer| {
+            let now = Instant::now();
 
-        for ((item, tree), (bounds, content_layout)) in self
-            .items
-            .iter()
-            .zip(self.trees.iter())
-            .zip(self.placements.iter().copied())
-        {
-            let Some(entry) = self.state.entry(item.id) else {
-                continue;
-            };
+            for ((item, tree), (bounds, content_layout)) in self
+                .items
+                .iter()
+                .zip(self.trees.iter())
+                .zip(self.placements.iter().copied())
+            {
+                let Some(entry) = self.state.entry(item.id) else {
+                    continue;
+                };
 
-            let progress = entry.transition.progress(now);
-            let style = theme.style(self.class, item.variant);
+                let progress = entry.transition.progress(now);
+                let style = theme.style(self.class, item.variant);
 
-            // Slide only, as everywhere else: a toast holds arbitrary content,
-            // and children that paint themselves would not fade with it.
-            let slide = animation::slide(self.anchor.slide_from(), self.motion.slide, progress);
-            let bounds = Rectangle {
-                x: bounds.x + slide.x,
-                y: bounds.y + slide.y,
-                ..bounds
-            };
-
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds,
-                    border: Border {
-                        radius: self.radius.into(),
-                        ..style.border
-                    },
-                    shadow: style.shadow,
-                    ..renderer::Quad::default()
-                },
-                style.background,
-            );
-
-            // The countdown, along the bottom edge.
-            if let Some(timeout) = item.timeout {
-                let elapsed = now.saturating_duration_since(entry.born).as_secs_f32();
-                let remaining =
-                    (1.0 - elapsed / timeout.as_secs_f32().max(f32::EPSILON)).clamp(0.0, 1.0);
-
-                let track = countdown_track(bounds, self.radius);
+                // Slide only, as everywhere else: a toast holds arbitrary content,
+                // and children that paint themselves would not fade with it.
+                let slide = animation::slide(self.anchor.slide_from(), self.motion.slide, progress);
+                let bounds = Rectangle {
+                    x: bounds.x + slide.x,
+                    y: bounds.y + slide.y,
+                    ..bounds
+                };
 
                 renderer.fill_quad(
                     renderer::Quad {
-                        bounds: Rectangle {
-                            x: track.x,
-                            y: bounds.y + bounds.height - COUNTDOWN_HEIGHT,
-                            width: track.width * remaining,
-                            height: COUNTDOWN_HEIGHT,
-                        },
+                        bounds,
                         border: Border {
-                            radius: (COUNTDOWN_HEIGHT / 2.0).into(),
-                            ..Border::default()
+                            radius: self.radius.into(),
+                            ..style.border
                         },
+                        shadow: style.shadow,
                         ..renderer::Quad::default()
                     },
-                    style.countdown,
+                    style.background,
                 );
+
+                // The countdown, along the bottom edge.
+                if let Some(timeout) = item.timeout {
+                    let elapsed = now.saturating_duration_since(entry.born).as_secs_f32();
+                    let remaining =
+                        (1.0 - elapsed / timeout.as_secs_f32().max(f32::EPSILON)).clamp(0.0, 1.0);
+
+                    let track = countdown_track(bounds, self.radius);
+
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: track.x,
+                                y: bounds.y + bounds.height - COUNTDOWN_HEIGHT,
+                                width: track.width * remaining,
+                                height: COUNTDOWN_HEIGHT,
+                            },
+                            border: Border {
+                                radius: (COUNTDOWN_HEIGHT / 2.0).into(),
+                                ..Border::default()
+                            },
+                            ..renderer::Quad::default()
+                        },
+                        style.countdown,
+                    );
+                }
+
+                if let Some(icon) = item.variant.icon().filter(|_| item.show_icon) {
+                    let glyph = glyph_size(renderer);
+
+                    let slot = Rectangle {
+                        x: bounds.x + self.padding,
+                        y: bounds.y + self.padding,
+                        width: glyph,
+                        height: glyph,
+                    };
+
+                    renderer.fill_text(
+                        text::Text {
+                            content: icon.character().to_string(),
+                            font: lucide::FONT,
+                            size: iced::Pixels(glyph),
+                            line_height: text::LineHeight::default(),
+                            bounds: slot.size(),
+                            align_x: text::Alignment::Center,
+                            align_y: iced::alignment::Vertical::Center,
+                            shaping: text::Shaping::Basic,
+                            wrapping: text::Wrapping::None,
+                            ellipsis: text::Ellipsis::default(),
+                            hint_factor: None,
+                        },
+                        slot.center(),
+                        style.countdown_color(),
+                        bounds,
+                    );
+                }
+
+                renderer.with_translation(slide, |renderer| {
+                    item.content.draw(
+                        tree,
+                        renderer,
+                        theme,
+                        &renderer::Style {
+                            text_color: style.text_color,
+                        },
+                        content_layout,
+                        cursor,
+                        &bounds,
+                    );
+                });
             }
-
-            if let Some(icon) = item.variant.icon().filter(|_| item.show_icon) {
-                let glyph = glyph_size(renderer);
-
-                let slot = Rectangle {
-                    x: bounds.x + self.padding,
-                    y: bounds.y + self.padding,
-                    width: glyph,
-                    height: glyph,
-                };
-
-                renderer.fill_text(
-                    text::Text {
-                        content: icon.character().to_string(),
-                        font: lucide::FONT,
-                        size: iced::Pixels(glyph),
-                        line_height: text::LineHeight::default(),
-                        bounds: slot.size(),
-                        align_x: text::Alignment::Center,
-                        align_y: iced::alignment::Vertical::Center,
-                        shaping: text::Shaping::Basic,
-                        wrapping: text::Wrapping::None,
-                        ellipsis: text::Ellipsis::default(),
-                        hint_factor: None,
-                    },
-                    slot.center(),
-                    style.countdown_color(),
-                    bounds,
-                );
-            }
-
-            renderer.with_translation(slide, |renderer| {
-                item.content.draw(
-                    tree,
-                    renderer,
-                    theme,
-                    &renderer::Style {
-                        text_color: style.text_color,
-                    },
-                    content_layout,
-                    cursor,
-                    &bounds,
-                );
-            });
-        }
+        });
     }
 
     fn update(
