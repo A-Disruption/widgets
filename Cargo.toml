@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.15.0-dev", features = ["tokio", "advanced", "debug"] }
+iced = { version = "0.15.0-dev", features = ["tokio", "advanced"] }
 chrono = { version = "0.4", optional = true }
 # Optional, behind `m3_theme`. Consumers that don't want Material Design 3
 # styling never pull this in.
@@ -12,6 +12,10 @@ material_theme = { git = "https://github.com/A-Disruption/material_theme", optio
 
 [dev-dependencies]
 iced_runtime = { version = "0.15.0-dev" }
+# iced's debug tools (F12 metrics) for the examples only. As a normal
+# dependency feature it would turn on in every application that uses these
+# widgets, since cargo unifies features across the graph.
+iced = { version = "0.15.0-dev", features = ["debug"] }
 
 # `iced` is asked for by version above and pointed at a source here, so nothing
 # about where it comes from is baked into the dependency itself. A consumer can
