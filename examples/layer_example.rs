@@ -21,6 +21,7 @@
 //!   still work the instant a drag ends. Both windows stay where you put them
 //!   after being closed and reopened.
 
+use iced::Widget as _;
 use iced::widget::{button, column, container, row, space, stack, text};
 use iced::{Element, Fill, Theme};
 
@@ -176,7 +177,7 @@ impl Example {
             self.sheets(),
             self.corner(),
         ]
-        .into()
+        .boxed()
     }
 
     /// A dialog with chrome: a title bar to drag it by and eight resize
@@ -211,7 +212,7 @@ impl Example {
         .min_height(240.0)
         .max_width(520.0)
         .on_dismiss(Message::Dismiss)
-        .into()
+        .boxed()
     }
 
     /// The same chrome without a backdrop, anchored to a corner rather than the
@@ -232,7 +233,7 @@ impl Example {
         .open(self.showing(Panel::Tool))
         .min_width(260.0)
         .on_dismiss(Message::Dismiss)
-        .into()
+        .boxed()
     }
 
     /// The ordinary case: centred, dimmed, undecorated.
@@ -252,7 +253,7 @@ impl Example {
         .open(self.showing(Panel::Confirm))
         .min_width(340.0)
         .on_dismiss(Message::Dismiss)
-        .into()
+        .boxed()
     }
 
     /// The same dialog, but its `on_dismiss` only counts the attempt. Escape
@@ -270,7 +271,7 @@ impl Example {
         .open(self.showing(Panel::Stubborn))
         .min_width(340.0)
         .on_dismiss(Message::Refused)
-        .into()
+        .boxed()
     }
 
     fn sheets(&self) -> Element<'_, Message> {
@@ -287,7 +288,7 @@ impl Example {
         .open(matches!(self.panel, Some(Panel::Sheet(_))))
         .min_width(300.0)
         .on_dismiss(Message::Dismiss)
-        .into()
+        .boxed()
     }
 
     /// A corner-anchored panel with no backdrop, so the page stays live behind
@@ -305,6 +306,6 @@ impl Example {
         .anchor(self.corner)
         .open(matches!(self.panel, Some(Panel::Corner(_))))
         .on_dismiss(Message::Dismiss)
-        .into()
+        .boxed()
     }
 }

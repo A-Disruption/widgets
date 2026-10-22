@@ -1,3 +1,4 @@
+use iced::Widget as _;
 use iced::{
     Element, Length, Task, Theme,
     alignment::Horizontal,
@@ -186,13 +187,13 @@ impl DatePickerApp {
                 .on_change_with_time(Message::SingleChangedWithTime)
                 .on_close(|| Message::CloseSingle)
                 .on_today(|_| Message::SingleToday)
-                .into()
+                .boxed()
         } else {
             date_picker(self.single_open, self.single_selection.clone())
                 .on_change(Message::SingleChanged)
                 .on_close(|| Message::CloseSingle)
                 .on_today(|_| Message::SingleToday)
-                .into()
+                .boxed()
         };
 
         let range_picker: Element<'_, Message> =
@@ -200,12 +201,12 @@ impl DatePickerApp {
                 .on_change(Message::RangeChanged)
                 .on_close(|| Message::CloseRange)
                 .on_today(|_| Message::RangeToday)
-                .into();
+                .boxed();
 
         container(column![content, single_picker, range_picker])
             .width(Length::Fill)
             .height(Length::Fill)
-            .into()
+            .boxed()
     }
 }
 

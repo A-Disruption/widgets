@@ -1,3 +1,4 @@
+use iced::Widget as _;
 use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Alignment, Element, Task, Theme};
 use std::collections::HashSet;
@@ -177,7 +178,7 @@ impl App {
             )
         ]
         .align_x(iced::Alignment::Center)
-        .into()
+        .boxed()
     }
 }
 

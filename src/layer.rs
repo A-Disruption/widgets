@@ -59,6 +59,7 @@
 //! it is a plain quad this widget draws itself, with no children to disagree
 //! with it.
 
+use iced::Widget as _;
 use iced::advanced::text;
 use iced::advanced::widget::{self, Operation, tree::Tree};
 use iced::advanced::{
@@ -124,7 +125,7 @@ const HANDLE_MIN_CONTENT_HEIGHT: f32 = 48.0;
 
 /// Creates a [`Layer`] anchored to the centre of the viewport.
 pub fn layer<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Layer<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
@@ -140,7 +141,7 @@ where
 /// [`modal`] instead when the surface holds work the user may want to move
 /// aside or make room in.
 pub fn dialog<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Layer<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
@@ -160,7 +161,7 @@ where
 /// an edge: a sheet is a single surface with application-owned visibility,
 /// which is exactly what a layer is. A toast is a list with per-item timers.
 pub fn sheet<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
     side: Anchor,
 ) -> Layer<'a, Message, Theme, Renderer>
 where
@@ -186,7 +187,7 @@ where
 /// The close button reports through [`Layer::on_dismiss`] and is only drawn
 /// when there is one to report to.
 pub fn modal<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
     title: impl Into<String>,
 ) -> Layer<'a, Message, Theme, Renderer>
 where
@@ -238,10 +239,10 @@ where
     Renderer: iced::advanced::Renderer,
 {
     /// Creates a new [`Layer`], open and centred.
-    pub fn new(content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
+    pub fn new(content: impl Widget<Message, Theme, Renderer> + 'a) -> Self {
         Self {
             id: None,
-            content: content.into(),
+            content: content.boxed(),
             anchor: Anchor::default(),
             at: None,
             margin: DEFAULT_MARGIN,
@@ -775,10 +776,10 @@ where
 
     fn diff(&mut self, tree: &mut Tree) {
         if tree.children.len() != 1 {
-            tree.children = vec![Tree::new(self.content.as_widget())];
+            tree.children = vec![Tree::new(&self.content)];
         }
 
-        tree.children[0].diff(self.content.as_widget_mut());
+        tree.children[0].diff(&mut self.content);
     }
 
     fn size(&self) -> Size<Length> {
@@ -945,16 +946,11 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<Layer<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> iced::advanced::widget::Meta
+    for Layer<'a, Message, Theme, Renderer>
 where
-    Message: Clone + 'a,
-    Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + text::Renderer + 'a,
+    Theme: Catalog,
 {
-    fn from(layer: Layer<'a, Message, Theme, Renderer>) -> Self {
-        Element::new(layer)
-    }
 }
 
 /// The viewport-anchored surface, as an iced overlay.
@@ -1128,9 +1124,7 @@ where
             Size::new(inner.width, inner.height),
         );
 
-        self.content
-            .as_widget_mut()
-            .layout(self.tree, renderer, &limits);
+        self.content.layout(self.tree, renderer, &limits);
 
         self.tree.size
     }
@@ -1149,9 +1143,7 @@ where
         // Measured compressed so fluid content reports its intrinsic width
         // rather than swallowing the viewport.
         let limits = Limits::new(Size::ZERO, available).width(Length::Shrink);
-        self.content
-            .as_widget_mut()
-            .layout(self.tree, renderer, &limits);
+        self.content.layout(self.tree, renderer, &limits);
         let measured = self.tree.size;
 
         // A stretched surface fills the edge it hugs, which is what makes a
@@ -1324,7 +1316,7 @@ where
         // asked for has to cut that content off rather than let it paint across
         // the page.
         renderer.with_layer(bounds, |renderer| {
-            self.content.as_widget().draw(
+            self.content.draw(
                 self.tree,
                 renderer,
                 theme,
@@ -1417,7 +1409,7 @@ where
             }
         }
 
-        self.content.as_widget_mut().update(
+        self.content.update(
             self.tree,
             event,
             self.content_layout,
@@ -1512,7 +1504,7 @@ where
             }
         }
 
-        let interaction = self.content.as_widget().mouse_interaction(
+        let interaction = self.content.mouse_interaction(
             self.tree,
             self.content_layout,
             cursor,
@@ -1534,7 +1526,7 @@ where
     }
 
     fn operate(&mut self, renderer: &Renderer, operation: &mut dyn Operation) {
-        self.content.as_widget_mut().operate(
+        self.content.operate(
             self.tree,
             self.content_layout,
             &self.surface.bounds(),
@@ -1549,7 +1541,7 @@ where
     ) -> Vec<overlay::Element<'a, Message, Theme, Renderer>> {
         let bounds = self.surface.bounds();
 
-        self.content.as_widget_mut().overlay(
+        self.content.overlay(
             self.tree,
             self.content_layout,
             renderer,
@@ -1805,14 +1797,10 @@ mod tests {
         /// Visibility is the application's, so changing it means a new view —
         /// which is what the real thing does between frames.
         fn show(&mut self, is_open: bool) {
-            let mut element = Element::from(Self::layer(is_open));
-            element.as_widget_mut().diff(&mut self.tree);
+            let mut element = iced::Widget::boxed(Self::layer(is_open));
+            element.diff(&mut self.tree);
 
-            element.as_widget_mut().layout(
-                &mut self.tree,
-                &(),
-                &Limits::new(Size::ZERO, HOST_BOUNDS),
-            );
+            element.layout(&mut self.tree, &(), &Limits::new(Size::ZERO, HOST_BOUNDS));
 
             self.element = element;
         }
@@ -1822,15 +1810,11 @@ mod tests {
         }
 
         fn new(is_open: bool) -> Self {
-            let mut element = Element::from(Self::layer(is_open));
-            let mut tree = Tree::new(element.as_widget());
-            element.as_widget_mut().diff(&mut tree);
+            let mut element = iced::Widget::boxed(Self::layer(is_open));
+            let mut tree = Tree::new(&element);
+            element.diff(&mut tree);
 
-            element.as_widget_mut().layout(
-                &mut tree,
-                &(),
-                &Limits::new(Size::ZERO, HOST_BOUNDS),
-            );
+            element.layout(&mut tree, &(), &Limits::new(Size::ZERO, HOST_BOUNDS));
 
             Self {
                 element,
@@ -1844,7 +1828,7 @@ mod tests {
 
             let layout = Layout::new(self.tree.size);
 
-            self.element.as_widget_mut().update(
+            self.element.update(
                 &mut self.tree,
                 &Event::Window(window::Event::RedrawRequested(Instant::now())),
                 layout,
@@ -1861,7 +1845,6 @@ mod tests {
 
             !self
                 .element
-                .as_widget_mut()
                 .overlay(
                     &mut self.tree,
                     layout,

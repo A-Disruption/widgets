@@ -1,3 +1,4 @@
+use iced::Widget as _;
 use iced::widget::{column, scrollable, text};
 use iced::{Element, Theme};
 use widgets::collapsible::{self, collapsible};
@@ -145,7 +146,7 @@ impl CollapsibleExample {
             .spacing(20)
             .padding(20),
         )
-        .into()
+        .boxed()
     }
 }
 

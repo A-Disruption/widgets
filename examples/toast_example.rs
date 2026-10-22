@@ -13,6 +13,7 @@
 //!   one at the top grows downward, so the reflow runs in both directions.
 //! * The bar along the bottom edge of each toast is its countdown.
 
+use iced::Widget as _;
 use iced::time::Duration;
 use iced::widget::{button, column, container, row, space, text};
 use iced::{Element, Fill, Theme};
@@ -146,7 +147,7 @@ impl Example {
 
         // The toast host reports a zero size, so it can sit at the end of the
         // column without moving anything. A `Stack` would work equally well.
-        column![container(page).width(Fill).height(Fill), self.toasts()].into()
+        column![container(page).width(Fill).height(Fill), self.toasts()].boxed()
     }
 
     fn toasts(&self) -> Element<'_, Message> {
@@ -182,6 +183,6 @@ impl Example {
             })
             .collect();
 
-        toasts(items).anchor(self.corner).into()
+        toasts(items).anchor(self.corner).boxed()
     }
 }

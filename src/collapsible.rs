@@ -4,6 +4,7 @@
 //! 1. Standalone: Self-managing expand/collapse state
 //! 2. Group: Wrap multiple collapsibles in `collapsible_group![]` for accordion behavior
 
+use iced::Widget as _;
 use iced::advanced::Layout;
 use iced::advanced::Shell;
 use iced::advanced::Widget;
@@ -31,7 +32,7 @@ use crate::lucide;
 /// To create an accordion group, use [`collapsible_group!`].
 pub fn collapsible<'a, Message, Theme, Renderer>(
     title: impl Into<String>,
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Collapsible<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
@@ -53,7 +54,7 @@ where
 #[macro_export]
 macro_rules! collapsible_group {
     ($($item:expr),* $(,)?) => {
-        $crate::collapsible::CollapsibleGroup::new(vec![$($item.into()),*])
+        $crate::collapsible::CollapsibleGroup::new(vec![$(::iced::Widget::boxed($item)),*])
     };
 }
 
@@ -118,7 +119,7 @@ where
     /// Creates a new [`Collapsible`] with the given title and content.
     pub fn new(
         title: impl Into<String>,
-        content: impl Into<Element<'a, Message, Theme, Renderer>>,
+        content: impl Widget<Message, Theme, Renderer> + 'a,
     ) -> Self {
         // So the default chevron renders even if the application never
         // registered `lucide::FONT_BYTES` itself.
@@ -126,7 +127,7 @@ where
 
         Self {
             title: title.into(),
-            content: content.into(),
+            content: content.boxed(),
             on_toggle: None,
             expand_icon: None,
             collapse_icon: None,
@@ -185,20 +186,20 @@ where
     }
 
     /// Sets the collapse icon.
-    pub fn collapse_icon(mut self, icon: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
-        self.collapse_icon = Some(icon.into());
+    pub fn collapse_icon(mut self, icon: impl Widget<Message, Theme, Renderer> + 'a) -> Self {
+        self.collapse_icon = Some(icon.boxed());
         self
     }
 
     /// Sets the expand icon.
-    pub fn expand_icon(mut self, icon: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
-        self.expand_icon = Some(icon.into());
+    pub fn expand_icon(mut self, icon: impl Widget<Message, Theme, Renderer> + 'a) -> Self {
+        self.expand_icon = Some(icon.boxed());
         self
     }
 
     /// Sets the action icon on the right side of the header.
-    pub fn action_icon(mut self, icon: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
-        self.action_icon = Some(icon.into());
+    pub fn action_icon(mut self, icon: impl Widget<Message, Theme, Renderer> + 'a) -> Self {
+        self.action_icon = Some(icon.boxed());
         self
     }
 
@@ -335,8 +336,8 @@ where
     P: iced::advanced::text::Paragraph,
 {
     animation: State,
-    text: widget::text::State<P>,
-    icon_text: widget::text::State<P>,
+    text: iced::advanced::text::paragraph::Plain<P>,
+    icon_text: iced::advanced::text::paragraph::Plain<P>,
     header: Header,
 }
 
@@ -410,8 +411,8 @@ where
                 header_is_hovered: false,
                 header_height: self.header_height,
             },
-            text: widget::text::State::<Renderer::Paragraph>::default(),
-            icon_text: widget::text::State::<Renderer::Paragraph>::default(),
+            text: iced::advanced::text::paragraph::Plain::<Renderer::Paragraph>::default(),
+            icon_text: iced::advanced::text::paragraph::Plain::<Renderer::Paragraph>::default(),
             header: Header::default(),
         })
     }
@@ -526,7 +527,6 @@ where
 
             let icon_tree = &mut tree.children[icon_tree_index];
             icon_element
-                .as_widget_mut()
                 .layout(icon_tree, renderer, &icon_limits);
 
             (icon_tree.size, Some(icon_tree_index))
@@ -541,9 +541,7 @@ where
             );
 
             let action_tree = &mut tree.children[action_index.unwrap()];
-            action_icon
-                .as_widget_mut()
-                .layout(action_tree, renderer, &icon_limits);
+            action_icon.layout(action_tree, renderer, &icon_limits);
 
             Some((action_tree.size, action_index.unwrap()))
         } else {
@@ -665,9 +663,7 @@ where
         // The animation already clips draw output to `animated_height`; always laying out is safe.
         let (_, _, _, content_index) = self.child_indices();
         let content_tree = &mut tree.children[content_index];
-        self.content
-            .as_widget_mut()
-            .layout(content_tree, renderer, &content_limits);
+        self.content.layout(content_tree, renderer, &content_limits);
         content_tree.translation = Vector::new(
             self.content_padding.left,
             self.header_height + self.content_padding.top,
@@ -764,7 +760,7 @@ where
             if let Some(ref mut action_icon) = self.action_icon
                 && let Some(action_idx) = action_index
             {
-                action_icon.as_widget_mut().update(
+                action_icon.update(
                     &mut tree.children[action_idx],
                     event,
                     action_layout,
@@ -781,7 +777,7 @@ where
         if state.progress > 0.0
             && let Some(content_layout) = content_layout
         {
-            self.content.as_widget_mut().update(
+            self.content.update(
                 &mut tree.children[content_index],
                 event,
                 content_layout,
@@ -950,7 +946,10 @@ where
                 combined_state.icon_text.raw(),
                 iced::widget::text::Style {
                     color: style.title_text_color,
+                    ..Default::default()
                 },
+                // The header text is never selectable.
+                Color::TRANSPARENT,
                 viewport,
             );
         } else {
@@ -971,7 +970,7 @@ where
                 )
             };
 
-            icon_element.as_widget().draw(
+            icon_element.draw(
                 &tree.children[icon_tree_index],
                 renderer,
                 theme,
@@ -992,13 +991,15 @@ where
             combined_state.text.raw(),
             iced::widget::text::Style {
                 color: Some(text_color),
+                ..Default::default()
             },
+            Color::TRANSPARENT,
             viewport,
         );
 
         // Draw action icon if present (after drawing title, around line 854)
         if let Some(ref action_icon) = self.action_icon {
-            action_icon.as_widget().draw(
+            action_icon.draw(
                 &tree.children[action_child.unwrap()],
                 renderer,
                 theme,
@@ -1031,7 +1032,7 @@ where
             };
 
             renderer.with_layer(effective_clip, |renderer| {
-                self.content.as_widget().draw(
+                self.content.draw(
                     &tree.children[content_child],
                     renderer,
                     theme,
@@ -1090,7 +1091,7 @@ where
         } else if state.progress != 0.0 {
             let (_, _, _, content_index) = self.child_indices();
             if let Some(content_layout) = content_layout {
-                self.content.as_widget().mouse_interaction(
+                self.content.mouse_interaction(
                     &tree.children[content_index],
                     content_layout,
                     cursor,
@@ -1123,7 +1124,7 @@ where
             let content_layout = child_layout(layout, &tree.children, content_index);
 
             if let Some(content_layout) = content_layout {
-                self.content.as_widget_mut().operate(
+                self.content.operate(
                     &mut tree.children[content_index],
                     content_layout,
                     viewport,
@@ -1161,7 +1162,7 @@ where
         if let Some(ref mut action_icon) = self.action_icon
             && let Some(action_idx) = action_index
         {
-            overlays.extend(action_icon.as_widget_mut().overlay(
+            overlays.extend(action_icon.overlay(
                 &mut left_tree[action_idx],
                 action_layout,
                 renderer,
@@ -1175,7 +1176,7 @@ where
         if progress > 0.0
             && let Some(content_layout) = content_layout
         {
-            overlays.extend(self.content.as_widget_mut().overlay(
+            overlays.extend(self.content.overlay(
                 &mut right_tree[0],
                 content_layout,
                 renderer,
@@ -1299,7 +1300,7 @@ where
             }
             header_heights.push(child_state.header_height);
 
-            item.as_widget_mut().layout(child_tree, renderer, &limits);
+            item.layout(child_tree, renderer, &limits);
 
             child_tree.translation = Vector::new(0.0, y_offset);
             y_offset += child_tree.size.height + self.spacing;
@@ -1364,7 +1365,7 @@ where
             }
 
             // Forward all events to children
-            item.as_widget_mut().update(
+            item.update(
                 child_tree,
                 event,
                 child_layout,
@@ -1387,7 +1388,7 @@ where
         viewport: &Rectangle,
     ) {
         for (item, (child_layout, child_tree)) in self.items.iter().zip(layout.iter(&tree.children)) {
-            item.as_widget().draw(
+            item.draw(
                 child_tree,
                 renderer,
                 theme,
@@ -1411,13 +1412,7 @@ where
             .iter()
             .zip(layout.iter(&tree.children))
             .map(|(item, (child_layout, child_tree))| {
-                item.as_widget().mouse_interaction(
-                    child_tree,
-                    child_layout,
-                    cursor,
-                    viewport,
-                    renderer,
-                )
+                item.mouse_interaction(child_tree, child_layout, cursor, viewport, renderer)
             })
             .max()
             .unwrap_or_default()
@@ -1436,8 +1431,7 @@ where
             .iter_mut()
             .zip(layout.iter_mut(&mut tree.children))
         {
-            item.as_widget_mut()
-                .operate(child_tree, child_layout, viewport, renderer, operation);
+            item.operate(child_tree, child_layout, viewport, renderer, operation);
         }
     }
 
@@ -1463,33 +1457,20 @@ where
 
 }
 
-impl<'a, Message, Theme, Renderer> From<Collapsible<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> iced::advanced::widget::Meta
+    for Collapsible<'a, Message, Theme, Renderer>
 where
-    Message: 'a + Clone,
-    Theme: Catalog + 'a,
-    // Matches the `Widget` impl, which draws its chevron from Lucide.
-    Renderer: text::Renderer + 'a,
+    Theme: Catalog,
+    Renderer: text::Renderer,
 {
-    fn from(
-        collapsible: Collapsible<'a, Message, Theme, Renderer>,
-    ) -> Element<'a, Message, Theme, Renderer> {
-        Element::new(collapsible)
-    }
 }
 
-impl<'a, Message, Theme, Renderer> From<CollapsibleGroup<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> iced::advanced::widget::Meta
+    for CollapsibleGroup<'a, Message, Theme, Renderer>
 where
-    Message: 'a + Clone,
-    Theme: Catalog + 'a,
-    Renderer: text::Renderer + 'a,
+    Theme: Catalog,
+    Renderer: text::Renderer,
 {
-    fn from(
-        group: CollapsibleGroup<'a, Message, Theme, Renderer>,
-    ) -> Element<'a, Message, Theme, Renderer> {
-        Element::new(group)
-    }
 }
 
 /// The possible statuses of a [`Collapsible`].

@@ -43,6 +43,7 @@
 //! its preferred side flips before it is clamped. Transitions come from
 //! [`crate::animation`], and default to [`Motion::QUICK`].
 
+use iced::Widget as _;
 use iced::advanced::widget::{self, Operation, tree::Tree};
 use iced::advanced::{
     Layout, Shell, Widget,
@@ -75,8 +76,8 @@ const CORRIDOR_EXTEND: f32 = 12.0;
 
 /// Creates a [`Popover`] that opens when its trigger is pressed.
 pub fn popover<'a, Message, Theme, Renderer>(
-    trigger: impl Into<Element<'a, Message, Theme, Renderer>>,
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    trigger: impl Widget<Message, Theme, Renderer> + 'a,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Popover<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
@@ -90,8 +91,8 @@ where
 /// This is the interactive tooltip: unlike a plain tooltip, the cursor can
 /// travel into the content and interact with it.
 pub fn hover_popover<'a, Message, Theme, Renderer>(
-    trigger: impl Into<Element<'a, Message, Theme, Renderer>>,
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    trigger: impl Widget<Message, Theme, Renderer> + 'a,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Popover<'a, Message, Theme, Renderer>
 where
     Theme: Catalog,
@@ -141,13 +142,13 @@ where
 {
     /// Creates a new [`Popover`].
     pub fn new(
-        trigger: impl Into<Element<'a, Message, Theme, Renderer>>,
-        content: impl Into<Element<'a, Message, Theme, Renderer>>,
+        trigger: impl Widget<Message, Theme, Renderer> + 'a,
+        content: impl Widget<Message, Theme, Renderer> + 'a,
     ) -> Self {
         Self {
             id: None,
-            trigger: trigger.into(),
-            content: content.into(),
+            trigger: trigger.boxed(),
+            content: content.boxed(),
             trigger_mode: Trigger::default(),
             controlled: None,
             placement: Placement::new(Side::Bottom)
@@ -381,19 +382,16 @@ where
 
     fn diff(&mut self, tree: &mut Tree) {
         if tree.children.len() != 2 {
-            tree.children = vec![
-                Tree::new(self.trigger.as_widget()),
-                Tree::new(self.content.as_widget()),
-            ];
+            tree.children = vec![Tree::new(&self.trigger), Tree::new(&self.content)];
         }
 
         let (trigger, content) = tree.children.split_at_mut(CONTENT);
-        trigger[TRIGGER].diff(self.trigger.as_widget_mut());
-        content[0].diff(self.content.as_widget_mut());
+        trigger[TRIGGER].diff(&mut self.trigger);
+        content[0].diff(&mut self.content);
     }
 
     fn size(&self) -> Size<Length> {
-        self.trigger.as_widget().size()
+        self.trigger.size()
     }
 
     fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) {
@@ -401,7 +399,7 @@ where
         // overlay and so never shifts the surrounding page.
         let trigger = &mut tree.children[TRIGGER];
 
-        self.trigger.as_widget_mut().layout(trigger, renderer, limits);
+        self.trigger.layout(trigger, renderer, limits);
         trigger.translation = Vector::ZERO;
 
         tree.size = trigger.size;
@@ -417,7 +415,7 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.trigger.as_widget().draw(
+        self.trigger.draw(
             &tree.children[TRIGGER],
             renderer,
             theme,
@@ -494,7 +492,7 @@ where
         // The trigger stays a fully live widget: it sees every event first and
         // keeps whatever behaviour it already had. A `button` fires its
         // `on_press`, a `text_input` takes focus and typing, and so on.
-        self.trigger.as_widget_mut().update(
+        self.trigger.update(
             &mut tree.children[TRIGGER],
             event,
             trigger_layout,
@@ -580,7 +578,7 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        self.trigger.as_widget().mouse_interaction(
+        self.trigger.mouse_interaction(
             &tree.children[TRIGGER],
             trigger_layout(layout, tree),
             cursor,
@@ -602,7 +600,7 @@ where
         let trigger_layout = trigger_layout(layout, tree);
 
         operation.traverse(&mut |operation| {
-            self.trigger.as_widget_mut().operate(
+            self.trigger.operate(
                 &mut tree.children[TRIGGER],
                 trigger_layout,
                 viewport,
@@ -691,16 +689,11 @@ fn trigger_layout(layout: Layout, tree: &Tree) -> Layout {
         .0
 }
 
-impl<'a, Message, Theme, Renderer> From<Popover<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> iced::advanced::widget::Meta
+    for Popover<'a, Message, Theme, Renderer>
 where
-    Message: Clone + 'a,
-    Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + 'a,
+    Theme: Catalog,
 {
-    fn from(popover: Popover<'a, Message, Theme, Renderer>) -> Self {
-        Element::new(popover)
-    }
 }
 
 /// The anchored surface, as an iced overlay.
@@ -789,7 +782,7 @@ where
         // row is measured.
         let limits = Limits::new(Size::ZERO, available).width(Length::Shrink);
 
-        self.content.as_widget_mut().layout(self.tree, renderer, &limits);
+        self.content.layout(self.tree, renderer, &limits);
         let mut width = self.tree.size.width.max(self.min_width - self.padding * 2.0);
 
         if let Some(max) = self.max_width {
@@ -805,7 +798,7 @@ where
                 Size::new(width, available.height),
             );
 
-            self.content.as_widget_mut().layout(self.tree, renderer, &pinned);
+            self.content.layout(self.tree, renderer, &pinned);
         }
 
         let content = self.tree.size;
@@ -867,7 +860,7 @@ where
             style.background,
         );
 
-        self.content.as_widget().draw(
+        self.content.draw(
             self.tree,
             renderer,
             theme,
@@ -896,7 +889,7 @@ where
 
         // The content is live and gets first refusal on everything, so a button
         // inside a popover behaves like a button anywhere else.
-        self.content.as_widget_mut().update(
+        self.content.update(
             self.tree,
             event,
             self.content_layout,
@@ -964,7 +957,7 @@ where
             return mouse::Interaction::None;
         }
 
-        let interaction = self.content.as_widget().mouse_interaction(
+        let interaction = self.content.mouse_interaction(
             self.tree,
             self.content_layout,
             cursor,
@@ -984,7 +977,7 @@ where
     }
 
     fn operate(&mut self, renderer: &Renderer, operation: &mut dyn Operation) {
-        self.content.as_widget_mut().operate(
+        self.content.operate(
             self.tree,
             self.content_layout,
             &self.layout.bounds(),
@@ -999,7 +992,7 @@ where
     ) -> Vec<overlay::Element<'a, Message, Theme, Renderer>> {
         let bounds = self.layout.bounds();
 
-        self.content.as_widget_mut().overlay(
+        self.content.overlay(
             self.tree,
             self.content_layout,
             renderer,
@@ -1166,27 +1159,25 @@ mod tests {
 
         fn view(is_open: bool) -> Element<'static, Msg, Theme, ()> {
             column![
-                Element::from(
-                    popover(
-                        container(text("Trigger"))
-                            .width(Length::Fixed(120.0))
-                            .height(Length::Fixed(30.0)),
-                        // A leaf: its layout node has no children, so a
-                        // sibling handed it by mistake panics rather than
-                        // quietly drawing the wrong thing.
-                        text("Panel"),
-                    )
-                    .open(is_open)
-                ),
-                Element::from(tooltip(
+                popover(
+                    container(text("Trigger"))
+                        .width(Length::Fixed(120.0))
+                        .height(Length::Fixed(30.0)),
+                    // A leaf: its layout node has no children, so a
+                    // sibling handed it by mistake panics rather than
+                    // quietly drawing the wrong thing.
+                    text("Panel"),
+                )
+                .open(is_open),
+                tooltip(
                     container(text("Cell"))
                         .width(Length::Fixed(120.0))
                         .height(Length::Fixed(30.0)),
                     container(text("Tip")).padding(5),
                     tooltip::Position::Bottom,
-                )),
+                ),
             ]
-            .into()
+            .boxed()
         }
 
         fn drive(

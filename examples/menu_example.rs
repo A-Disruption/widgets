@@ -5,8 +5,9 @@
 //! menus have to flip their submenus to the left to stay on screen. Resize the
 //! window narrow to watch the root panels flip too.
 
-use iced::widget::{column, container, row, space, text};
+use iced::Widget as _;
 use iced::time::Duration;
+use iced::widget::{column, container, row, space, text};
 use iced::{Element, Fill, Theme};
 
 use widgets::anchor::{Align, Side};
@@ -96,7 +97,7 @@ impl Example {
             container(status).padding(16),
             space().width(Fill).height(Fill),
         ]
-        .into()
+        .boxed()
     }
 
     /// Checkmarks in the leading gutter, mixed with plain and icon rows, plus a
@@ -222,7 +223,7 @@ fn deep_menu<'a>() -> Element<'a, Message> {
     // configurable — and to make the transition easy to actually see.
     .motion(Motion::SMOOTH.duration(Duration::from_millis(600)).slide(24.0))
     .on_toggle(|open| Message::Toggled("deep", open))
-    .into()
+    .boxed()
 }
 
 /// A trigger that paints its own background, so the menu stays out of the way.
@@ -249,5 +250,5 @@ fn aligned_menu<'a>() -> Element<'a, Message> {
     .align(Align::End)
     .min_width(220.0)
     .on_toggle(|open| Message::Toggled("aligned", open))
-    .into()
+    .boxed()
 }

@@ -1,3 +1,4 @@
+use iced::Widget as _;
 use iced::{
     Background, Border, Color, Element, Task, Theme,
     widget::{Space, button, column, container, text},
@@ -198,9 +199,9 @@ impl App {
             .on_contrast_change(Message::ContrastChanged)
             .on_magnifier_request(Message::MagnifierRequested)
             .on_close(|| Message::ClosePicker)
-            .into();
+            .boxed();
 
-        container(column![content, picker]).into()
+        container(column![content, picker]).boxed()
     }
 }
 

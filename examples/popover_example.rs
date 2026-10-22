@@ -4,6 +4,7 @@
 //! The right-hand popovers are pushed against the window edge so they have to
 //! flip. Drag the window narrow to watch the rest follow.
 
+use iced::Widget as _;
 use iced::widget::{button, checkbox, column, container, row, space, text};
 use iced::{Element, Fill, Theme};
 
@@ -95,7 +96,7 @@ impl Example {
             .padding([0, 16]),
             space().width(Fill).height(Fill),
         ]
-        .into()
+        .boxed()
     }
 
     /// Interactive content: checkboxes the user clicks inside the popover.
@@ -120,7 +121,7 @@ impl Example {
         .align(Align::Start)
         .min_width(200.0)
         .on_toggle(|open| Message::Toggled("filters", open))
-        .into()
+        .boxed()
     }
 
     /// Visibility owned by the application rather than the widget.
@@ -136,7 +137,7 @@ impl Example {
         .open(self.controlled_open)
         .align(Align::End)
         .min_width(220.0)
-        .into()
+        .boxed()
     }
 }
 
@@ -155,7 +156,7 @@ fn hover_card<'a>() -> Element<'a, Message> {
     .gap(10.0)
     .max_width(260.0)
     .on_toggle(|open| Message::Toggled("hover card", open))
-    .into()
+    .boxed()
 }
 
 /// Anchored to the right of its trigger with a slower motion, near the window
@@ -173,5 +174,5 @@ fn side_popover<'a>() -> Element<'a, Message> {
     .align(Align::Start)
     .motion(Motion::SMOOTH)
     .max_width(240.0)
-    .into()
+    .boxed()
 }

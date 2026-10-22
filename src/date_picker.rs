@@ -29,7 +29,7 @@
 
 use chrono::{Datelike, Local, NaiveDate};
 use iced::{
-    Border, Color, Element, Event, Length, Point, Rectangle, Shadow, Size, Vector,
+    Border, Color, Event, Length, Point, Rectangle, Shadow, Size, Vector,
     advanced::{
         Layout, Overlay, Shell, Widget,
         layout::Limits,
@@ -513,16 +513,12 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<DatePicker<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> iced::advanced::widget::Meta
+    for DatePicker<'a, Message, Theme, Renderer>
 where
-    Message: Clone + 'a,
-    Theme: Catalog + 'a,
-    Renderer: iced::advanced::text::Renderer + 'a,
+    Theme: Catalog,
+    Renderer: iced::advanced::text::Renderer,
 {
-    fn from(picker: DatePicker<'a, Message, Theme, Renderer>) -> Self {
-        Self::new(picker)
-    }
 }
 
 // ── Overlay struct ────────────────────────────────────────────────────────────
@@ -2126,8 +2122,8 @@ mod tests {
     /// into a `shell::Bus` rather than a `&mut Vec`; the clipboard it used to
     /// borrow is built internally. Draining the bus into a `Vec` here keeps the
     /// accumulate-and-assert style the tests below are written in.
-    fn update<Message, Theme, Renderer>(
-        ui: &mut UserInterface<'_, Message, Theme, Renderer>,
+    fn update<'a, Message: 'a, Theme: 'a, Renderer>(
+        ui: &mut UserInterface<'a, Message, Theme, Renderer>,
         events: &[Event],
         cursor: mouse::Cursor,
         renderer: &mut Renderer,

@@ -43,6 +43,7 @@
 //! arc has to be faked with a circle of dots, and a single smooth quad reads
 //! better than a coarse dotted ring at notification sizes.
 
+use iced::Widget as _;
 use iced::advanced::widget::{self, Operation, tree::Tree};
 use iced::advanced::{
     Layout, Shell, Widget,
@@ -94,7 +95,7 @@ where
 /// Creates a neutral [`Toast`].
 pub fn toast<'a, Message, Theme, Renderer>(
     id: u64,
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Toast<'a, Message, Theme, Renderer> {
     Toast::new(id, content)
 }
@@ -102,7 +103,7 @@ pub fn toast<'a, Message, Theme, Renderer>(
 /// Creates an informational [`Toast`].
 pub fn info<'a, Message, Theme, Renderer>(
     id: u64,
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Toast<'a, Message, Theme, Renderer> {
     Toast::new(id, content).variant(Variant::Info)
 }
@@ -110,7 +111,7 @@ pub fn info<'a, Message, Theme, Renderer>(
 /// Creates a success [`Toast`].
 pub fn success<'a, Message, Theme, Renderer>(
     id: u64,
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Toast<'a, Message, Theme, Renderer> {
     Toast::new(id, content).variant(Variant::Success)
 }
@@ -118,7 +119,7 @@ pub fn success<'a, Message, Theme, Renderer>(
 /// Creates a warning [`Toast`].
 pub fn warning<'a, Message, Theme, Renderer>(
     id: u64,
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Toast<'a, Message, Theme, Renderer> {
     Toast::new(id, content).variant(Variant::Warning)
 }
@@ -126,7 +127,7 @@ pub fn warning<'a, Message, Theme, Renderer>(
 /// Creates a danger [`Toast`].
 pub fn danger<'a, Message, Theme, Renderer>(
     id: u64,
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Toast<'a, Message, Theme, Renderer> {
     Toast::new(id, content).variant(Variant::Danger)
 }
@@ -175,14 +176,14 @@ impl<'a, Message, Theme, Renderer> Toast<'a, Message, Theme, Renderer> {
     /// Creates a new [`Toast`] with the given stable `id`.
     ///
     /// See the [module documentation](self) on why the id is required.
-    pub fn new(id: u64, content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
+    pub fn new(id: u64, content: impl Widget<Message, Theme, Renderer> + 'a) -> Self {
         // So the variant icon renders even if the application never registered
         // `lucide::FONT_BYTES` itself.
         lucide::ensure_loaded();
 
         Self {
             id,
-            content: content.into(),
+            content: content.boxed(),
             variant: Variant::default(),
             show_icon: true,
             timeout: None,
@@ -456,12 +457,12 @@ where
             tree.children = self
                 .items
                 .iter()
-                .map(|item| Tree::new(item.content.as_widget()))
+                .map(|item| Tree::new(&item.content))
                 .collect();
         }
 
         for (item, child) in self.items.iter_mut().zip(tree.children.iter_mut()) {
-            child.diff(item.content.as_widget_mut());
+            child.diff(&mut item.content);
         }
 
         // Reconcile the entries against the list the application just handed
@@ -621,16 +622,11 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<Toasts<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> iced::advanced::widget::Meta
+    for Toasts<'a, Message, Theme, Renderer>
 where
-    Message: Clone + 'a,
-    Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + text::Renderer + 'a,
+    Theme: Catalog,
 {
-    fn from(toasts: Toasts<'a, Message, Theme, Renderer>) -> Self {
-        Element::new(toasts)
-    }
 }
 
 /// The stack of toasts, as an iced overlay.
@@ -683,7 +679,7 @@ where
                 Size::new(content_width, bounds.height),
             );
 
-            item.content.as_widget_mut().layout(tree, renderer, &limits);
+            item.content.layout(tree, renderer, &limits);
             let content = tree.size;
             let height = content.height + self.padding * 2.0 + COUNTDOWN_HEIGHT;
 
@@ -853,7 +849,7 @@ where
             }
 
             renderer.with_translation(slide, |renderer| {
-                item.content.as_widget().draw(
+                item.content.draw(
                     tree,
                     renderer,
                     theme,
@@ -881,7 +877,7 @@ where
             .zip(self.trees.iter_mut())
             .zip(self.placements.iter().copied())
         {
-            item.content.as_widget_mut().update(
+            item.content.update(
                 tree,
                 event,
                 content_layout,
@@ -917,13 +913,8 @@ where
             .zip(self.trees.iter())
             .zip(self.placements.iter().copied())
             .map(|((item, tree), (bounds, content_layout))| {
-                item.content.as_widget().mouse_interaction(
-                    tree,
-                    content_layout,
-                    cursor,
-                    &bounds,
-                    renderer,
-                )
+                item.content
+                    .mouse_interaction(tree, content_layout, cursor, &bounds, renderer)
             })
             .max()
             .unwrap_or_default()
@@ -936,13 +927,8 @@ where
             .zip(self.trees.iter_mut())
             .zip(self.placements.iter().copied())
         {
-            item.content.as_widget_mut().operate(
-                tree,
-                content_layout,
-                &bounds,
-                renderer,
-                operation,
-            );
+            item.content
+                .operate(tree, content_layout, &bounds, renderer, operation);
         }
     }
 }

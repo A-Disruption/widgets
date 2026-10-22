@@ -6,7 +6,7 @@
 //!
 //! # Example
 //! ```no_run
-//! use iced::{Color, Element};
+//! use iced::{Color, Element, Widget};
 //! use widgets::color_picker_two::{
 //!     ColorInfo, ColorModel, ContrastInfo, MagnifierRequest, PickerPage, color_picker_two,
 //! };
@@ -29,12 +29,12 @@
 //!     .on_contrast_change(Message::ContrastChanged)
 //!     .on_magnifier_request(Message::MagnifierRequested)
 //!     .on_close(|| Message::ClosePicker)
-//!     .into();
+//!     .boxed();
 //! ```
 
 use iced::{
-    Background, Border, Color, Degrees, Element, Event, Length, Point, Rectangle, Shadow, Size,
-    Task, Vector,
+    Background, Border, Color, Degrees, Event, Length, Point, Rectangle, Shadow, Size, Task,
+    Vector,
     advanced::{
         Layout, Overlay, Shell, Widget,
         clipboard::Content as ClipboardContent,
@@ -715,16 +715,12 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<ColorPickerTwo<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> iced::advanced::widget::Meta
+    for ColorPickerTwo<'a, Message, Theme, Renderer>
 where
-    Message: Clone + 'a,
-    Theme: Catalog + 'a,
-    Renderer: iced::advanced::text::Renderer + 'a,
+    Theme: Catalog,
+    Renderer: iced::advanced::text::Renderer,
 {
-    fn from(picker: ColorPickerTwo<'a, Message, Theme, Renderer>) -> Self {
-        Self::new(picker)
-    }
 }
 
 struct ColorPickerTwoOverlay<'r, 'w, Message, Theme, Renderer>

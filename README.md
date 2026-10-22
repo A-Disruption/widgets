@@ -81,7 +81,7 @@ let group = collapsible_group![
 column![
     standalone,
     group
-].spacing(10).into()
+].spacing(10).boxed()
 ```
 
 ![Basic Collapsible Example](./showcase/collapsible_basic_usage.gif)
@@ -152,7 +152,7 @@ column![
     dropdown,
 ]
 .spacing(10.0)
-.into()
+.boxed()
 ```
 ![Generic Overlay Basic Example](./showcase/generic_overlay_basic_usage.gif)
 

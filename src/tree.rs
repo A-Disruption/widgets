@@ -1,3 +1,4 @@
+use iced::Widget as _;
 use iced::{
     Border, Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector,
     advanced::{
@@ -44,10 +45,10 @@ where
 
 /// Creates a new [`Branch`] with the given content element.
 pub fn branch<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Branch<'a, Message, Theme, Renderer> {
     Branch {
-        content: content.into(),
+        content: content.boxed(),
         children: Vec::new(),
         external_id: NO_EXTERNAL_ID,
         align_x: iced::Alignment::Start,
@@ -193,7 +194,7 @@ where
     P: iced::advanced::text::Paragraph,
 {
     tree_state: TreeState,
-    icon_text: widget::text::State<P>,
+    icon_text: iced::advanced::text::paragraph::Plain<P>,
 }
 
 #[derive(Debug, Clone)]
@@ -274,7 +275,7 @@ where
                 align_y: branch.align_y,
             });
 
-            let size_hint = branch.content.as_widget().size();
+            let size_hint = branch.content.size();
             *width = width.cross(size_hint.width);
             *height = height.stack(size_hint.height);
             branch_content.push(branch.content);
@@ -439,14 +440,14 @@ where
     }
 
     /// Sets the collapse icon (shown when branch is expanded)
-    pub fn collapse_icon(mut self, icon: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
-        self.collapse_icon = Some(icon.into());
+    pub fn collapse_icon(mut self, icon: impl Widget<Message, Theme, Renderer> + 'a) -> Self {
+        self.collapse_icon = Some(icon.boxed());
         self
     }
 
     /// Sets the expand icon (shown when branch is collapsed)
-    pub fn expand_icon(mut self, icon: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
-        self.expand_icon = Some(icon.into());
+    pub fn expand_icon(mut self, icon: impl Widget<Message, Theme, Renderer> + 'a) -> Self {
+        self.expand_icon = Some(icon.boxed());
         self
     }
 
@@ -818,7 +819,7 @@ where
                 branch_animations: HashMap::new(),
                 pending_collapse: HashSet::new(),
             },
-            icon_text: widget::text::State::<Renderer::Paragraph>::default(),
+            icon_text: iced::advanced::text::paragraph::Plain::<Renderer::Paragraph>::default(),
         })
     }
 
@@ -978,7 +979,7 @@ where
             let child_state = &mut tree.children[i + content_offset];
             let content = &mut self.branch_content[i];
 
-            let size_hint = content.as_widget().size();
+            let size_hint = content.size();
             let h_factor = size_hint.height.fill_factor();
             let w_factor = size_hint.width.fill_factor();
 
@@ -1001,9 +1002,7 @@ where
                 Size::new(avail_w, (available.height - y).max(0.0)),
             );
 
-            content
-                .as_widget_mut()
-                .layout(child_state, renderer, &content_limits);
+            content.layout(child_state, renderer, &content_limits);
             let content_layout = Rectangle::with_size(child_state.size);
             let content_size =
                 content_limits.resolve(Length::Shrink, Length::Shrink, content_layout.size());
@@ -1078,7 +1077,7 @@ where
             let (_, _, effective_depth) = self.get_branch_info(i, &combined_state.tree_state);
             let child_state = &mut tree.children[i + content_offset];
             let content = &mut self.branch_content[i];
-            let size_hint = content.as_widget().size();
+            let size_hint = content.size();
 
             let w_factor = size_hint.width.fill_factor();
             let is_width_fluid = w_factor != 0 || size_hint.width.is_fill();
@@ -1099,9 +1098,7 @@ where
 
             let content_limits = layout::Limits::new(Size::ZERO, Size::new(avail_w, max_h));
 
-            content
-                .as_widget_mut()
-                .layout(child_state, renderer, &content_limits);
+            content.layout(child_state, renderer, &content_limits);
             let content_layout = Rectangle::with_size(child_state.size);
 
             let content_size = content_limits.resolve(
@@ -1287,16 +1284,12 @@ where
         // Lay out icon elements so their internal state (e.g. text paragraphs) gets populated
         let icon_limits = layout::Limits::new(Size::ZERO, Size::new(ARROW_W, self.line_height));
         if let Some(ref mut expand_icon) = self.expand_icon {
-            expand_icon
-                .as_widget_mut()
-                .layout(&mut tree.children[0], renderer, &icon_limits);
+            expand_icon.layout(&mut tree.children[0], renderer, &icon_limits);
             combined_state.tree_state.icon_layout_height = Some(tree.children[0].size.height);
         }
         if let Some(ref mut collapse_icon) = self.collapse_icon {
             let idx = if self.expand_icon.is_some() { 1 } else { 0 };
-            collapse_icon
-                .as_widget_mut()
-                .layout(&mut tree.children[idx], renderer, &icon_limits);
+            collapse_icon.layout(&mut tree.children[idx], renderer, &icon_limits);
             let icon_height = tree.children[idx].size.height;
             // Use the larger of the two icon heights
             if let Some(existing) = combined_state.tree_state.icon_layout_height {
@@ -1349,7 +1342,7 @@ where
             let branch = &mut self.branch_content[i];
             let child_state = &mut tree.children[i + child_layout_index];
 
-            branch.as_widget_mut().update(
+            branch.update(
                 child_state,
                 event,
                 child_layout,
@@ -2550,7 +2543,7 @@ where
                                 icon_bounds.position() + Vector::new(indent_x, branch_y),
                             );
 
-                            icon_element.as_widget().draw(
+                            icon_element.draw(
                                 &tree.children[icon_tree_index],
                                 renderer,
                                 theme,
@@ -2568,7 +2561,7 @@ where
                             let child_state = &tree.children[i + child_layout_index];
                             let child_layout =
                                 nth_layout(layout, &tree.children, i + child_layout_index);
-                            self.branch_content[i].as_widget().draw(
+                            self.branch_content[i].draw(
                                 child_state,
                                 renderer,
                                 theme,
@@ -2582,7 +2575,7 @@ where
                         let child_state = &tree.children[i + child_layout_index];
                         let child_layout =
                             nth_layout(layout, &tree.children, i + child_layout_index);
-                        self.branch_content[i].as_widget().draw(
+                        self.branch_content[i].draw(
                             child_state,
                             renderer,
                             theme,
@@ -2731,13 +2724,7 @@ where
             .enumerate()
             .filter(|(i, _)| state.visible_branches.get(*i).copied().unwrap_or(false))
             .map(|(_, (branch, (child_layout, child_state)))| {
-                branch.as_widget().mouse_interaction(
-                    child_state,
-                    child_layout,
-                    cursor,
-                    viewport,
-                    renderer,
-                )
+                branch.mouse_interaction(child_state, child_layout, cursor, viewport, renderer)
             })
             .find(|&interaction| interaction != mouse::Interaction::None);
 
@@ -2770,9 +2757,7 @@ where
             .iter_mut()
             .zip(layout.iter_mut(&mut tree.children[child_layout_index..]))
         {
-            branch
-                .as_widget_mut()
-                .operate(child_tree, child_layout, viewport, renderer, operation);
+            branch.operate(child_tree, child_layout, viewport, renderer, operation);
         }
     }
 
@@ -2829,7 +2814,7 @@ where
                 .iter_mut()
                 .zip(layout.iter_mut(&mut tree.children[child_layout_index..]))
                 .flat_map(|(branch, (child_layout, child_tree))| {
-                    branch.as_widget_mut().overlay(
+                    branch.overlay(
                         child_tree,
                         child_layout,
                         renderer,
@@ -3321,7 +3306,7 @@ where
                     if let Some((child_layout, _)) =
                         self.tree_layout.iter(&self.state.children).nth(content_tree_index)
                     {
-                        branch_content.as_widget().draw(
+                        branch_content.draw(
                             branch_tree,
                             renderer,
                             theme,
@@ -3585,16 +3570,13 @@ fn rectangles_intersect(a: &Rectangle, b: &Rectangle) -> bool {
     !(a.x + a.width < b.x || b.x + b.width < a.x || a.y + a.height < b.y || b.y + b.height < a.y)
 }
 
-impl<'a, Message, Theme, Renderer> From<TreeHandle<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> iced::advanced::widget::Meta
+    for TreeHandle<'a, Message, Theme, Renderer>
 where
-    Message: Clone + 'a,
-    Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer + 'a,
+    Message: Clone,
+    Theme: Catalog,
+    Renderer: iced::advanced::text::Renderer,
 {
-    fn from(tree: TreeHandle<'a, Message, Theme, Renderer>) -> Self {
-        Element::new(tree)
-    }
 }
 
 /// A branch in a tree that contains content and can have children.

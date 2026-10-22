@@ -78,6 +78,7 @@
 //! submenu near the right edge of the window therefore opens to the left of its
 //! parent panel instead of on top of it.
 
+use iced::Widget as _;
 use iced::advanced::widget::{self, Operation, tree::Tree};
 use iced::advanced::{
     Layout, Shell, Widget, layout,
@@ -151,7 +152,7 @@ const SEPARATOR_THICKNESS: f32 = 1.0;
 
 /// Creates a [`Menu`] that opens below its trigger when pressed.
 pub fn menu<'a, Message, Theme, Renderer>(
-    trigger: impl Into<Element<'a, Message, Theme, Renderer>>,
+    trigger: impl Widget<Message, Theme, Renderer> + 'a,
     items: Vec<Item<'a, Message, Theme, Renderer>>,
 ) -> Menu<'a, Message, Theme, Renderer>
 where
@@ -166,10 +167,10 @@ where
 /// An item without an [`Item::on_press`] message is inert: it still highlights
 /// on hover but does nothing when pressed.
 pub fn item<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
 ) -> Item<'a, Message, Theme, Renderer> {
     Item::Entry {
-        content: content.into(),
+        content: content.boxed(),
         icon: None,
         check: None,
         on_press: None,
@@ -183,7 +184,7 @@ pub fn item<'a, Message, Theme, Renderer>(
 /// unchecked item still reserves its slot, so labels stay aligned down the
 /// panel whichever rows happen to be checked.
 pub fn toggle<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
     is_checked: bool,
 ) -> Item<'a, Message, Theme, Renderer> {
     item(content).checked(is_checked)
@@ -191,11 +192,11 @@ pub fn toggle<'a, Message, Theme, Renderer>(
 
 /// Creates an [`Item`] that opens a nested panel when hovered.
 pub fn submenu<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    content: impl Widget<Message, Theme, Renderer> + 'a,
     items: Vec<Item<'a, Message, Theme, Renderer>>,
 ) -> Item<'a, Message, Theme, Renderer> {
     Item::Submenu {
-        content: content.into(),
+        content: content.boxed(),
         icon: None,
         items,
         enabled: true,
@@ -269,10 +270,10 @@ impl<'a, Message, Theme, Renderer> Item<'a, Message, Theme, Renderer> {
     ///
     /// Every row in a panel indents its contents past the widest icon, so
     /// labels line up whether or not their own row has one.
-    pub fn icon(mut self, icon: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
+    pub fn icon(mut self, icon: impl Widget<Message, Theme, Renderer> + 'a) -> Self {
         match &mut self {
             Self::Entry { icon: slot, .. } | Self::Submenu { icon: slot, .. } => {
-                *slot = Some(icon.into());
+                *slot = Some(icon.boxed());
             }
             Self::Separator => {}
         }
@@ -356,7 +357,7 @@ impl<'a, Message, Theme, Renderer> Item<'a, Message, Theme, Renderer> {
     {
         match self {
             Self::Entry { content, icon, .. } => Tree {
-                children: vec![Tree::new(content.as_widget()), icon_tree(icon)],
+                children: vec![Tree::new(content), icon_tree(icon)],
                 ..Tree::empty()
             },
             Self::Submenu {
@@ -365,7 +366,7 @@ impl<'a, Message, Theme, Renderer> Item<'a, Message, Theme, Renderer> {
                 items,
                 ..
             } => Tree {
-                children: [Tree::new(content.as_widget()), icon_tree(icon)]
+                children: [Tree::new(content), icon_tree(icon)]
                     .into_iter()
                     .chain(items.iter().map(Item::tree))
                     .collect(),
@@ -383,13 +384,13 @@ impl<'a, Message, Theme, Renderer> Item<'a, Message, Theme, Renderer> {
         match self {
             Self::Entry { content, icon, .. } => {
                 if tree.children.len() != ITEM_ROWS {
-                    tree.children = vec![Tree::new(content.as_widget()), icon_tree(icon)];
+                    tree.children = vec![Tree::new(content), icon_tree(icon)];
                 }
 
-                tree.children[ITEM_CONTENT].diff(content.as_widget_mut());
+                tree.children[ITEM_CONTENT].diff(content);
 
                 if let Some(icon) = icon {
-                    tree.children[ITEM_ICON].diff(icon.as_widget_mut());
+                    tree.children[ITEM_ICON].diff(icon);
                 }
             }
             Self::Submenu {
@@ -399,17 +400,17 @@ impl<'a, Message, Theme, Renderer> Item<'a, Message, Theme, Renderer> {
                 ..
             } => {
                 if tree.children.len() != items.len() + ITEM_ROWS {
-                    tree.children = [Tree::new(content.as_widget()), icon_tree(icon)]
+                    tree.children = [Tree::new(content), icon_tree(icon)]
                         .into_iter()
                         .chain(items.iter().map(Item::tree))
                         .collect();
                 }
 
                 let (own, item_trees) = tree.children.split_at_mut(ITEM_ROWS);
-                own[ITEM_CONTENT].diff(content.as_widget_mut());
+                own[ITEM_CONTENT].diff(content);
 
                 if let Some(icon) = icon {
-                    own[ITEM_ICON].diff(icon.as_widget_mut());
+                    own[ITEM_ICON].diff(icon);
                 }
 
                 for (item, tree) in items.iter_mut().zip(item_trees) {
@@ -439,7 +440,7 @@ where
     Renderer: iced::advanced::Renderer + text::Renderer,
 {
     match icon {
-        Some(icon) => Tree::new(icon.as_widget()),
+        Some(icon) => Tree::new(icon),
         None => Tree::empty(),
     }
 }
@@ -490,7 +491,7 @@ where
 {
     /// Creates a new [`Menu`] with the given trigger and rows.
     pub fn new(
-        trigger: impl Into<Element<'a, Message, Theme, Renderer>>,
+        trigger: impl Widget<Message, Theme, Renderer> + 'a,
         items: Vec<Item<'a, Message, Theme, Renderer>>,
     ) -> Self {
         // So the checkmark and chevron render even if the application never
@@ -499,7 +500,7 @@ where
 
         Self {
             id: None,
-            trigger: trigger.into(),
+            trigger: trigger.boxed(),
             trigger_padding: DEFAULT_TRIGGER_PADDING,
             plain_trigger: false,
             items,
@@ -675,7 +676,7 @@ where
     /// [`Widget`] in this version of iced has no `children` method, so the
     /// whole tree is built here and installed by [`Widget::diff`].
     fn child_trees(&self) -> Vec<Tree> {
-        std::iter::once(Tree::new(self.trigger.as_widget()))
+        std::iter::once(Tree::new(&self.trigger))
             .chain(self.items.iter().map(Item::tree))
             .collect()
     }
@@ -1058,7 +1059,7 @@ where
         // The skeleton above carries tags and state but no grandchildren, so
         // the recursive diff below has to run on a fresh tree too.
         let (trigger_tree, item_trees) = tree.children.split_at_mut(1);
-        trigger_tree[0].diff(self.trigger.as_widget_mut());
+        trigger_tree[0].diff(&mut self.trigger);
 
         for (item, tree) in self.items.iter_mut().zip(item_trees) {
             item.diff(tree);
@@ -1066,20 +1067,26 @@ where
     }
 
     fn size(&self) -> Size<Length> {
-        self.trigger.as_widget().size()
+        self.trigger.size()
     }
 
     fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) {
         // Only the trigger occupies space in the view layer; the panels live
         // entirely in the overlay.
-        let size = self.trigger.as_widget().size();
+        let size = self.trigger.size();
         let padding = self.resolved_trigger_padding();
         let trigger = &mut self.trigger;
 
         // `padded` lays the trigger out in the first child tree, which is the
         // trigger's.
-        layout::padded(tree, limits, size.width, size.height, padding, |tree, limits| {
-            trigger.as_widget_mut().layout(tree, renderer, limits);
+        layout::padded(
+            tree,
+            limits,
+            size.width,
+            size.height,
+            padding,
+            |tree, limits| {
+                trigger.layout(tree, renderer, limits);
 
             tree.size
         });
@@ -1126,7 +1133,7 @@ where
             style.text_color = appearance.trigger_text_color(status);
         }
 
-        self.trigger.as_widget().draw(
+        self.trigger.draw(
             &tree.children[0],
             renderer,
             theme,
@@ -1217,7 +1224,7 @@ where
             return;
         }
 
-        self.trigger.as_widget_mut().update(
+        self.trigger.update(
             &mut tree.children[0],
             event,
             trigger_layout,
@@ -1255,7 +1262,7 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        self.trigger.as_widget().mouse_interaction(
+        self.trigger.mouse_interaction(
             &tree.children[0],
             trigger_layout(layout, tree),
             cursor,
@@ -1277,7 +1284,7 @@ where
         let trigger_layout = trigger_layout(layout, tree);
 
         operation.traverse(&mut |operation| {
-            self.trigger.as_widget_mut().operate(
+            self.trigger.operate(
                 &mut tree.children[0],
                 trigger_layout,
                 viewport,
@@ -1355,16 +1362,11 @@ fn trigger_layout(layout: Layout, tree: &Tree) -> Layout {
         .0
 }
 
-impl<'a, Message, Theme, Renderer> From<Menu<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> iced::advanced::widget::Meta
+    for Menu<'a, Message, Theme, Renderer>
 where
-    Message: Clone + 'a,
-    Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + text::Renderer + 'a,
+    Theme: Catalog,
 {
-    fn from(menu: Menu<'a, Message, Theme, Renderer>) -> Self {
-        Element::new(menu)
-    }
 }
 
 /// Creates a [`MenuBar`] from a row of menus.
@@ -1476,13 +1478,7 @@ where
     Renderer: iced::advanced::Renderer + text::Renderer + 'a,
 {
     fn diff(&mut self, tree: &mut Tree) {
-        tree.diff_children(
-            &mut self
-                .menus
-                .iter_mut()
-                .map(|menu| menu as &mut dyn Widget<Message, Theme, Renderer>)
-                .collect::<Vec<_>>(),
-        );
+        tree.diff_children(&mut self.menus);
     }
 
     fn size(&self) -> Size<Length> {
@@ -1657,16 +1653,11 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<MenuBar<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> iced::advanced::widget::Meta
+    for MenuBar<'a, Message, Theme, Renderer>
 where
-    Message: Clone + 'a,
-    Theme: Catalog + 'a,
-    Renderer: iced::advanced::Renderer + text::Renderer + 'a,
+    Theme: Catalog,
 {
-    fn from(bar: MenuBar<'a, Message, Theme, Renderer>) -> Self {
-        Element::new(bar)
-    }
 }
 
 /// The geometry of the menu's own chrome: panels, the rows in them, and the
@@ -1846,17 +1837,14 @@ where
             }
 
             if let Some(icon) = item.icon_mut() {
-                icon.as_widget_mut()
-                    .layout(&mut tree.children[ITEM_ICON], renderer, &measure);
+                icon.layout(&mut tree.children[ITEM_ICON], renderer, &measure);
                 let width = tree.children[ITEM_ICON].size.width;
 
                 leading_gutter = leading_gutter.max(width);
             }
 
             if let Some(content) = item.content_mut() {
-                content
-                    .as_widget_mut()
-                    .layout(&mut tree.children[ITEM_CONTENT], renderer, &measure);
+                content.layout(&mut tree.children[ITEM_CONTENT], renderer, &measure);
                 let width = tree.children[ITEM_CONTENT].size.width;
 
                 widest_content = widest_content.max(width);
@@ -1903,18 +1891,18 @@ where
 
             let icon_node = match item.icon_mut() {
                 Some(icon) => {
-                    icon.as_widget_mut()
-                        .layout(&mut tree.children[ITEM_ICON], renderer, &measure);
+                    icon.layout(&mut tree.children[ITEM_ICON], renderer, &measure);
 
                     Node::new(tree.children[ITEM_ICON].size)
                 }
                 None => Node::new(Size::ZERO),
             };
 
-            item.content_mut()
-                .expect("checked above")
-                .as_widget_mut()
-                .layout(&mut tree.children[ITEM_CONTENT], renderer, &pinned);
+            item.content_mut().expect("checked above").layout(
+                &mut tree.children[ITEM_CONTENT],
+                renderer,
+                &pinned,
+            );
 
             let content_node = Node::new(tree.children[ITEM_CONTENT].size);
 
@@ -2440,7 +2428,7 @@ where
                 };
 
                 if let Some(icon) = item.icon_element() {
-                    icon.as_widget().draw(
+                    icon.draw(
                         &tree.children[ITEM_ICON],
                         renderer,
                         theme,
@@ -2499,7 +2487,7 @@ where
                     );
                 }
 
-                content.as_widget().draw(
+                content.draw(
                     &tree.children[ITEM_CONTENT],
                     renderer,
                     theme,
@@ -2918,15 +2906,11 @@ mod tests {
 
     impl<'a> Host<'a> {
         fn new(menu: Menu<'a, Message, Theme, ()>) -> Self {
-            let mut element = Element::from(menu);
-            let mut tree = Tree::new(element.as_widget());
-            element.as_widget_mut().diff(&mut tree);
+            let mut element = iced::Widget::boxed(menu);
+            let mut tree = Tree::new(&element);
+            element.diff(&mut tree);
 
-            element.as_widget_mut().layout(
-                &mut tree,
-                &(),
-                &Limits::new(Size::ZERO, HOST_BOUNDS),
-            );
+            element.layout(&mut tree, &(), &Limits::new(Size::ZERO, HOST_BOUNDS));
 
             Self {
                 element,
@@ -2946,7 +2930,7 @@ mod tests {
 
             let layout = Layout::new(self.tree.size);
 
-            self.element.as_widget_mut().update(
+            self.element.update(
                 &mut self.tree,
                 &event,
                 layout,
@@ -2973,7 +2957,6 @@ mod tests {
 
             !self
                 .element
-                .as_widget_mut()
                 .overlay(
                     &mut self.tree,
                     layout,

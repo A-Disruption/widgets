@@ -1,3 +1,4 @@
+use iced::Widget as _;
 use iced::{
     Element, Task, Theme,
     widget::{
@@ -122,7 +123,7 @@ impl App {
             .spacing(20)
             .padding(20),
         )
-        .into()
+        .boxed()
     }
 }
 
