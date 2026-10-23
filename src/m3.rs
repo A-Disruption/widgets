@@ -488,6 +488,46 @@ pub mod time_picker {
     }
 }
 
+#[cfg(feature = "timezone_picker")]
+pub mod timezone_picker {
+    use iced::{Border, Theme};
+    use material_theme::tokens::{shape, state};
+    use material_theme::{scheme_for, with_alpha};
+
+    use crate::timezone_picker::Style;
+
+    /// M3 styling for [`crate::timezone_picker`].
+    ///
+    /// A `surface_container_highest` search field, list rows on state-layer
+    /// hovers, and the picked zone on `secondary_container`, like an M3 list.
+    /// Like the default style it draws no surface of its own.
+    pub fn material(theme: &Theme) -> Style {
+        let s = scheme_for(theme);
+
+        Style {
+            background: None,
+            border: Border::default(),
+            text_color: s.on_surface,
+            muted_text_color: s.on_surface_variant,
+            placeholder_color: s.on_surface_variant,
+            search_background: s.surface_container_highest,
+            search_border: Border {
+                color: s.outline_variant,
+                width: 1.0,
+                radius: shape::EXTRA_LARGE.into(),
+            },
+            caret_color: s.primary,
+            hover_background: with_alpha(s.on_surface, state::HOVER),
+            selected_background: s.secondary_container,
+            selected_text_color: s.on_secondary_container,
+            selected_muted_text_color: s.on_secondary_container,
+            row_radius: shape::MEDIUM,
+            focus_border: s.primary,
+            scrollbar_color: s.outline,
+        }
+    }
+}
+
 /// Every style function has to be accepted by the widget it styles.
 ///
 /// Building a `Style` correctly is only half of it: the *signature* has to
@@ -516,6 +556,9 @@ fn assert_style_fn_signatures() {
 
     #[cfg(feature = "time_picker")]
     let _: crate::time_picker::StyleFn<'_, Theme> = Box::new(time_picker::material);
+
+    #[cfg(feature = "timezone_picker")]
+    let _: crate::timezone_picker::StyleFn<'_, Theme> = Box::new(timezone_picker::material);
 
     #[cfg(feature = "layer")]
     let _: crate::layer::StyleFn<'_, Theme> = Box::new(layer::material);

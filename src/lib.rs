@@ -37,5 +37,8 @@ pub mod calendar;
 #[cfg(feature = "time_picker")]
 pub mod time_picker;
 
+#[cfg(feature = "timezone_picker")]
+pub mod timezone_picker;
+
 #[cfg(feature = "m3_theme")]
 pub mod m3;
