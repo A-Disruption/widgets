@@ -456,6 +456,38 @@ pub mod calendar {
     }
 }
 
+#[cfg(feature = "time_picker")]
+pub mod time_picker {
+    use iced::{Border, Theme};
+    use material_theme::tokens::shape;
+    use material_theme::{scheme_for, with_alpha};
+
+    use crate::time_picker::Style;
+
+    /// M3 styling for [`crate::time_picker`].
+    ///
+    /// The picked row sits on a `secondary_container` band with
+    /// `on_secondary_container` numbers, the rows around it in
+    /// `on_surface_variant`, and the focused wheel ringed in `primary`. Like
+    /// the default style it draws no surface of its own.
+    pub fn material(theme: &Theme) -> Style {
+        let s = scheme_for(theme);
+
+        Style {
+            background: None,
+            border: Border::default(),
+            text_color: s.on_secondary_container,
+            muted_text_color: s.on_surface_variant,
+            disabled_text_color: with_alpha(s.on_surface, 0.38),
+            highlight_background: s.secondary_container,
+            highlight_border: Border::default().rounded(shape::SMALL),
+            separator_color: s.on_surface_variant,
+            label_text_color: s.on_surface_variant,
+            focus_border: s.primary,
+        }
+    }
+}
+
 /// Every style function has to be accepted by the widget it styles.
 ///
 /// Building a `Style` correctly is only half of it: the *signature* has to
@@ -481,6 +513,9 @@ fn assert_style_fn_signatures() {
 
     #[cfg(feature = "calendar")]
     let _: crate::calendar::StyleFn<'_, Theme> = Box::new(calendar::material);
+
+    #[cfg(feature = "time_picker")]
+    let _: crate::time_picker::StyleFn<'_, Theme> = Box::new(time_picker::material);
 
     #[cfg(feature = "layer")]
     let _: crate::layer::StyleFn<'_, Theme> = Box::new(layer::material);

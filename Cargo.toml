@@ -53,9 +53,11 @@ collapsible = ["lucide"]
 date_picker = ["dep:chrono"]
 # An inline calendar for one date, a range or several dates.
 calendar = ["dep:chrono", "lucide"]
+# An inline scroll-wheel time picker, for one time or a range.
+time_picker = ["dep:chrono"]
 # Material Design 3 styles for the widgets above, in `widgets::m3`.
 m3_theme = ["dep:material_theme"]
-all = ["anchor", "animation", "layer", "lucide", "menu", "popover", "toast", "tree", "color_picker_two", "collapsible", "date_picker", "calendar"]
+all = ["anchor", "animation", "layer", "lucide", "menu", "popover", "toast", "tree", "color_picker_two", "collapsible", "date_picker", "calendar", "time_picker"]
 
 [[example]]
 name = "toast_example"
@@ -101,6 +103,11 @@ required-features = ["collapsible"]
 name = "calendar_example"
 path = "examples/calendar_example.rs"
 required-features = ["calendar", "popover", "layer"]
+
+[[example]]
+name = "time_picker_example"
+path = "examples/time_picker_example.rs"
+required-features = ["time_picker", "popover", "layer"]
 
 [[example]]
 name = "date_picker_example"
