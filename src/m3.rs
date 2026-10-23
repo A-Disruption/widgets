@@ -417,6 +417,45 @@ pub mod date_picker {
     }
 }
 
+#[cfg(feature = "calendar")]
+pub mod calendar {
+    use iced::Theme;
+    use material_theme::tokens::state;
+    use material_theme::{scheme_for, with_alpha};
+
+    use crate::calendar::Style;
+
+    /// M3 styling for [`crate::calendar`].
+    ///
+    /// Follows the M3 date picker's day grid: circular `primary` / `on_primary`
+    /// selected days, `secondary_container` behind the days of a range, an
+    /// outlined `primary` ring for today, and state-layer hovers. Like the
+    /// default style it draws no surface of its own; the popover or dialog it
+    /// sits in provides one.
+    pub fn material(theme: &Theme) -> Style {
+        let s = scheme_for(theme);
+
+        Style {
+            background: None,
+            border: iced::Border::default(),
+            text_color: s.on_surface,
+            header_text_color: s.on_surface_variant,
+            weekday_text_color: s.on_surface,
+            outside_text_color: s.on_surface_variant,
+            disabled_text_color: with_alpha(s.on_surface, 0.38),
+            arrow_color: s.on_surface_variant,
+            hover_background: with_alpha(s.on_surface, state::HOVER),
+            selected_background: s.primary,
+            selected_text_color: s.on_primary,
+            range_background: s.secondary_container,
+            range_preview_background: with_alpha(s.secondary_container, 0.6),
+            range_text_color: s.on_secondary_container,
+            today_border: s.primary,
+            focus_border: s.secondary,
+        }
+    }
+}
+
 /// Every style function has to be accepted by the widget it styles.
 ///
 /// Building a `Style` correctly is only half of it: the *signature* has to
@@ -439,6 +478,9 @@ fn assert_style_fn_signatures() {
 
     #[cfg(feature = "date_picker")]
     let _: crate::date_picker::StyleFn<'_, Theme> = Box::new(date_picker::material);
+
+    #[cfg(feature = "calendar")]
+    let _: crate::calendar::StyleFn<'_, Theme> = Box::new(calendar::material);
 
     #[cfg(feature = "layer")]
     let _: crate::layer::StyleFn<'_, Theme> = Box::new(layer::material);

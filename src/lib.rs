@@ -31,5 +31,8 @@ pub mod collapsible;
 #[cfg(feature = "date_picker")]
 pub mod date_picker;
 
+#[cfg(feature = "calendar")]
+pub mod calendar;
+
 #[cfg(feature = "m3_theme")]
 pub mod m3;
