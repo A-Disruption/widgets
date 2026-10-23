@@ -19,7 +19,9 @@
 //!
 //! # Triggers
 //!
-//! A popover opens on press by default. [`Popover::on_hover`] switches it to
+//! A popover opens on press by default, reporting through
+//! [`Popover::on_toggle`] — so the trigger itself should not toggle it too;
+//! see there. [`Popover::on_hover`] switches it to
 //! opening on hover, which is what makes an interactive tooltip: content the
 //! user can move the cursor into and click.
 //!
@@ -266,6 +268,13 @@ where
     }
 
     /// Sets a callback for when the popover opens or closes.
+    ///
+    /// A press on the trigger reports here as it happens. Do not toggle the
+    /// popover from the trigger as well: a `button` fires its `on_press` on
+    /// *release*, so `button(..).on_press(Toggled(!open))` undoes the toggle
+    /// the press just made, and the popover closes as the click ends. Give the
+    /// trigger a message that does nothing and let this callback alone drive
+    /// [`Popover::open`].
     pub fn on_toggle(mut self, callback: impl Fn(bool) -> Message + 'a) -> Self {
         self.on_toggle = Some(Box::new(callback));
         self
