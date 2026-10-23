@@ -33,6 +33,10 @@ fn theme(_state: &Example) -> Theme {
 
 #[derive(Debug, Clone)]
 enum Message {
+    /// The popover trigger's own press. The popover reports opening and
+    /// closing through `on_toggle`; the button only needs a message to be
+    /// enabled, and toggling here too would undo the popover's toggle.
+    TriggerPressed,
     DueToggled(bool),
     DuePicked(NaiveDate),
     OpenStay,
@@ -53,6 +57,7 @@ struct Example {
 impl Example {
     fn update(&mut self, message: Message) {
         match message {
+            Message::TriggerPressed => {}
             Message::DueToggled(open) => self.due_open = open,
             Message::DuePicked(date) => {
                 self.due = Some(date);
@@ -103,7 +108,7 @@ impl Example {
         };
 
         popover(
-            button(text(label)).on_press(Message::DueToggled(!self.due_open)),
+            button(text(label)).on_press(Message::TriggerPressed),
             calendar::calendar(self.due, Message::DuePicked),
         )
         .open(self.due_open)

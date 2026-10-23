@@ -34,6 +34,10 @@ fn theme(_state: &Example) -> Theme {
 #[derive(Debug, Clone)]
 enum Message {
     MeetingChanged(NaiveTime),
+    /// The popover trigger's own press. The popover reports opening and
+    /// closing through `on_toggle`; the button only needs a message to be
+    /// enabled, and toggling here too would undo the popover's toggle.
+    TriggerPressed,
     ZoneToggled(bool),
     ZonePicked(Tz),
     OfficePicked(Tz),
@@ -59,6 +63,7 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::MeetingChanged(time) => self.meeting = time,
+            Message::TriggerPressed => {}
             Message::ZoneToggled(open) => self.zone_open = open,
             Message::ZonePicked(zone) => {
                 self.zone = zone;
@@ -102,7 +107,7 @@ impl Example {
 
     fn zone_button(&self) -> Element<'_, Message> {
         popover(
-            button(text(self.zone.name())).on_press(Message::ZoneToggled(!self.zone_open)),
+            button(text(self.zone.name())).on_press(Message::TriggerPressed),
             timezone_picker(Some(self.zone), Message::ZonePicked),
         )
         .open(self.zone_open)

@@ -32,6 +32,10 @@ fn theme(_state: &Example) -> Theme {
 
 #[derive(Debug, Clone)]
 enum Message {
+    /// The popover trigger's own press. The popover reports opening and
+    /// closing through `on_toggle`; the button only needs a message to be
+    /// enabled, and toggling here too would undo the popover's toggle.
+    TriggerPressed,
     MeetingToggled(bool),
     MeetingPicked(NaiveTime),
     OpenShift,
@@ -61,6 +65,7 @@ impl Example {
 
     fn update(&mut self, message: Message) {
         match message {
+            Message::TriggerPressed => {}
             Message::MeetingToggled(open) => self.meeting_open = open,
             // The wheels keep turning while the popover is open; it closes
             // when the user clicks away.
@@ -104,7 +109,7 @@ impl Example {
         };
 
         popover(
-            button(text(label)).on_press(Message::MeetingToggled(!self.meeting_open)),
+            button(text(label)).on_press(Message::TriggerPressed),
             time_picker::time_picker(self.meeting, Message::MeetingPicked)
                 .minute_step(5)
                 .disabled(|time: NaiveTime| time.hour() == 12),
