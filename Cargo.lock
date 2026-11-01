@@ -1481,9 +1481,9 @@ checksum = "ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5"
 
 [[package]]
 name = "material-colors"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e226ffda362d5bc26bb8f730d637a0851eedfb05e35d92108c9d8b48d2e47941"
+checksum = "57a5bf6a9d1cf6319a36cebc589b9a681a6b1c699e162f27c020877783579cc7"
 dependencies = [
  "ahash",
  "indexmap",
@@ -1493,7 +1493,7 @@ dependencies = [
 [[package]]
 name = "material_theme"
 version = "0.1.0"
-source = "git+https://github.com/A-Disruption/material_theme#1aefed5d1803fee364210b271b2b25051d1765d9"
+source = "git+https://github.com/A-Disruption/material_theme#5bad8aa32d0411bfc062c027675dcf3d4b335f21"
 dependencies = [
  "iced",
  "material-colors",
